@@ -10,16 +10,25 @@ manpages, and a static web app.
 ## Install
 
 ```bash
-./install.sh                          # creates venv in ~/.local/share/simdref/
-~/.local/bin/simdref doctor           # verify installation
+pip install simdref
+simdref update          # fetch Intel intrinsics + uops.info data
+simdref doctor          # verify installation
 ```
 
-Or for development:
+Or from [TestPyPI](https://test.pypi.org/project/simdref/) (pre-release):
 
 ```bash
+pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ simdref
+```
+
+### Development
+
+```bash
+git clone https://github.com/MarcoBarbone/simdref.git
+cd simdref
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/simdref update --offline    # bootstrap from bundled fixtures
+.venv/bin/simdref update
 ```
 
 ## Usage
@@ -71,8 +80,8 @@ vim.lsp.start({
 ### Web app
 
 ```bash
-simdref export-web
-python3 -m http.server -d web 8000
+simdref export-web --web-dir ./web
+python3 -m http.server -d ./web 8000
 # open http://localhost:8000
 ```
 
