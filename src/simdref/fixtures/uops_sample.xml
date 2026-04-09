@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <instruction asm="ADDPS" category="SSE" cpl="3" extension="SSE" iclass="ADDPS" iform="ADDPS_XMMps_XMMps" isa-set="SSE" opcode="0F58" string="ADDPS (XMM, XMM)" summary="Add packed single-precision floating-point values." url="uops.info/html-instr/ADDPS_XMM_XMM.html" url-ref="felixcloutier.com/x86/addps">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="128" xtype="f32">XMM0,XMM1,XMM2,XMM3,XMM4,XMM5,XMM6,XMM7,XMM8,XMM9,XMM10,XMM11,XMM12,XMM13,XMM14,XMM15</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="128" xtype="f32">XMM0,XMM1,XMM2,XMM3,XMM4,XMM5,XMM6,XMM7,XMM8,XMM9,XMM10,XMM11,XMM12,XMM13,XMM14,XMM15</operand>
+    <architecture name="HSW">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="1" ports="1*p1" TP_ports="1.00" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="1.00" uops="1" ports="p1"/>
+      <IACA version="2.3" TP="1.00" uops="1" ports="1*p1" TP_ports="1.00"/>
+    </architecture>
+    <architecture name="BDW">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="1" ports="1*p1" TP_ports="1.00" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="1.00" uops="1" ports="p1"/>
+    </architecture>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+      <IACA version="3.0" TP="0.50" uops="1" ports="1*p01" TP_ports="0.50"/>
+    </architecture>
+    <architecture name="ICL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+    <architecture name="ADL-P">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p15" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="2"/>
+      </measurement>
+    </architecture>
+    <architecture name="ZEN4">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*FP01" TP_ports="0.50">
+        <latency start_op="2" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="0.50" uops="1" ports="FP0/1"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VPADDD" category="AVX" cpl="3" extension="AVX2" iclass="VPADDD" iform="VPADDD_YMMqq_YMMqq_YMMqq" isa-set="AVX2" opcode="VEX.256.66.0F.WIG FE /r" string="VPADDD (YMM, YMM, YMM)" summary="Add packed doubleword integers." url="uops.info/html-instr/VPADDD_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/paddb:paddw:paddd:paddq">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="i32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="i32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="i32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <architecture name="HSW">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+      <doc latency="1" TP="0.33" uops="1" ports="p015"/>
+      <IACA version="3.0" TP="0.33" uops="1" ports="1*p015" TP_ports="0.33"/>
+    </architecture>
+    <architecture name="SKL">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+      <doc latency="1" TP="0.33" uops="1" ports="p015"/>
+    </architecture>
+    <architecture name="ICL">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+      <doc latency="1" TP="0.33" uops="1" ports="p015"/>
+    </architecture>
+    <architecture name="ADL-P">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+    </architecture>
+    <architecture name="RKL">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+    </architecture>
+    <architecture name="ZEN4">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*i01" TP_ports="0.50">
+        <latency start_op="2" target_op="1" cycles="1"/>
+        <latency start_op="3" target_op="1" cycles="1"/>
+      </measurement>
+      <doc latency="1" TP="0.50" uops="1" ports="i01"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VADDPS" category="AVX" cpl="3" extension="AVX" iclass="VADDPS" iform="VADDPS_YMMqq_YMMqq_YMMqq" isa-set="AVX" opcode="VEX.256.0F.WIG 58 /r" string="VADDPS (YMM, YMM, YMM)" summary="Add packed single-precision floating-point values." url="uops.info/html-instr/VADDPS_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/addps">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <architecture name="HSW">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="1" ports="1*p1" TP_ports="1.00" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="3"/>
+        <latency start_op="3" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="1.00" uops="1" ports="p1"/>
+    </architecture>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+        <latency start_op="3" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+    <architecture name="ICL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+        <latency start_op="3" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+    <architecture name="ADL-P">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p15" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="2"/>
+        <latency start_op="3" target_op="1" cycles="2"/>
+      </measurement>
+    </architecture>
+    <architecture name="ZEN4">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*FP01" TP_ports="0.50">
+        <latency start_op="2" target_op="1" cycles="3"/>
+        <latency start_op="3" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="0.50" uops="1" ports="FP0/1"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VADDPD" category="AVX" cpl="3" extension="AVX" iclass="VADDPD" iform="VADDPD_YMMqq_YMMqq_YMMqq" isa-set="AVX" opcode="VEX.256.66.0F.WIG 58 /r" string="VADDPD (YMM, YMM, YMM)" summary="Add packed double-precision floating-point values." url="uops.info/html-instr/VADDPD_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/addpd">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="f64">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="f64">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="f64">YMM0,YMM1,YMM2,YMM3,YMM4,YMM5,YMM6,YMM7,YMM8,YMM9,YMM10,YMM11,YMM12,YMM13,YMM14,YMM15</operand>
+    <architecture name="HSW">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="1" ports="1*p1" TP_ports="1.00" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="3"/>
+        <latency start_op="3" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="1.00" uops="1" ports="p1"/>
+    </architecture>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+        <latency start_op="3" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+    <architecture name="ICL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+        <latency start_op="3" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+    <architecture name="ADL-P">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p15" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="2"/>
+        <latency start_op="3" target_op="1" cycles="2"/>
+      </measurement>
+    </architecture>
+    <architecture name="ZEN4">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*FP01" TP_ports="0.50">
+        <latency start_op="2" target_op="1" cycles="3"/>
+        <latency start_op="3" target_op="1" cycles="3"/>
+      </measurement>
+      <doc latency="3" TP="0.50" uops="1" ports="FP0/1"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VPEXPANDD" category="AVX-512" cpl="3" extension="AVX-512F" iclass="VPEXPANDD" iform="VPEXPANDD_ZMMu32_MASKmskw_MEMu32_AVX512" isa-set="AVX-512F" opcode="EVEX.512.66.0F38.W0 89 /r" string="VPEXPANDD (ZMM{k}{z}, M512)" summary="Expand packed 32-bit integers from memory." url="uops.info/html-instr/VPEXPANDD_ZMM_K_M512.html" url-ref="felixcloutier.com/x86/vpexpandd">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="512" xtype="i32">ZMM0-ZMM31</operand>
+    <operand idx="2" name="MASK0" r="1" type="mask" width="16" xtype="mask">K1-K7</operand>
+    <operand idx="3" name="MEM0" r="1" type="mem" width="512" xtype="i32" memory-prefix="zmmword ptr"/>
+    <architecture name="ICL">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="2" ports="1*p23" TP_ports="1.00" uops_MITE="2" uops_MS="0" uops_retire_slots="2">
+        <latency start_op="3" target_op="1" cycles_mem="6" cycles_mem_is_upper_bound="1"/>
+      </measurement>
+      <doc latency="6" TP="1.00" uops="2" ports="p23"/>
+    </architecture>
+    <architecture name="SPR">
+      <measurement TP_loop="1.00" TP_unrolled="1.00" uops="2" ports="1*p23" TP_ports="1.00" uops_MITE="2" uops_MS="0" uops_retire_slots="2">
+        <latency start_op="3" target_op="1" cycles_mem="5" cycles_mem_is_upper_bound="1"/>
+      </measurement>
+    </architecture>
+  </instruction>
+</root>

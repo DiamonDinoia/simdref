@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>simdref</title>
+  <style>/* __CSS__ */</style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">simdref</span>
+    </div>
+    <div class="header-right">
+      <span class="meta" id="meta">Loading...</span>
+      <button id="theme-toggle" class="icon-btn" type="button" title="Toggle dark mode (d)" aria-label="Toggle dark mode">
+        <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+        <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="display:none"><path d="M13.5 8.5a5.5 5.5 0 01-7.5 2A5.5 5.5 0 018.5 2a4 4 0 005 6.5z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="search-bar">
+    <div class="search-wrap">
+      <input id="query" type="search" autocomplete="off" spellcheck="false" placeholder="Search intrinsics or instructions... ( / )">
+      <kbd class="search-hint">/</kbd>
+      <div id="autocomplete" class="autocomplete hidden"></div>
+    </div>
+    <button id="isa-toggle" class="isa-toggle-btn" type="button" title="ISA filters (f)">
+      <span id="isa-summary">ISA: Default</span>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>
+    </button>
+  </div>
+
+  <div id="isa-panel" class="isa-panel">
+    <div class="isa-presets">
+      <button id="isa-default" class="preset-btn" type="button">Default</button>
+      <button id="isa-none" class="preset-btn" type="button">None</button>
+      <button id="isa-all" class="preset-btn" type="button">All</button>
+    </div>
+    <div id="isa-groups" class="isa-groups"></div>
+  </div>
+
+  <div class="layout">
+    <aside class="results-panel" id="results-panel">
+      <div class="results-header">
+        <span id="results-count">0 results</span>
+      </div>
+      <div class="results-list" id="results" tabindex="0"></div>
+    </aside>
+    <main class="detail-panel" id="detail" tabindex="0">
+      <div class="detail-empty" id="detail-empty">Select a result or search for an intrinsic / instruction.</div>
+    </main>
+  </div>
+
+  <div id="shortcuts-overlay" class="overlay hidden">
+    <div class="overlay-content">
+      <h3>Keyboard Shortcuts</h3>
+      <table class="shortcuts-table">
+        <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Blur / close</td></tr>
+        <tr><td><kbd>j</kbd> <kbd>&darr;</kbd></td><td>Next result</td></tr>
+        <tr><td><kbd>k</kbd> <kbd>&uarr;</kbd></td><td>Previous result</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Select result</td></tr>
+        <tr><td><kbd>f</kbd></td><td>Toggle ISA filter</td></tr>
+        <tr><td><kbd>d</kbd></td><td>Toggle dark mode</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Show shortcuts</td></tr>
+      </table>
+      <button id="close-shortcuts" class="preset-btn" type="button">Close</button>
+    </div>
+  </div>
+
+  <script>/* __JS__ */</script>
+</body>
+</html>

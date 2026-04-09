@@ -1,0 +1,690 @@
+"""Terminal display and formatting for simdref CLI output.
+
+This module owns the shared :class:`~rich.console.Console` instance and all
+functions that render intrinsics, instructions, performance tables, and ISA
+metadata to the terminal.  The CLI command handlers in :mod:`simdref.cli`
+delegate to these functions for all Rich-based output.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.table import Table
+
+from simdref.perf import latency_cycle_values, variant_perf_summary
+from simdref.queries import linked_instruction_records
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
+    from simdref.search import SearchResult
+
+console = Console()
+
+# ---------------------------------------------------------------------------
+# Microarchitecture constants
+# ---------------------------------------------------------------------------
+
+UARCH_ORDER = [
+    "ARL-P", "ARL-E", "MTL-P", "MTL-E", "EMR",
+    "ADL-P", "ADL-E", "RKL", "TGL", "ICL",
+    "CLX", "CNL", "SKX", "CFL", "KBL", "SKL",
+    "BDW", "HSW", "IVB", "SNB",
+    "ZEN5", "ZEN4", "ZEN3", "ZEN2", "ZEN+",
+]
+
+UARCH_LABELS: dict[str, tuple[str, str]] = {
+    "ARL-P": ("Arrow Lake-P", "2024"),
+    "ARL-E": ("Arrow Lake-E", "2024"),
+    "MTL-P": ("Meteor Lake-P", "2023"),
+    "MTL-E": ("Meteor Lake-E", "2023"),
+    "EMR": ("Emerald Rapids", "2023"),
+    "ADL-P": ("Alder Lake-P", "2021"),
+    "ADL-E": ("Alder Lake-E", "2021"),
+    "RKL": ("Rocket Lake", "2021"),
+    "TGL": ("Tiger Lake", "2020"),
+    "ICL": ("Ice Lake", "2019"),
+    "CLX": ("Cascade Lake", "2019"),
+    "CNL": ("Cannon Lake", "2018"),
+    "SKX": ("Skylake-X", "2017"),
+    "CFL": ("Coffee Lake", "2017"),
+    "KBL": ("Kaby Lake", "2016"),
+    "SKL": ("Skylake", "2015"),
+    "BDW": ("Broadwell", "2014"),
+    "HSW": ("Haswell", "2013"),
+    "IVB": ("Ivy Bridge", "2012"),
+    "SNB": ("Sandy Bridge", "2011"),
+    "ZEN5": ("Zen 5", "2024"),
+    "ZEN4": ("Zen 4", "2022"),
+    "ZEN3": ("Zen 3", "2020"),
+    "ZEN2": ("Zen 2", "2019"),
+    "ZEN+": ("Zen+", "2018"),
+    "AMT": ("Atom", "2012"),
+    "BNL": ("Bonnell", "2008"),
+    "CON": ("Conroe", "2006"),
+    "GLM": ("Goldmont", "2016"),
+    "GLP": ("Goldmont Plus", "2017"),
+    "NHM": ("Nehalem", "2008"),
+    "TRM": ("Tremont", "2019"),
+    "WOL": ("Wolfdale", "2007"),
+    "WSM": ("Westmere", "2010"),
+}
+
+# ISA chronological ordering for sort keys.
+ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
+    "I86": (0, 0), "MMX": (1, 0),
+    "SSE": (2, 0), "SSE2": (2, 1), "SSE3": (2, 2), "SSSE3": (2, 3),
+    "SSE4A": (2, 4), "SSE4.1": (2, 5), "SSE4.2": (2, 6),
+    "AES": (2, 7), "PCLMULQDQ": (2, 8),
+    "F16C": (3, 0), "FMA": (3, 1),
+    "AVX": (4, 0), "AVX2": (5, 0),
+    "AVX512F": (6, 0), "AVX512DQ": (6, 1), "AVX512IFMA": (6, 2),
+    "AVX512PF": (6, 3), "AVX512ER": (6, 4), "AVX512CD": (6, 5),
+    "AVX512BW": (6, 6), "AVX512VL": (6, 7), "AVX512VBMI": (6, 8),
+    "AVX512VBMI2": (6, 9), "AVX512VNNI": (6, 10), "AVX512BITALG": (6, 11),
+    "AVX512VPOPCNTDQ": (6, 12), "AVX5124VNNIW": (6, 13),
+    "AVX5124FMAPS": (6, 14), "AVX512VP2INTERSECT": (6, 15),
+    "AVX512BF16": (6, 16), "AVX512FP16": (6, 99),
+    "AVX10": (7, 0), "AMX": (7, 0), "APX": (9, 0),
+}
+
+_ISA_PREFIXES_BY_LEN = sorted(ISA_CHRONOLOGY.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+# ---------------------------------------------------------------------------
+# Compiled patterns (simple helpers avoid regex where possible)
+# ---------------------------------------------------------------------------
+
+_NORMALIZE_TEXT_RE = re.compile(r"[^a-z0-9]+")
+
+# Matches ``{evex}`` with optional trailing whitespace.
+_EVEX_TAG = "{evex}"
+
+# ---------------------------------------------------------------------------
+# Microarchitecture helpers
+# ---------------------------------------------------------------------------
+
+
+def uarch_sort_key(name: str) -> tuple[int, str]:
+    """Sort key that places known architectures in chronological order."""
+    try:
+        return (UARCH_ORDER.index(name), name)
+    except ValueError:
+        return (len(UARCH_ORDER), name)
+
+
+def _uarch_display_mode() -> str:
+    width = console.size.width
+    if width >= 145:
+        return "full"
+    if width >= 115:
+        return "year"
+    return "short"
+
+
+def display_uarch(name: str, mode: str | None = None) -> str:
+    """Format a microarchitecture code for display."""
+    if not name:
+        return "-"
+    mode = mode or _uarch_display_mode()
+    label = UARCH_LABELS.get(name)
+    if label is None:
+        return name
+    full_name, year = label
+    if mode == "full":
+        return f"{full_name} ({year})"
+    if mode == "year":
+        return f"{name} ({year})"
+    return name
+
+
+def _uarch_display_mode_for_table(rows: list[dict], columns: list[str], label_map: dict[str, str]) -> str:
+    if "uarch" not in columns:
+        return "short"
+    available = console.size.width - 8
+    sample_rows = rows[:64]
+    for column in columns:
+        if column == "uarch":
+            continue
+        header = label_map.get(column, column)
+        max_cell = max((len(str(row.get(column, "-"))) for row in sample_rows), default=1)
+        available -= min(max(len(header), max_cell), 22) + 3
+    uarch_names = [str(row.get("uarch", "-")) for row in sample_rows]
+    full_needed = max((len(display_uarch(name, mode="full")) for name in uarch_names), default=0)
+    year_needed = max((len(display_uarch(name, mode="year")) for name in uarch_names), default=0)
+    if available >= full_needed + 2:
+        return "full"
+    if available >= year_needed + 2:
+        return "year"
+    return "short"
+
+
+def _column_width_budget(rows: list[dict], columns: list[str], label_map: dict[str, str], uarch_mode: str) -> dict[str, int]:
+    """Compute column widths that fit the terminal, shrinking least important first."""
+    sample_rows = rows[:64]
+    desired: dict[str, int] = {}
+    minimum: dict[str, int] = {}
+    for column in columns:
+        header = label_map.get(column, column)
+        if column == "uarch":
+            values = [display_uarch(str(row.get("uarch", "-")), mode=uarch_mode) for row in sample_rows]
+            desired[column] = max([len(header), *[len(v) for v in values]] or [len(header)])
+            minimum[column] = 5
+            continue
+        values = [str(row.get(column, "-")) for row in sample_rows]
+        widest = max([len(header), *[len(v) for v in values]] or [len(header)])
+        desired[column] = min(widest, 34 if column == "ports" else 22)
+        if column == "ports":
+            minimum[column] = 10
+        elif column.startswith("TP") or column.startswith("cycle/") or column == "latency":
+            minimum[column] = 8
+        elif column == "uops":
+            minimum[column] = 4
+        else:
+            minimum[column] = min(max(len(header), 4), 10)
+
+    separator_cost = max(0, (len(columns) - 1) * 3)
+    available = max(40, console.size.width - 8 - separator_cost)
+    current = sum(desired.values())
+    if current <= available:
+        return desired
+
+    widths = dict(desired)
+    shrink_order = ["ports", "TP_unrolled", "TP_loop", "TP_ports", "TP", "latency", "uarch", "uops"]
+    shrink_order += [c for c in columns if c not in shrink_order]
+    deficit = current - available
+    while deficit > 0:
+        changed = False
+        for column in shrink_order:
+            if column not in widths:
+                continue
+            if widths[column] > minimum[column]:
+                widths[column] -= 1
+                deficit -= 1
+                changed = True
+                if deficit <= 0:
+                    break
+        if not changed:
+            break
+    return widths
+
+
+# ---------------------------------------------------------------------------
+# ISA display helpers
+# ---------------------------------------------------------------------------
+
+
+def _strip_evex(text: str) -> str:
+    """Remove ``{evex}`` tags and ``_EVEX`` suffixes without regex."""
+    result = text
+    lower = result.lower()
+    while _EVEX_TAG in lower:
+        idx = lower.index(_EVEX_TAG)
+        end = idx + len(_EVEX_TAG)
+        while end < len(result) and result[end] == " ":
+            end += 1
+        result = result[:idx] + result[end:]
+        lower = result.lower()
+    return result.replace("_EVEX", "")
+
+
+def display_isa(values: list[str]) -> str:
+    """Normalize and deduplicate ISA extension names for display."""
+    def normalize_token(value: str) -> str:
+        # Strip width and scalar suffixes.
+        base = value
+        for suffix in ("_128", "_256", "_512", "_SCALAR"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+        upper = base.upper()
+        if upper.startswith("AVX10_"):
+            parts = base.split("_")
+            if len(parts) >= 2:
+                version = parts[1]
+                suffix_str = " ".join(parts[2:]) if len(parts) > 2 else ""
+                return f"AVX10.{version}{(' ' + suffix_str) if suffix_str else ''}"
+        if upper.startswith("AVX512"):
+            tail = base[len("AVX512"):]
+            if tail.startswith("_"):
+                return f"AVX512 {tail[1:].replace('_', ' ')}"
+            return f"AVX512{tail}"
+        if upper.startswith("AMX_"):
+            return f"AMX-{base.split('_', 1)[1].replace('_', '-')}"
+        return base
+
+    rendered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = normalize_token(value)
+        if normalized not in seen:
+            seen.add(normalized)
+            rendered.append(normalized)
+    return ", ".join(rendered) or "-"
+
+
+def isa_sort_key(values: list[str]) -> tuple[int, int, str]:
+    """Chronological sort key for a list of ISA extensions."""
+    display = display_isa(values)
+    normalized_values = [display_isa([v]).upper() for v in values] or [display.upper()]
+
+    def isa_rank(value: str) -> tuple[int, int]:
+        compact = value.replace(" ", "")
+        for prefix, rank in _ISA_PREFIXES_BY_LEN:
+            if compact.startswith(prefix):
+                return rank
+        for family in ("AVX10", "AMX", "APX"):
+            if compact.startswith(family):
+                return ISA_CHRONOLOGY[family]
+        return (8, 0)
+
+    return min((isa_rank(v) for v in normalized_values), default=(8, 0)) + (display,)
+
+
+def is_apx_isa(values: list[str]) -> bool:
+    return display_isa(values).upper().startswith("APX")
+
+
+def is_fp16_or_bf16_isa(values: list[str]) -> bool:
+    display = display_isa(values).upper()
+    return "FP16" in display or "BF16" in display
+
+
+def isa_visible(values: list[str], show_fp16: bool = False) -> bool:
+    """Whether an ISA variant should be shown (hides APX and optionally FP16/BF16)."""
+    if is_apx_isa(values):
+        return False
+    if not show_fp16 and is_fp16_or_bf16_isa(values):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Instruction text helpers
+# ---------------------------------------------------------------------------
+
+
+def canonical_url(path: str) -> str:
+    if not path:
+        return ""
+    if path.startswith("http"):
+        return path
+    return f"https://www.{path.lstrip('/')}"
+
+
+def instruction_query_text(item) -> str:
+    """Build a clean query string from an instruction's form."""
+    form = _strip_evex(item.form or "")
+    name = item.mnemonic
+    if "(" in form:
+        form_name = form.split("(", 1)[0].strip()
+        if form_name:
+            name = form_name
+            form = form[len(form_name):].strip()
+    elif form.casefold().startswith(item.mnemonic.casefold()):
+        form = form[len(item.mnemonic):].strip()
+    if form.startswith("(") and form.endswith(")"):
+        form = form[1:-1]
+    tokens = [t for t in re.split(r"[\s,()]+", form) if t]
+    return " ".join([name, *tokens]).strip()
+
+
+def display_instruction_form(form: str) -> str:
+    return _strip_evex(form or "").strip() or "-"
+
+
+def display_instruction_title(item) -> str:
+    return display_instruction_form(item.key)
+
+
+def normalize_instruction_query(value: str) -> str:
+    """Normalize an instruction query to lowercase alphanumeric tokens."""
+    text = value.replace("_", " ").replace(",", " ").replace("{", " ").replace("}", " ")
+    tokens = []
+    for ch in text:
+        if ch.isalnum():
+            tokens.append(ch.lower())
+        elif tokens and tokens[-1] != " ":
+            tokens.append(" ")
+    return "".join(tokens).strip()
+
+
+def natural_query_sort_key(value: str) -> tuple[object, ...]:
+    """Sort key that orders numbers numerically within text."""
+    parts = re.findall(r"[A-Za-z]+|\d+", value.casefold())
+    key: list[object] = []
+    for part in parts:
+        if part.isdigit():
+            key.append((1, int(part)))
+        else:
+            key.append((0, part))
+    return tuple(key)
+
+
+def instruction_variant_items(items):
+    """Sort instruction variants by ISA chronology then natural form order."""
+    return sorted(
+        items,
+        key=lambda item: (
+            isa_sort_key(item.isa),
+            natural_query_sort_key(instruction_query_text(item)),
+            item.key,
+        ),
+    )
+
+
+def normalized_sentence(text: str) -> str:
+    return _NORMALIZE_TEXT_RE.sub(" ", text.casefold()).strip()
+
+
+# ---------------------------------------------------------------------------
+# Row extraction helpers
+# ---------------------------------------------------------------------------
+
+
+def measurement_rows(item) -> list[dict]:
+    """Extract per-microarchitecture measurement rows from an instruction."""
+    rows: list[dict] = []
+    for arch, details in item.arch_details.items():
+        measurement = details.get("measurement") or {}
+        if measurement:
+            row = {"uarch": arch, **measurement}
+            values = latency_cycle_values(details.get("latencies") or [])
+            if values:
+                row["latency"] = values[0]
+            rows.append(row)
+    return rows
+
+
+def doc_rows(item) -> list[dict]:
+    rows: list[dict] = []
+    for arch, details in item.arch_details.items():
+        doc = details.get("doc") or {}
+        if doc:
+            rows.append({"uarch": arch, **doc})
+    return rows
+
+
+def iaca_rows(item) -> list[dict]:
+    rows: list[dict] = []
+    for arch, details in item.arch_details.items():
+        for iaca in details.get("iaca") or []:
+            rows.append({"uarch": arch, **iaca})
+    return rows
+
+
+def latency_rows(item) -> list[dict]:
+    rows: list[dict] = []
+    for arch, details in item.arch_details.items():
+        values = latency_cycle_values(details.get("latencies") or [])
+        if values:
+            rows.append({"uarch": arch, "cycles": ", ".join(values)})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Rich table printing
+# ---------------------------------------------------------------------------
+
+_GENERIC_TABLE_LABEL_MAP = {
+    "uarch": "microarch",
+    "latency": "LAT",
+    "TP_loop": "CPI",
+    "TP_unrolled": "CPI unroll",
+    "TP_ports": "CPI ports",
+    "TP": "CPI",
+    "TP_no_interiteration": "cycle/instr (no interiteration)",
+}
+
+
+def print_generic_table(
+    rows: list[dict],
+    title: str,
+    preferred_order: list[str] | None = None,
+    border_style: str = "green",
+    exclude_keys: set[str] | None = None,
+    include_extras: bool = True,
+) -> None:
+    """Render a performance data table inside a Rich Panel."""
+    if not rows:
+        return
+    preferred_order = preferred_order or []
+    exclude_keys = exclude_keys or set()
+    keys = [k for k in preferred_order if any(k in row for row in rows)]
+    extras = sorted({k for row in rows for k in row if k not in keys and k not in exclude_keys}) if include_extras else []
+    columns = keys + extras
+    table = Table(header_style=f"bold {border_style}", expand=True)
+    uarch_mode = _uarch_display_mode_for_table(rows, columns, _GENERIC_TABLE_LABEL_MAP)
+    widths = _column_width_budget(rows, columns, _GENERIC_TABLE_LABEL_MAP, uarch_mode)
+    for column in columns:
+        label = _GENERIC_TABLE_LABEL_MAP.get(column, column)
+        if column == "uarch":
+            table.add_column(label, no_wrap=True, width=widths[column])
+        elif column == "ports":
+            table.add_column(label, no_wrap=True, width=widths[column], overflow="ellipsis")
+        else:
+            table.add_column(label, width=widths[column], overflow="fold")
+
+    def row_sort(row: dict):
+        return uarch_sort_key(row.get("uarch", "")) if "uarch" in row else ("",)
+
+    for row in sorted(rows, key=row_sort):
+        rendered = []
+        for column in columns:
+            value = row.get(column, "-")
+            rendered.append(display_uarch(str(value), mode=uarch_mode) if column == "uarch" else str(value))
+        table.add_row(*rendered)
+    console.print(Panel(table, title=title, border_style=border_style))
+
+
+def print_operand_block(item) -> None:
+    """Render an operand details table."""
+    if not item.operand_details:
+        return
+    table = Table(header_style="bold blue")
+    table.add_column("idx", width=4)
+    table.add_column("rw", width=4)
+    table.add_column("type", width=8)
+    table.add_column("width", width=6)
+    table.add_column("xtype", width=8)
+    table.add_column("name", width=10)
+    for operand in item.operand_details:
+        rw = "".join(flag for flag in ("r", "w") if operand.get(flag) == "1")
+        table.add_row(
+            operand.get("idx", "-"),
+            rw or "-",
+            operand.get("type", "-"),
+            operand.get("width", "-"),
+            operand.get("xtype", "-"),
+            operand.get("name", "-"),
+        )
+    console.print(Panel(table, title="operands", border_style="blue"))
+
+
+def print_instruction_mapping(catalog, intrinsic, conn=None) -> None:
+    """Show which instructions implement a given intrinsic."""
+    linked = linked_instruction_records(catalog, intrinsic, conn=conn)
+    if not linked:
+        return
+    table = Table(header_style="bold cyan")
+    table.add_column("instruction", style="cyan")
+    table.add_column("summary")
+    table.add_column("isa", width=12)
+    for instr in linked:
+        table.add_row(instr.key, instr.summary or "-", ", ".join(instr.isa) or "-")
+    console.print(table)
+
+
+def print_intrinsic_mapping(catalog, item, conn=None, find_intrinsic_fn=None) -> None:
+    """Show which intrinsics use a given instruction."""
+    if not item.linked_intrinsics:
+        return
+    from simdref.storage import load_intrinsic_from_db
+    from simdref.search import find_intrinsic as _find_intrinsic
+
+    find_fn = find_intrinsic_fn or _find_intrinsic
+    table = Table(header_style="bold cyan")
+    table.add_column("intrinsic", style="cyan")
+    table.add_column("summary")
+    table.add_column("isa", width=12)
+    for intrinsic_name in item.linked_intrinsics:
+        intrinsic = load_intrinsic_from_db(conn, intrinsic_name) if conn is not None else find_fn(catalog, intrinsic_name)
+        if intrinsic is None:
+            table.add_row(intrinsic_name, "-", "-")
+            continue
+        table.add_row(
+            intrinsic.signature or intrinsic.name,
+            intrinsic.description or "-",
+            ", ".join(intrinsic.isa) or "-",
+        )
+    console.print(table)
+
+
+_MEASUREMENT_PREFERRED_ORDER = ["uarch", "latency", "TP_loop", "TP_ports", "uops", "ports"]
+_MEASUREMENT_EXCLUDE_KEYS = {"uops_retire_slots", "uops_MITE", "uops_MS", "macro_fusible"}
+
+
+def print_instruction_metadata(item) -> None:
+    table = Table(show_header=False, box=None)
+    table.add_row("summary", item.summary or "-")
+    url = item.metadata.get("url", "")
+    if url:
+        table.add_row("url", canonical_url(url))
+    if item.metadata.get("url-ref"):
+        table.add_row("reference", canonical_url(item.metadata["url-ref"]))
+    if item.metadata.get("extension"):
+        table.add_row("isa", item.metadata["extension"])
+    if item.metadata.get("category"):
+        table.add_row("category", item.metadata["category"])
+    if item.metadata.get("cpl"):
+        table.add_row("cpl", item.metadata["cpl"])
+    console.print(Panel(table, title="instruction metadata", border_style="magenta"))
+
+
+# ---------------------------------------------------------------------------
+# High-level render functions
+# ---------------------------------------------------------------------------
+
+
+def render_intrinsic(catalog, item, conn=None) -> None:
+    """Render full intrinsic detail view to the terminal."""
+    table = Table(show_header=False, box=None)
+    table.add_row("signature", item.signature or "-")
+    table.add_row("header", item.header or "-")
+    table.add_row("isa", ", ".join(item.isa) or "-")
+    table.add_row("category", item.category or "-")
+    table.add_row("notes", "; ".join(item.notes) or "-")
+    linked = linked_instruction_records(catalog, item, conn=conn)
+    primary = linked[0] if linked else None
+    if primary:
+        if primary.metadata.get("url"):
+            table.add_row("url", canonical_url(primary.metadata["url"]))
+        if primary.metadata.get("url-ref"):
+            table.add_row("reference", canonical_url(primary.metadata["url-ref"]))
+    console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
+    if linked:
+        console.print(Rule("intrinsic to instruction mapping", style="cyan"))
+        print_instruction_mapping(catalog, item, conn=conn)
+        console.print(Rule(f"instruction details: {display_instruction_title(primary)}", style="magenta"))
+        print_operand_block(primary)
+        print_generic_table(
+            measurement_rows(primary),
+            "measurements",
+            preferred_order=_MEASUREMENT_PREFERRED_ORDER,
+            border_style="green",
+            exclude_keys=_MEASUREMENT_EXCLUDE_KEYS,
+            include_extras=False,
+        )
+
+
+def render_instruction_sections(catalog, item, include_title: bool = True, conn=None) -> None:
+    """Render instruction detail with optional title panel."""
+    if include_title:
+        table = Table(show_header=False, box=None)
+        table.add_row("mnemonic", item.mnemonic)
+        table.add_row("form", display_instruction_form(item.form))
+        table.add_row("isa", display_isa(item.isa))
+        table.add_row("summary", item.summary or "-")
+        url = item.metadata.get("url", "")
+        if url:
+            table.add_row("url", canonical_url(url))
+        if item.metadata.get("url-ref"):
+            table.add_row("reference", canonical_url(item.metadata["url-ref"]))
+        if item.metadata.get("category"):
+            table.add_row("category", item.metadata["category"])
+        if item.metadata.get("cpl"):
+            table.add_row("cpl", item.metadata["cpl"])
+        console.print(Panel(table, title=f"instruction: {display_instruction_title(item)}", border_style="magenta"))
+    else:
+        print_instruction_metadata(item)
+    console.print(Rule("instruction to intrinsic mapping", style="cyan"))
+    print_intrinsic_mapping(catalog, item, conn=conn)
+    print_operand_block(item)
+    print_generic_table(
+        measurement_rows(item),
+        "measurements",
+        preferred_order=_MEASUREMENT_PREFERRED_ORDER,
+        border_style="green",
+        exclude_keys=_MEASUREMENT_EXCLUDE_KEYS,
+        include_extras=False,
+    )
+
+
+def render_instruction(catalog, item, conn=None) -> None:
+    """Render full instruction detail view."""
+    render_instruction_sections(catalog, item, include_title=True, conn=conn)
+
+
+def render_instruction_variants(query: str, items, show_fp16: bool = False) -> None:
+    """Render a variant selection table for a mnemonic with multiple forms."""
+    all_items = instruction_variant_items(items)
+    visible_items = [item for item in all_items if isa_visible(item.isa, show_fp16=show_fp16)]
+    items = visible_items or all_items
+    table = Table(header_style="bold cyan")
+    table.add_column("#", width=3, style="cyan")
+    table.add_column("query", style="cyan")
+    table.add_column("isa", width=14)
+    table.add_column("lat", width=5)
+    table.add_column("cpi", width=5)
+    table.add_column("summary")
+    for index, item in enumerate(items, start=1):
+        lat, cpi = variant_perf_summary(item.arch_details)
+        table.add_row(
+            str(index),
+            instruction_query_text(item),
+            display_isa(item.isa),
+            lat,
+            cpi,
+            item.summary or "-",
+        )
+    console.print(Panel(table, title=f"instruction variants: {query}", border_style="magenta"))
+    base_query = query.split()[0] if query.split() else query
+    if items:
+        hidden_count = len(all_items) - len(items)
+        hidden_note = f" Hidden {hidden_count} APX/FP16/BF16 forms by default." if hidden_count > 0 else ""
+        console.print(
+            f"[dim]Open one with `simdref {instruction_query_text(items[0])}` or `simdref {base_query} <index>`. Showing {len(items)} forms.{hidden_note}[/dim]"
+        )
+
+
+def render_search_results(
+    results: list[tuple],
+) -> None:
+    """Render search results table from pre-computed rows.
+
+    Each element in *results* is ``(SearchResult, isa_str, lat, cpi)``.
+    """
+    table = Table(show_header=True, header_style="bold cyan", expand=True)
+    table.add_column("#", width=3, style="cyan")
+    table.add_column("query", width=30, no_wrap=True, overflow="ellipsis")
+    table.add_column("ISA", width=14)
+    table.add_column("lat", width=5)
+    table.add_column("cpi", width=5)
+    table.add_column("summary", min_width=18, overflow="fold")
+    for index, (result, isa, lat, cpi) in enumerate(results, start=1):
+        table.add_row(str(index), result.title, isa, lat, cpi, result.subtitle)
+    console.print(table)

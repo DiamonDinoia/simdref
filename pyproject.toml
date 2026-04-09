@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simdref"
+version = "0.1.0"
+description = "Searchable SIMD intrinsic and instruction reference with CLI, manpages, TUI, LSP, and static web export."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+  {name = "Marco"}
+]
+dependencies = [
+  "httpx>=0.28,<1",
+  "rapidfuzz>=3.9,<4",
+  "rich>=13,<15",
+  "typer>=0.19,<1",
+]
+
+[project.scripts]
+simdref = "simdref.cli:main"
+simdref-lsp = "simdref.lsp:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+simdref = ["fixtures/*.json", "fixtures/*.xml", "templates/*"]

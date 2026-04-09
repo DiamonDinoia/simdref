@@ -1,0 +1,52 @@
+[
+  {
+    "name": "_mm256_add_epi32",
+    "signature": "__m256i _mm256_add_epi32(__m256i a, __m256i b)",
+    "description": "Add packed 32-bit integers in a and b.",
+    "header": "immintrin.h",
+    "isa": ["AVX2"],
+    "category": "Arithmetic",
+    "instructions": ["VPADDD"],
+    "notes": []
+  },
+  {
+    "name": "_mm256_add_ps",
+    "signature": "__m256 _mm256_add_ps(__m256 m1, __m256 m2)",
+    "description": "Performs a SIMD addition of eight packed single-precision floating-point elements in m1 and m2.",
+    "header": "immintrin.h",
+    "isa": ["AVX"],
+    "category": "Arithmetic",
+    "instructions": ["VADDPS"],
+    "notes": []
+  },
+  {
+    "name": "_mm256_add_pd",
+    "signature": "__m256d _mm256_add_pd(__m256d m1, __m256d m2)",
+    "description": "Performs a SIMD addition of four packed double-precision floating-point elements in m1 and m2.",
+    "header": "immintrin.h",
+    "isa": ["AVX"],
+    "category": "Arithmetic",
+    "instructions": ["VADDPD"],
+    "notes": []
+  },
+  {
+    "name": "_mm_add_ps",
+    "signature": "__m128 _mm_add_ps(__m128 a, __m128 b)",
+    "description": "Add packed single-precision floating-point values in a and b.",
+    "header": "xmmintrin.h",
+    "isa": ["SSE"],
+    "category": "Arithmetic",
+    "instructions": ["ADDPS"],
+    "notes": []
+  },
+  {
+    "name": "_mm512_maskz_expandloadu_epi32",
+    "signature": "__m512i _mm512_maskz_expandloadu_epi32(__mmask16 k, void const* mem_addr)",
+    "description": "Load packed 32-bit integers from memory into selected elements using zero-masking.",
+    "header": "immintrin.h",
+    "isa": ["AVX-512F"],
+    "category": "Load",
+    "instructions": ["VPEXPANDD"],
+    "notes": ["This intrinsic may expand to a sequence on older targets."]
+  }
+]

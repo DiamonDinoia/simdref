@@ -1,0 +1,11 @@
+.venv/
+.uv-cache/
+vendor/
+data/derived/
+web/
+share/man/
+__pycache__/
+*.pyc
+dist/
+*.egg-info/
+build/
