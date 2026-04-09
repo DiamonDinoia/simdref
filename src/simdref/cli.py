@@ -62,7 +62,7 @@ from simdref.web import export_web
 app = typer.Typer(help="Search Intel intrinsic and uops.info data from one local catalog.")
 SHOW_FP16_ISAS = False
 
-GITHUB_REPO = "marcobarbone/simdref"
+GITHUB_REPO = "DiamonDinoia/simdref"
 RELEASE_TAG = "data-latest"
 
 
