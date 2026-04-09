@@ -2,7 +2,7 @@ name: Build Data & Deploy
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # Weekly Monday 6am UTC
+    - cron: "0 0 * * 1" # Weekly Monday midnight UTC
   workflow_dispatch:
 
 permissions:
