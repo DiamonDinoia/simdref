@@ -11,32 +11,34 @@ and bundled fixture files for fully offline operation.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 from typing import Any
-import zipfile
 
 import httpx
 
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 
 UOPS_XML_URL = "https://uops.info/instructions.xml"
-INTEL_INDEX_URL = "https://www.intel.com/content/dam/develop/public/us/en/include/intrinsics-guide/index.html"
+INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
+INTEL_INDEX_URL = "https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html"
 INTEL_CANDIDATE_DATA_URLS = [
     "https://www.intel.com/content/dam/develop/public/us/en/include/intrinsics-guide/files/data.js",
     "https://www.intel.com/content/dam/develop/public/us/en/include/intrinsics-guide/files/intrinsics.json",
 ]
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_INTEL_ARCHIVES = [
-    Path("/home/marco/repos/simdref/vendor/intel/Intel-Intrinsics-Guide-Offline-3.6.9.zip"),
-    Path("/home/marco/Downloads/Intel-Intrinsics-Guide-Offline-3.6.9.zip"),
+    _REPO_ROOT / "vendor" / "intel" / "Intel-Intrinsics-Guide-Offline-3.6.9.zip",
 ]
 LOCAL_UOPS_XMLS = [
-    Path("/home/marco/repos/simdref/vendor/uops/instructions.xml"),
-    Path("/home/marco/Downloads/instructions.xml"),
+    _REPO_ROOT / "vendor" / "uops" / "instructions.xml",
 ]
 
 
@@ -142,8 +144,25 @@ def fetch_intel_data(offline: bool = False) -> tuple[str, SourceVersion]:
                 last_error = exc
     except Exception as exc:
         last_error = exc
-    if last_error:
-        return fetch_intel_data(offline=True)
+
+    # Fallback: download the official offline zip package
+    try:
+        with httpx.Client(follow_redirects=True, timeout=60.0) as client:
+            resp = client.get(INTEL_OFFLINE_ZIP_URL)
+            resp.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                for name in zf.namelist():
+                    if name.endswith("data.js") or name.endswith("data.json"):
+                        text = zf.read(name).decode("utf-8", "replace")
+                        return text, SourceVersion(
+                            source="intel-intrinsics-guide",
+                            version="offline-zip-download",
+                            fetched_at=now_iso(),
+                            url=INTEL_OFFLINE_ZIP_URL,
+                        )
+    except Exception as exc:
+        last_error = exc
+
     return fetch_intel_data(offline=True)
 
 
