@@ -7,6 +7,10 @@ single searchable catalog.
 Interfaces: CLI with smart lookup, TUI, LSP hover + completion, generated
 manpages, and a static web app.
 
+[Web App](https://diamondinoia.github.io/simdref/) |
+[TestPyPI](https://test.pypi.org/project/simdref/) |
+[GitHub](https://github.com/DiamonDinoia/simdref)
+
 ## Install
 
 ```bash
@@ -24,7 +28,7 @@ pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/
 ### Development
 
 ```bash
-git clone https://github.com/MarcoBarbone/simdref.git
+git clone https://github.com/DiamonDinoia/simdref.git
 cd simdref
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -123,4 +127,4 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module layout and data flow.
 
 ## License
 
-MIT
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
