@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
+from simdref.pdfparse.intel import INTEL_SDM_URL, parse_intel_sdm
 
 UOPS_XML_URL = "https://uops.info/instructions.xml"
 INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
@@ -39,6 +40,9 @@ LOCAL_INTEL_ARCHIVES = [
 ]
 LOCAL_UOPS_XMLS = [
     _REPO_ROOT / "vendor" / "uops" / "instructions.xml",
+]
+LOCAL_INTEL_SDM_PDFS = [
+    _REPO_ROOT / "vendor" / "intel" / "intel-sdm.pdf",
 ]
 
 
@@ -164,6 +168,39 @@ def fetch_intel_data(offline: bool = False) -> tuple[str, SourceVersion]:
         last_error = exc
 
     return fetch_intel_data(offline=True)
+
+
+def _find_intel_sdm_pdf(offline: bool = False) -> Path | None:
+    """Locate or download the Intel SDM PDF. Returns path or None."""
+    if offline:
+        return None
+    for pdf_path in LOCAL_INTEL_SDM_PDFS:
+        if pdf_path.exists():
+            return pdf_path
+    # Try downloading
+    try:
+        dest = LOCAL_INTEL_SDM_PDFS[0]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with httpx.Client(follow_redirects=True, timeout=120.0) as client:
+            with client.stream("GET", INTEL_SDM_URL) as resp:
+                resp.raise_for_status()
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_bytes(65536):
+                        f.write(chunk)
+        return dest
+    except Exception:
+        return None
+
+
+def _merge_descriptions(
+    instructions: list[InstructionRecord],
+    descriptions: dict[str, dict[str, str]],
+) -> None:
+    """Merge parsed PDF descriptions into instruction records in-place."""
+    for record in instructions:
+        mnemonic = record.mnemonic.upper()
+        if mnemonic in descriptions:
+            record.description = descriptions[mnemonic]
 
 
 def _normalize_isa(value: Any) -> list[str]:
@@ -599,6 +636,16 @@ def build_catalog(offline: bool = False) -> Catalog:
     intrinsics = parse_intel_payload(intel_text)
     instructions = parse_uops_xml(uops_text)
     link_records(intrinsics, instructions)
+
+    # Parse Intel SDM PDF for rich descriptions
+    sdm_path = _find_intel_sdm_pdf(offline=offline)
+    if sdm_path is not None:
+        try:
+            descriptions = parse_intel_sdm(sdm_path)
+            _merge_descriptions(instructions, descriptions)
+        except Exception:
+            pass  # PDF parsing failure is non-fatal
+
     return Catalog(
         intrinsics=sorted(intrinsics, key=lambda item: item.name),
         instructions=sorted(instructions, key=lambda item: (item.mnemonic, item.form)),
