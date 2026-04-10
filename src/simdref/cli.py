@@ -11,7 +11,11 @@ Display and formatting logic lives in :mod:`simdref.display`.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
+from contextlib import contextmanager
 from contextlib import nullcontext as _nullcontext
 from dataclasses import asdict
 from pathlib import Path
@@ -63,6 +67,34 @@ from simdref.web import export_web
 app = typer.Typer(help="Search Intel intrinsic and uops.info data from one local catalog.")
 SHOW_FP16_ISAS = False
 SHORT_MODE = False
+
+
+@contextmanager
+def _pager_context():
+    """Pipe Rich output through a pager that handles ANSI colors."""
+    pager_cmd = os.environ.get("PAGER", "")
+    less = shutil.which("less")
+    if less and ("less" in pager_cmd or not pager_cmd):
+        # Use less -RFX: Raw ANSI, quit-if-one-screen, no-init
+        from rich.pager import Pager
+
+        class _LessPager(Pager):
+            def show(self, content: str) -> None:
+                proc = subprocess.Popen(
+                    [less, "-RFX"],
+                    stdin=subprocess.PIPE,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                try:
+                    proc.communicate(input=content)
+                except KeyboardInterrupt:
+                    proc.kill()
+
+        yield console.pager(pager=_LessPager(), styles=True)
+    else:
+        # Fallback: Rich's default pager without styles (safe)
+        yield console.pager(styles=False)
 
 GITHUB_REPO = "DiamonDinoia/simdref"
 RELEASE_TAG = "data-latest"
@@ -373,7 +405,7 @@ def _smart_lookup(query: str) -> int:
         indexed_family_variant = _select_instruction_variant(None, query, family_items)
         if indexed_family_variant is not None:
             with open_db() as conn:
-                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                with _pager_context() if not SHORT_MODE else _nullcontext():
                     render_instruction(None, indexed_family_variant, conn=conn, short=SHORT_MODE)
             return 0
         if family_query.casefold() == query.casefold():
@@ -382,22 +414,22 @@ def _smart_lookup(query: str) -> int:
     with open_db() as conn:
         intrinsic = load_intrinsic_from_db(conn, query)
         if intrinsic is not None:
-            with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+            with _pager_context() if not SHORT_MODE else _nullcontext():
                 render_intrinsic(None, intrinsic, conn=conn, short=SHORT_MODE)
             return 0
         indexed_variant = _select_instruction_variant(None, query, _find_instructions_fast(" ".join(query.split()[:-1])) if query.split() and query.split()[-1].isdigit() else [])
         if indexed_variant is not None:
-            with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+            with _pager_context() if not SHORT_MODE else _nullcontext():
                 render_instruction(None, indexed_variant, conn=conn, short=SHORT_MODE)
             return 0
         instructions = _find_instructions_fast(query)
         if instructions:
             exact_form = next((item for item in instructions if item.key.casefold() == query.casefold()), None)
             if exact_form is not None:
-                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                with _pager_context() if not SHORT_MODE else _nullcontext():
                     render_instruction(None, exact_form, conn=conn, short=SHORT_MODE)
             elif len(instructions) == 1:
-                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                with _pager_context() if not SHORT_MODE else _nullcontext():
                     render_instruction(None, instructions[0], conn=conn, short=SHORT_MODE)
             else:
                 render_instruction_variants(query, instructions, show_fp16=SHOW_FP16_ISAS)
