@@ -9,3 +9,6 @@ __pycache__/
 dist/
 *.egg-info/
 build/
+
+# Intel SDM PDF (downloaded during update, not redistributed)
+vendor/intel/*.pdf

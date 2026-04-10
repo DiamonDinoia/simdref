@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
   "httpx>=0.28,<1",
+  "pdfplumber>=0.11,<1",
   "rapidfuzz>=3.9,<4",
   "rich>=13,<15",
   "typer>=0.19,<1",
