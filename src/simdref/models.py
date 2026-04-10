@@ -63,6 +63,7 @@ class InstructionRecord:
     linked_intrinsics: list[str] = field(default_factory=list)
     metrics: dict[str, dict[str, str]] = field(default_factory=dict)
     aliases: list[str] = field(default_factory=list)
+    description: dict[str, str] = field(default_factory=dict)
     source: str = "uops.info"
 
     @property
