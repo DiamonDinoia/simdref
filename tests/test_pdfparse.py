@@ -58,3 +58,44 @@ def test_extract_sections_multiple():
 def test_extract_sections_empty_chars():
     sections = extract_sections_from_chars([], heading_min_size=10.0, body_max_size=9.5)
     assert sections == {}
+
+
+from simdref.pdfparse.intel import (
+    parse_instruction_title,
+    KNOWN_SECTIONS,
+    normalize_section_name,
+)
+
+
+def test_parse_instruction_title_basic():
+    assert parse_instruction_title("ADDPS\u2014Add Packed Single Precision Floating-Point Values") == ("ADDPS", "Add Packed Single Precision Floating-Point Values")
+
+
+def test_parse_instruction_title_with_slash():
+    result = parse_instruction_title("MOVDQA/VMOVDQA32/VMOVDQA64\u2014Move Aligned Packed Integer Values")
+    assert result == ("MOVDQA/VMOVDQA32/VMOVDQA64", "Move Aligned Packed Integer Values")
+
+
+def test_parse_instruction_title_no_emdash():
+    assert parse_instruction_title("CHAPTER 3") is None
+
+
+def test_parse_instruction_title_lowercase_rejected():
+    assert parse_instruction_title("The Intel\u00ae Pentium\u00ae Processor (1995\u2014") is None
+
+
+def test_normalize_section_name():
+    assert normalize_section_name("Description") == "Description"
+    assert normalize_section_name("Intel C/C++ Compiler Intrinsic Equivalent") == "Intrinsic Equivalents"
+    assert normalize_section_name("Intel C/C++Compiler Intrinsic Equivalent") == "Intrinsic Equivalents"
+    assert normalize_section_name("SIMD Floating-Point Exceptions") == "SIMD Floating-Point Exceptions"
+    assert normalize_section_name("Numeric Exceptions") == "Numeric Exceptions"
+    assert normalize_section_name("Other Exceptions") == "Other Exceptions"
+    assert normalize_section_name("Flags Affected") == "Flags Affected"
+
+
+def test_known_sections():
+    assert "Description" in KNOWN_SECTIONS
+    assert "Operation" in KNOWN_SECTIONS
+    assert "Intrinsic Equivalents" in KNOWN_SECTIONS
+    assert "Flags Affected" in KNOWN_SECTIONS
