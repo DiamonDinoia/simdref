@@ -101,26 +101,40 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
     """
     import pdfplumber
 
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+
     log.info("parsing Intel SDM: %s", pdf_path)
     pdf = pdfplumber.open(pdf_path)
     total = len(pdf.pages)
     log.info("total pages: %d", total)
 
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+    )
+    progress.start()
+
     # Phase 1: identify instruction title pages
+    scan_task = progress.add_task("Scanning pages", total=total)
     title_pages: list[tuple[int, str, str]] = []
     for i in range(total):
         chars = pdf.pages[i].chars
         title_chars = [c for c in chars if c["size"] >= _TITLE_MIN_SIZE]
         if not title_chars:
+            progress.advance(scan_task)
             continue
         title_text = "".join(c["text"] for c in title_chars).strip()
         parsed = parse_instruction_title(title_text)
         if parsed is not None:
             title_pages.append((i, parsed[0], parsed[1]))
+        progress.advance(scan_task)
 
     log.info("found %d instruction title pages", len(title_pages))
 
     # Phase 2: extract sections for each instruction
+    extract_task = progress.add_task("Extracting descriptions", total=len(title_pages))
     result: dict[str, dict[str, str]] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
         page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
@@ -150,7 +164,9 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
             part = part.strip()
             if part:
                 result[part.upper()] = sections
+        progress.advance(extract_task)
 
+    progress.stop()
     pdf.close()
     log.info("extracted descriptions for %d mnemonics", len(result))
     return result

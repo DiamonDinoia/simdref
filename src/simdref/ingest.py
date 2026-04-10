@@ -177,16 +177,27 @@ def _find_intel_sdm_pdf(offline: bool = False) -> Path | None:
     for pdf_path in LOCAL_INTEL_SDM_PDFS:
         if pdf_path.exists():
             return pdf_path
-    # Try downloading
+    # Try downloading with progress bar
     try:
+        from rich.progress import BarColumn, DownloadColumn, Progress, TransferSpeedColumn
+
         dest = LOCAL_INTEL_SDM_PDFS[0]
         dest.parent.mkdir(parents=True, exist_ok=True)
         with httpx.Client(follow_redirects=True, timeout=120.0) as client:
             with client.stream("GET", INTEL_SDM_URL) as resp:
                 resp.raise_for_status()
-                with open(dest, "wb") as f:
-                    for chunk in resp.iter_bytes(65536):
-                        f.write(chunk)
+                total = int(resp.headers.get("content-length", 0))
+                with Progress(
+                    "[progress.description]{task.description}",
+                    BarColumn(),
+                    DownloadColumn(),
+                    TransferSpeedColumn(),
+                ) as progress:
+                    task = progress.add_task("Downloading Intel SDM PDF", total=total or None)
+                    with open(dest, "wb") as f:
+                        for chunk in resp.iter_bytes(65536):
+                            f.write(chunk)
+                            progress.advance(task, len(chunk))
         return dest
     except Exception:
         return None
