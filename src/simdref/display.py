@@ -565,12 +565,34 @@ def print_instruction_metadata(item) -> None:
     console.print(Panel(table, title="instruction metadata", border_style="magenta"))
 
 
+def print_description_sections(description: dict[str, str]) -> None:
+    """Render instruction description sections as Rich panels."""
+    if not description:
+        return
+    order = [
+        "Description", "Operation", "Intrinsic Equivalents",
+        "Flags Affected", "Exceptions", "SIMD Floating-Point Exceptions",
+        "Numeric Exceptions", "Other Exceptions",
+        "Protected Mode Exceptions", "Real-Address Mode Exceptions",
+        "Virtual-8086 Mode Exceptions", "Compatibility Mode Exceptions",
+        "64-Bit Mode Exceptions",
+    ]
+    shown = set()
+    for key in order:
+        if key in description:
+            console.print(Panel(description[key], title=key, border_style="dim"))
+            shown.add(key)
+    for key, value in description.items():
+        if key not in shown:
+            console.print(Panel(value, title=key, border_style="dim"))
+
+
 # ---------------------------------------------------------------------------
 # High-level render functions
 # ---------------------------------------------------------------------------
 
 
-def render_intrinsic(catalog, item, conn=None) -> None:
+def render_intrinsic(catalog, item, conn=None, short: bool = False) -> None:
     """Render full intrinsic detail view to the terminal."""
     table = Table(show_header=False, box=None)
     table.add_row("signature", item.signature or "-")
@@ -586,6 +608,8 @@ def render_intrinsic(catalog, item, conn=None) -> None:
         if primary.metadata.get("url-ref"):
             table.add_row("reference", canonical_url(primary.metadata["url-ref"]))
     console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
+    if not short and primary and primary.description:
+        print_description_sections(primary.description)
     if linked:
         console.print(Rule("intrinsic to instruction mapping", style="cyan"))
         print_instruction_mapping(catalog, item, conn=conn)
@@ -601,7 +625,7 @@ def render_intrinsic(catalog, item, conn=None) -> None:
         )
 
 
-def render_instruction_sections(catalog, item, include_title: bool = True, conn=None) -> None:
+def render_instruction_sections(catalog, item, include_title: bool = True, conn=None, short: bool = False) -> None:
     """Render instruction detail with optional title panel."""
     if include_title:
         table = Table(show_header=False, box=None)
@@ -621,6 +645,8 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
         console.print(Panel(table, title=f"instruction: {display_instruction_title(item)}", border_style="magenta"))
     else:
         print_instruction_metadata(item)
+    if not short and item.description:
+        print_description_sections(item.description)
     console.print(Rule("instruction to intrinsic mapping", style="cyan"))
     print_intrinsic_mapping(catalog, item, conn=conn)
     print_operand_block(item)
@@ -634,9 +660,9 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
     )
 
 
-def render_instruction(catalog, item, conn=None) -> None:
+def render_instruction(catalog, item, conn=None, short: bool = False) -> None:
     """Render full instruction detail view."""
-    render_instruction_sections(catalog, item, include_title=True, conn=conn)
+    render_instruction_sections(catalog, item, include_title=True, conn=conn, short=short)
 
 
 def render_instruction_variants(query: str, items, show_fp16: bool = False) -> None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import nullcontext as _nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -61,6 +62,7 @@ from simdref.web import export_web
 
 app = typer.Typer(help="Search Intel intrinsic and uops.info data from one local catalog.")
 SHOW_FP16_ISAS = False
+SHORT_MODE = False
 
 GITHUB_REPO = "DiamonDinoia/simdref"
 RELEASE_TAG = "data-latest"
@@ -371,7 +373,8 @@ def _smart_lookup(query: str) -> int:
         indexed_family_variant = _select_instruction_variant(None, query, family_items)
         if indexed_family_variant is not None:
             with open_db() as conn:
-                render_instruction(None, indexed_family_variant, conn=conn)
+                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                    render_instruction(None, indexed_family_variant, conn=conn, short=SHORT_MODE)
             return 0
         if family_query.casefold() == query.casefold():
             render_instruction_variants(query, family_items, show_fp16=SHOW_FP16_ISAS)
@@ -379,19 +382,23 @@ def _smart_lookup(query: str) -> int:
     with open_db() as conn:
         intrinsic = load_intrinsic_from_db(conn, query)
         if intrinsic is not None:
-            render_intrinsic(None, intrinsic, conn=conn)
+            with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                render_intrinsic(None, intrinsic, conn=conn, short=SHORT_MODE)
             return 0
         indexed_variant = _select_instruction_variant(None, query, _find_instructions_fast(" ".join(query.split()[:-1])) if query.split() and query.split()[-1].isdigit() else [])
         if indexed_variant is not None:
-            render_instruction(None, indexed_variant, conn=conn)
+            with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                render_instruction(None, indexed_variant, conn=conn, short=SHORT_MODE)
             return 0
         instructions = _find_instructions_fast(query)
         if instructions:
             exact_form = next((item for item in instructions if item.key.casefold() == query.casefold()), None)
             if exact_form is not None:
-                render_instruction(None, exact_form, conn=conn)
+                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                    render_instruction(None, exact_form, conn=conn, short=SHORT_MODE)
             elif len(instructions) == 1:
-                render_instruction(None, instructions[0], conn=conn)
+                with console.pager(styles=True) if not SHORT_MODE else _nullcontext():
+                    render_instruction(None, instructions[0], conn=conn, short=SHORT_MODE)
             else:
                 render_instruction_variants(query, instructions, show_fp16=SHOW_FP16_ISAS)
             return 0
@@ -595,12 +602,15 @@ def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output direct
 
 def main() -> int:
     """CLI entry point — dispatches to subcommand or smart lookup."""
-    global SHOW_FP16_ISAS
+    global SHOW_FP16_ISAS, SHORT_MODE
     argv = sys.argv[1:]
     if "--fp16" in argv:
         SHOW_FP16_ISAS = True
         argv = [arg for arg in argv if arg != "--fp16"]
-        sys.argv = [sys.argv[0], *argv]
+    if "--short" in argv or "-s" in argv:
+        SHORT_MODE = True
+        argv = [arg for arg in argv if arg not in ("--short", "-s")]
+    sys.argv = [sys.argv[0], *argv]
     commands = {"update", "search", "show", "man", "doctor", "tui", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         return _smart_lookup(" ".join(argv))
