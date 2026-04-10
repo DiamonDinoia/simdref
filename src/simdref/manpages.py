@@ -62,11 +62,21 @@ def intrinsic_page(record: IntrinsicRecord, catalog: Catalog) -> str:
 def instruction_page(record: InstructionRecord) -> str:
     parts = [f'.TH "{record.mnemonic}" "7" "simdref" "simdref" "SIMD Instruction Reference"\n']
     parts.append(_section("NAME", f"{_roff_escape(record.key)} \\- {_roff_escape(record.summary)}"))
-    parts.append(_section("DESCRIPTION", _roff_escape(record.summary)))
+    if record.description.get("Description"):
+        parts.append(_section("DESCRIPTION", _roff_escape(record.description["Description"])))
+    else:
+        parts.append(_section("DESCRIPTION", _roff_escape(record.summary)))
+    if record.description.get("Operation"):
+        parts.append(_section("OPERATION", f".nf\n{_roff_escape(record.description['Operation'])}\n.fi"))
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("OPERANDS", _roff_escape("\n".join(record.operands) or "No operand details available.")))
     parts.append(_section("INTRINSICS", _roff_escape(", ".join(record.linked_intrinsics) or "None linked")))
     parts.append(_section("PERFORMANCE DETAILS", _roff_escape("\n".join(_metric_lines(record)) or "No performance metrics available.")))
+    if record.description.get("Flags Affected"):
+        parts.append(_section("FLAGS AFFECTED", _roff_escape(record.description["Flags Affected"])))
+    for exc_key in ("Exceptions", "SIMD Floating-Point Exceptions", "Numeric Exceptions", "Other Exceptions"):
+        if record.description.get(exc_key):
+            parts.append(_section(exc_key.upper(), _roff_escape(record.description[exc_key])))
     return "".join(parts)
 
 
