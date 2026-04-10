@@ -54,7 +54,7 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.json"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "3"
+SQLITE_SCHEMA_VERSION = "4"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
