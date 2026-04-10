@@ -543,6 +543,34 @@ a:hover { text-decoration: underline; }
   background: var(--code-bg);
 }
 
+/* Description sections */
+.desc-section { margin-bottom: 0.5rem; }
+.desc-section summary {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.3rem 0;
+}
+.desc-section summary:hover { color: var(--text); }
+.desc-body {
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding: 0.5rem 0;
+  white-space: pre-wrap;
+}
+.desc-code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.75rem;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  white-space: pre;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .layout {

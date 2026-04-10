@@ -133,6 +133,7 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
             "mnemonic": item.mnemonic,
             "form": item.form,
             "summary": item.summary,
+            "description": item.description,
             "isa": item.isa,
             "operand_details": [
                 {

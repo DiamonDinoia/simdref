@@ -349,6 +349,43 @@ function renderMeasurements(measurements) {
   return html;
 }
 
+/* ── Description sections ────────────────────────────────────────── */
+const descSectionOrder = [
+  "Description", "Operation", "Intrinsic Equivalents",
+  "Flags Affected", "Exceptions", "SIMD Floating-Point Exceptions",
+  "Numeric Exceptions", "Other Exceptions",
+  "Protected Mode Exceptions", "Real-Address Mode Exceptions",
+  "Virtual-8086 Mode Exceptions", "Compatibility Mode Exceptions",
+  "64-Bit Mode Exceptions",
+];
+const codeSections = new Set(["Operation", "Intrinsic Equivalents"]);
+
+function renderDescriptionSections(description) {
+  if (!description || !Object.keys(description).length) return "";
+  const shown = new Set();
+  let html = "";
+  for (const key of descSectionOrder) {
+    if (description[key]) {
+      const isCode = codeSections.has(key);
+      const isFirst = key === "Description";
+      html += `<details class="desc-section"${isFirst ? " open" : ""}>
+        <summary>${esc(key)}</summary>
+        ${isCode ? `<pre class="desc-code">${esc(description[key])}</pre>` : `<div class="desc-body">${esc(description[key])}</div>`}
+      </details>`;
+      shown.add(key);
+    }
+  }
+  for (const [key, value] of Object.entries(description)) {
+    if (!shown.has(key)) {
+      html += `<details class="desc-section">
+        <summary>${esc(key)}</summary>
+        <div class="desc-body">${esc(value)}</div>
+      </details>`;
+    }
+  }
+  return html;
+}
+
 /* ── Detail rendering ─────────────────────────────────────────────── */
 const operandHeaders = [
   {key: "idx", label: "Idx"},
@@ -382,6 +419,9 @@ function renderIntrinsicDetail(item, detail) {
       <h3>Description</h3>
       <div>${esc(detail ? detail.description : item.description)}</div>
     </section>
+    ${detail && detail._instrDescription && Object.keys(detail._instrDescription).length ? `<section class="section">
+      ${renderDescriptionSections(detail._instrDescription)}
+    </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
       <dl class="kv">
@@ -437,9 +477,12 @@ function renderInstructionDetail(item, detail) {
       </div>
     </div>
     <section class="section">
-      <h3>Description</h3>
+      <h3>Summary</h3>
       <div>${esc(d.summary || item.summary || "-")}</div>
     </section>
+    ${d.description && Object.keys(d.description).length ? `<section class="section">
+      ${renderDescriptionSections(d.description)}
+    </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
       <dl class="kv">
@@ -499,6 +542,7 @@ async function renderDetail(entry) {
         detail = intrDetails[entry.item.name] || entry.item;
         detail._measurements = instrDetail.measurements || [];
         detail._operands = instrDetail.operand_details || [];
+        detail._instrDescription = instrDetail.description || {};
         detail._url = instrDetail.metadata ? canonUrl(instrDetail.metadata.url) : "";
         detail._urlRef = instrDetail.metadata ? canonUrl(instrDetail.metadata["url-ref"]) : "";
       }
