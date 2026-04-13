@@ -67,6 +67,7 @@ from simdref.web import export_web
 app = typer.Typer(help="Search Intel intrinsic and uops.info data from one local catalog.")
 SHOW_FP16_ISAS = False
 SHORT_MODE = False
+FULL_MODE = False
 
 
 @contextmanager
@@ -398,45 +399,9 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
 
 
 def _smart_lookup(query: str) -> int:
+    """Open the TUI pre-filled with the given query."""
     ensure_runtime()
-    family_query = " ".join(query.split()[:-1]).strip() if query.split() and query.split()[-1].isdigit() else query
-    family_items = _find_instruction_family_fast(family_query)
-    if family_items:
-        indexed_family_variant = _select_instruction_variant(None, query, family_items)
-        if indexed_family_variant is not None:
-            with open_db() as conn:
-                with _pager_context() if not SHORT_MODE else _nullcontext():
-                    render_instruction(None, indexed_family_variant, conn=conn, short=SHORT_MODE)
-            return 0
-        if family_query.casefold() == query.casefold():
-            render_instruction_variants(query, family_items, show_fp16=SHOW_FP16_ISAS)
-            return 0
-    with open_db() as conn:
-        intrinsic = load_intrinsic_from_db(conn, query)
-        if intrinsic is not None:
-            with _pager_context() if not SHORT_MODE else _nullcontext():
-                render_intrinsic(None, intrinsic, conn=conn, short=SHORT_MODE)
-            return 0
-        indexed_variant = _select_instruction_variant(None, query, _find_instructions_fast(" ".join(query.split()[:-1])) if query.split() and query.split()[-1].isdigit() else [])
-        if indexed_variant is not None:
-            with _pager_context() if not SHORT_MODE else _nullcontext():
-                render_instruction(None, indexed_variant, conn=conn, short=SHORT_MODE)
-            return 0
-        instructions = _find_instructions_fast(query)
-        if instructions:
-            exact_form = next((item for item in instructions if item.key.casefold() == query.casefold()), None)
-            if exact_form is not None:
-                with _pager_context() if not SHORT_MODE else _nullcontext():
-                    render_instruction(None, exact_form, conn=conn, short=SHORT_MODE)
-            elif len(instructions) == 1:
-                with _pager_context() if not SHORT_MODE else _nullcontext():
-                    render_instruction(None, instructions[0], conn=conn, short=SHORT_MODE)
-            else:
-                render_instruction_variants(query, instructions, show_fp16=SHOW_FP16_ISAS)
-            return 0
-    with open_db() as conn:
-        _print_search_results_runtime(conn, query)
-    return 0
+    return run_tui(initial_query=query)
 
 
 # ---------------------------------------------------------------------------
@@ -615,8 +580,8 @@ def doctor() -> None:
 @app.command()
 def tui() -> None:
     """Run the interactive terminal UI."""
-    catalog = ensure_catalog()
-    raise typer.Exit(code=run_tui(catalog))
+    ensure_runtime()
+    raise typer.Exit(code=run_tui())
 
 
 @app.command("export-web")
@@ -634,7 +599,7 @@ def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output direct
 
 def main() -> int:
     """CLI entry point — dispatches to subcommand or smart lookup."""
-    global SHOW_FP16_ISAS, SHORT_MODE
+    global SHOW_FP16_ISAS, SHORT_MODE, FULL_MODE
     argv = sys.argv[1:]
     if "--fp16" in argv:
         SHOW_FP16_ISAS = True
@@ -642,9 +607,15 @@ def main() -> int:
     if "--short" in argv or "-s" in argv:
         SHORT_MODE = True
         argv = [arg for arg in argv if arg not in ("--short", "-s")]
+    if "--full" in argv or "-f" in argv:
+        FULL_MODE = True
+        argv = [arg for arg in argv if arg not in ("--full", "-f")]
     sys.argv = [sys.argv[0], *argv]
     commands = {"update", "search", "show", "man", "doctor", "tui", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         return _smart_lookup(" ".join(argv))
+    if not argv:
+        ensure_runtime()
+        return run_tui()
     app()
     return 0

@@ -17,6 +17,7 @@ dependencies = [
   "pdfplumber>=0.11,<1",
   "rapidfuzz>=3.9,<4",
   "rich>=13,<15",
+  "textual>=1.0,<2",
   "typer>=0.19,<1",
 ]
 

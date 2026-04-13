@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from pathlib import Path
 
 from simdref.pdfparse.base import extract_sections_from_chars
@@ -30,6 +31,7 @@ _SKIP_WORDS = frozenset({"CHAPTER", "CONTENTS", "APPENDIX", "VOLUME", "INSTRUCTI
 _TITLE_MIN_SIZE = 11.5
 _HEADING_MIN_SIZE = 9.8
 _BODY_MAX_SIZE = 9.5
+_BODY_MIN_SIZE = 8.0  # Filter superscripts (®, footnote markers)
 
 # Canonical section names and aliases.
 KNOWN_SECTIONS: set[str] = {
@@ -37,27 +39,71 @@ KNOWN_SECTIONS: set[str] = {
     "Operation",
     "Intrinsic Equivalents",
     "Flags Affected",
+    "FPU Flags Affected",
     "Exceptions",
     "Numeric Exceptions",
     "SIMD Floating-Point Exceptions",
+    "Floating-Point Exceptions",
     "Other Exceptions",
+    "Other Mode Exceptions",
     "Protected Mode Exceptions",
     "Real-Address Mode Exceptions",
+    "Real Address Mode Exceptions",
     "Virtual-8086 Mode Exceptions",
+    "Virtual-8086 Exceptions",
+    "Virtual 8086 Mode Exceptions",
     "Compatibility Mode Exceptions",
     "64-Bit Mode Exceptions",
+    "x87 FPU and SIMD Floating-Point Exceptions",
 }
 
 _SECTION_ALIASES: dict[str, str] = {
     "intel c/c++ compiler intrinsic equivalent": "Intrinsic Equivalents",
+    "intel c/c++ compiler intrinsic equivalents": "Intrinsic Equivalents",
     "intel c/c++compiler intrinsic equivalent": "Intrinsic Equivalents",
+    "intel c/c++compiler intrinsic equivalents": "Intrinsic Equivalents",
     "c/c++ compiler intrinsic equivalent": "Intrinsic Equivalents",
+    "c/c++ compiler intrinsic equivalents": "Intrinsic Equivalents",
     "intrinsic equivalent": "Intrinsic Equivalents",
+    "intrinsic equivalents": "Intrinsic Equivalents",
     "instruction operand encoding": "Operand Encoding",
+    "fpu flags affected": "FPU Flags Affected",
+    "floating-point exceptions": "Floating-Point Exceptions",
 }
 
-# Footer pattern: "MNEMONIC—... Vol. 2X N-NN"
-_FOOTER_RE = re.compile(r"^.+Vol\.\s*2[A-D]?\s+\d+-\d+$")
+# Footer pattern: "MNEMONIC—... Vol. 2X N-NN" (space between volume and page optional)
+_FOOTER_RE = re.compile(r"^.+Vol\.\s*2[A-D]?\s*\d+-\d+$")
+
+# Sections to discard (tabular data that doesn't render well as text).
+_DISCARD_SECTIONS: frozenset[str] = frozenset({
+    "Instruction Operand Encoding",
+    "Operand Encoding",
+})
+
+# Sections whose text is pseudocode and should preserve indentation from x0.
+_CODE_SECTIONS: frozenset[str] = frozenset({
+    "Operation",
+    "Intrinsic Equivalents",
+})
+
+# All heading names (lowercase) for content-based heading detection.
+# Some Intel SDM pages format section headings at body text size.
+_ALL_HEADING_NAMES: frozenset[str] = frozenset(
+    {s.lower() for s in KNOWN_SECTIONS}
+    | set(_SECTION_ALIASES.keys())
+    | {s.lower() for s in _DISCARD_SECTIONS}
+)
+
+# Minimal safety-net for junk lines that appear outside table bounding boxes.
+_JUNK_LINE_RE = re.compile(
+    r"^\d+\.\s+See note "             # footnote references (1. See note ...)
+    r"|^NOTES:\s*$"                     # trailing NOTES: line
+)
+
+
+# Maximum fraction of page area a single table can cover before we
+# consider it a false-positive detection by pdfplumber.
+_TABLE_MAX_PAGE_FRACTION = 0.85
 
 
 def normalize_section_name(raw: str) -> str:
@@ -116,25 +162,26 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
     )
     progress.start()
 
-    # Phase 1: identify instruction title pages
+    # Phase 1: identify instruction title pages (fast — no table detection).
     scan_task = progress.add_task("Scanning pages", total=total)
     title_pages: list[tuple[int, str, str]] = []
     for i in range(total):
-        chars = pdf.pages[i].chars
+        page = pdf.pages[i]
+        chars = page.chars
         title_chars = [c for c in chars if c["size"] >= _TITLE_MIN_SIZE]
-        if not title_chars:
-            progress.advance(scan_task)
-            continue
-        title_text = "".join(c["text"] for c in title_chars).strip()
-        parsed = parse_instruction_title(title_text)
-        if parsed is not None:
-            title_pages.append((i, parsed[0], parsed[1]))
+        if title_chars:
+            title_text = "".join(c["text"] for c in title_chars).strip()
+            parsed = parse_instruction_title(title_text)
+            if parsed is not None:
+                title_pages.append((i, parsed[0], parsed[1]))
         progress.advance(scan_task)
 
     log.info("found %d instruction title pages", len(title_pages))
 
-    # Phase 2: extract sections for each instruction
+    # Phase 2: extract sections for each instruction.
+    # Table bounding boxes are computed on-demand (only instruction pages).
     extract_task = progress.add_task("Extracting descriptions", total=len(title_pages))
+    page_table_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
     result: dict[str, dict[str, str]] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
         page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
@@ -142,21 +189,97 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
         all_chars: list[dict] = []
         for page_idx in range(page_start, page_end):
             page_chars = pdf.pages[page_idx].chars
+            # Lazily compute and cache table bboxes for this page.
+            if page_idx not in page_table_bboxes:
+                tables = pdf.pages[page_idx].find_tables()
+                if tables:
+                    page_area = pdf.pages[page_idx].width * pdf.pages[page_idx].height
+                    bboxes_list = []
+                    for t in tables:
+                        bx0, by0, bx1, by1 = t.bbox
+                        table_area = (bx1 - bx0) * (by1 - by0)
+                        if table_area / page_area < _TABLE_MAX_PAGE_FRACTION:
+                            bboxes_list.append((bx0, by0, bx1, by1))
+                    page_table_bboxes[page_idx] = bboxes_list
+                else:
+                    page_table_bboxes[page_idx] = []
+            bboxes = page_table_bboxes[page_idx]
             for c in page_chars:
-                if c["size"] < _TITLE_MIN_SIZE:
-                    all_chars.append(c)
+                if c["size"] >= _TITLE_MIN_SIZE or c["size"] < _BODY_MIN_SIZE:
+                    continue
+                # Exclude characters inside table bounding boxes.
+                if bboxes and any(
+                    bbox[0] <= c["x0"] <= bbox[2] and bbox[1] <= c["top"] <= bbox[3]
+                    for bbox in bboxes
+                ):
+                    continue
+                all_chars.append(c)
 
         raw_sections = extract_sections_from_chars(
             all_chars,
             heading_min_size=_HEADING_MIN_SIZE,
             body_max_size=_BODY_MAX_SIZE,
+            known_headings=_ALL_HEADING_NAMES,
         )
 
         sections: dict[str, str] = {}
-        for heading, body in raw_sections.items():
+        for heading, line_tuples in raw_sections.items():
             canonical = normalize_section_name(heading)
-            lines = [line for line in body.split("\n") if not _FOOTER_RE.match(line)]
-            cleaned = "\n".join(lines).strip()
+            if canonical in _DISCARD_SECTIONS:
+                continue
+            # Keep only recognized sections and exception variants.
+            if canonical not in KNOWN_SECTIONS:
+                lower = canonical.lower()
+                if not lower.endswith("exceptions") or lower[0].isdigit() or "table" in lower:
+                    continue
+            # Filter footer and residual junk lines.
+            filtered = [
+                (x0, text) for x0, text in line_tuples
+                if not _FOOTER_RE.match(text) and not _JUNK_LINE_RE.match(text)
+            ]
+            if not filtered:
+                continue
+            if canonical in _CODE_SECTIONS:
+                # Reconstruct indentation from x0 positions.
+                min_x0 = min(x0 for x0, _ in filtered)
+                indent_unit = 18.0  # ~18pt per indent level in Intel SDM
+                out_lines = []
+                for x0, text in filtered:
+                    level = round((x0 - min_x0) / indent_unit)
+                    out_lines.append("    " * level + text)
+                cleaned = "\n".join(out_lines).strip()
+            else:
+                # Filter footnote lines between tables that have a
+                # significantly different left-edge position (x0).
+                if len(filtered) > 3:
+                    x0_counts: Counter[int] = Counter(
+                        round(x0) for x0, _ in filtered
+                    )
+                    dominant_x0 = x0_counts.most_common(1)[0][0]
+                    filtered = [
+                        (x0, t) for x0, t in filtered
+                        if abs(round(x0) - dominant_x0) <= 3
+                    ]
+                prose_lines = [text for _, text in filtered]
+                # Join PDF-wrapped lines into paragraphs.  A new paragraph
+                # starts when the previous line ends with sentence-terminal
+                # punctuation.  Bullet/numbered list items also start new
+                # paragraphs.
+                paragraphs: list[str] = []
+                for line in prose_lines:
+                    if not paragraphs:
+                        paragraphs.append(line)
+                    elif paragraphs[-1][-1:] in ".):;":
+                        paragraphs.append(line)
+                    elif line[:1] in ("\u2022", "\u2013") or re.match(r"^\d+\.\s", line):
+                        # Bullet points or numbered list items.
+                        paragraphs.append(line)
+                    elif paragraphs[-1].endswith("-"):
+                        # De-hyphenate word breaks (e.g. "indi-\ncate").
+                        paragraphs[-1] = paragraphs[-1][:-1] + line
+                    else:
+                        paragraphs[-1] += " " + line
+                cleaned = "\n".join(paragraphs).strip()
             if cleaned:
                 sections[canonical] = cleaned
 

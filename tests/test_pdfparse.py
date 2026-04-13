@@ -29,7 +29,7 @@ def test_extract_sections_basic():
     ]
     sections = extract_sections_from_chars(chars, heading_min_size=10.0, body_max_size=9.5)
     assert "Description" in sections
-    assert "Body." in sections["Description"]
+    assert any("Body." in text for _, text in sections["Description"])
 
 
 def test_extract_sections_multiple():
@@ -50,9 +50,9 @@ def test_extract_sections_multiple():
 
     sections = extract_sections_from_chars(chars, heading_min_size=10.0, body_max_size=9.5)
     assert "Description" in sections
-    assert "First body." in sections["Description"]
+    assert any("First body." in text for _, text in sections["Description"])
     assert "Operation" in sections
-    assert "DEST := SRC" in sections["Operation"]
+    assert any("DEST := SRC" in text for _, text in sections["Operation"])
 
 
 def test_extract_sections_empty_chars():
@@ -99,3 +99,10 @@ def test_known_sections():
     assert "Operation" in KNOWN_SECTIONS
     assert "Intrinsic Equivalents" in KNOWN_SECTIONS
     assert "Flags Affected" in KNOWN_SECTIONS
+    assert "FPU Flags Affected" in KNOWN_SECTIONS
+    assert "Floating-Point Exceptions" in KNOWN_SECTIONS
+
+
+def test_normalize_fpu_sections():
+    assert normalize_section_name("FPU Flags Affected") == "FPU Flags Affected"
+    assert normalize_section_name("Floating-Point Exceptions") == "Floating-Point Exceptions"

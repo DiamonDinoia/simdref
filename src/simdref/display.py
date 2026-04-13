@@ -565,26 +565,69 @@ def print_instruction_metadata(item) -> None:
     console.print(Panel(table, title="instruction metadata", border_style="magenta"))
 
 
-def print_description_sections(description: dict[str, str]) -> None:
-    """Render instruction description sections as Rich panels."""
+_DESCRIPTION_ORDER = [
+    "Description", "Operation", "Intrinsic Equivalents",
+    "Flags Affected", "FPU Flags Affected",
+    "Exceptions", "SIMD Floating-Point Exceptions",
+    "Floating-Point Exceptions", "x87 FPU and SIMD Floating-Point Exceptions",
+    "Numeric Exceptions", "Other Exceptions", "Other Mode Exceptions",
+    "Protected Mode Exceptions", "Real-Address Mode Exceptions",
+    "Real Address Mode Exceptions",
+    "Virtual-8086 Mode Exceptions", "Virtual-8086 Exceptions",
+    "Virtual 8086 Mode Exceptions",
+    "Compatibility Mode Exceptions", "64-Bit Mode Exceptions",
+]
+
+# Sections that are always shown expanded.
+_EXPANDED_SECTIONS = {"Description", "Flags Affected"}
+
+# Syntax language per code section.
+_CODE_SECTION_LANG = {
+    "Operation": "asm",
+    "Intrinsic Equivalents": "c",
+}
+
+
+def print_description_sections(
+    description: dict[str, str],
+    full: bool = False,
+) -> None:
+    """Render instruction description sections as Rich panels.
+
+    By default, only Description and Flags Affected are expanded.
+    Other sections show a collapsed summary line.  Pass *full=True*
+    to expand everything.
+    """
     if not description:
         return
-    order = [
-        "Description", "Operation", "Intrinsic Equivalents",
-        "Flags Affected", "Exceptions", "SIMD Floating-Point Exceptions",
-        "Numeric Exceptions", "Other Exceptions",
-        "Protected Mode Exceptions", "Real-Address Mode Exceptions",
-        "Virtual-8086 Mode Exceptions", "Compatibility Mode Exceptions",
-        "64-Bit Mode Exceptions",
-    ]
-    shown = set()
-    for key in order:
+    shown: set[str] = set()
+    for key in _DESCRIPTION_ORDER:
         if key in description:
-            console.print(Panel(description[key], title=key, border_style="dim"))
+            expand = full or key in _EXPANDED_SECTIONS
+            _print_section(key, description[key], expand=expand)
             shown.add(key)
     for key, value in description.items():
         if key not in shown:
-            console.print(Panel(value, title=key, border_style="dim"))
+            expand = full or key in _EXPANDED_SECTIONS
+            _print_section(key, value, expand=expand)
+
+
+def _print_section(title: str, body: str, expand: bool = True) -> None:
+    from rich.syntax import Syntax
+    from rich.text import Text
+
+    if not expand:
+        line_count = body.count("\n") + 1
+        summary = Text(f"  \u25b8 {title} ({line_count} lines)", style="dim")
+        console.print(summary)
+        return
+
+    lang = _CODE_SECTION_LANG.get(title)
+    if lang:
+        syntax = Syntax(body, lang, theme="monokai", word_wrap=True)
+        console.print(Panel(syntax, title=title, border_style="dim"))
+    else:
+        console.print(Panel(body, title=title, border_style="dim"))
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +635,7 @@ def print_description_sections(description: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def render_intrinsic(catalog, item, conn=None, short: bool = False) -> None:
+def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool = False) -> None:
     """Render full intrinsic detail view to the terminal."""
     table = Table(show_header=False, box=None)
     table.add_row("signature", item.signature or "-")
@@ -609,7 +652,7 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False) -> None:
             table.add_row("reference", canonical_url(primary.metadata["url-ref"]))
     console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
     if not short and primary and primary.description:
-        print_description_sections(primary.description)
+        print_description_sections(primary.description, full=full)
     if linked:
         console.print(Rule("intrinsic to instruction mapping", style="cyan"))
         print_instruction_mapping(catalog, item, conn=conn)
@@ -625,7 +668,7 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False) -> None:
         )
 
 
-def render_instruction_sections(catalog, item, include_title: bool = True, conn=None, short: bool = False) -> None:
+def render_instruction_sections(catalog, item, include_title: bool = True, conn=None, short: bool = False, full: bool = False) -> None:
     """Render instruction detail with optional title panel."""
     if include_title:
         table = Table(show_header=False, box=None)
@@ -646,7 +689,7 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
     else:
         print_instruction_metadata(item)
     if not short and item.description:
-        print_description_sections(item.description)
+        print_description_sections(item.description, full=full)
     console.print(Rule("instruction to intrinsic mapping", style="cyan"))
     print_intrinsic_mapping(catalog, item, conn=conn)
     print_operand_block(item)
@@ -660,9 +703,9 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
     )
 
 
-def render_instruction(catalog, item, conn=None, short: bool = False) -> None:
+def render_instruction(catalog, item, conn=None, short: bool = False, full: bool = False) -> None:
     """Render full instruction detail view."""
-    render_instruction_sections(catalog, item, include_title=True, conn=conn, short=short)
+    render_instruction_sections(catalog, item, include_title=True, conn=conn, short=short, full=full)
 
 
 def render_instruction_variants(query: str, items, show_fp16: bool = False) -> None:
