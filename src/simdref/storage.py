@@ -7,13 +7,14 @@ full-text search with BM25 ranking.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sqlite3
 import sys
 from dataclasses import asdict
 from pathlib import Path
+
+import msgpack
 
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 
@@ -52,9 +53,9 @@ else:
     WEB_DIR = DATA_DIR / "web"
     DEFAULT_MAN_DIR = DATA_DIR / "man"
 
-CATALOG_PATH = DATA_DIR / "catalog.json"
+CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "4"
+SQLITE_SCHEMA_VERSION = "8"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
@@ -63,13 +64,13 @@ def ensure_dir(path: Path) -> None:
 
 
 def load_catalog(path: Path = CATALOG_PATH) -> Catalog:
-    payload = json.loads(path.read_text())
+    payload = msgpack.unpackb(path.read_bytes(), raw=False)
     return Catalog.from_dict(payload)
 
 
 def save_catalog(catalog: Catalog, path: Path = CATALOG_PATH) -> None:
     ensure_dir(path.parent)
-    path.write_text(json.dumps(catalog.to_dict(), indent=2, sort_keys=True))
+    path.write_bytes(msgpack.packb(catalog.to_dict(), use_bin_type=True))
 
 
 def open_db(path: Path = SQLITE_PATH) -> sqlite3.Connection:
@@ -89,7 +90,7 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None or row[0] != SQLITE_SCHEMA_VERSION:
             return False
-        expected_columns = {"id", "name", "signature", "description", "header", "isa", "category", "payload"}
+        expected_columns = {"id", "name", "signature", "description", "header", "isa", "category", "subcategory", "payload"}
         actual_columns = {item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()}
         if expected_columns != actual_columns:
             return False
@@ -100,6 +101,18 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         return False
     finally:
         conn.close()
+
+
+_ALPHA_NUM_SPLIT = re.compile(r"[a-zA-Z]+|[0-9]+")
+
+
+def _tokenize_name(name: str) -> str:
+    """Split alpha/numeric boundaries for better FTS matching.
+
+    _mm256_add_epi32 → mm 256 add epi 32
+    VADDPS (YMM, YMM, YMM) → vaddps ymm ymm ymm
+    """
+    return " ".join(_ALPHA_NUM_SPLIT.findall(name)).lower()
 
 
 def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
@@ -117,96 +130,129 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         );
         CREATE TABLE sources (
             source TEXT PRIMARY KEY,
-            payload TEXT NOT NULL
+            payload BLOB NOT NULL
         );
         CREATE TABLE intrinsics_data (
             id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL COLLATE NOCASE,
             signature TEXT NOT NULL,
             description TEXT NOT NULL,
             header TEXT NOT NULL,
             isa TEXT NOT NULL,
             category TEXT NOT NULL,
-            payload TEXT NOT NULL
+            subcategory TEXT NOT NULL DEFAULT '',
+            payload BLOB NOT NULL
         );
         CREATE INDEX idx_intrinsic_name ON intrinsics_data (name);
         CREATE TABLE instructions_data (
-            key TEXT PRIMARY KEY,
-            mnemonic TEXT NOT NULL,
+            key TEXT PRIMARY KEY COLLATE NOCASE,
+            mnemonic TEXT NOT NULL COLLATE NOCASE,
             form TEXT NOT NULL,
             summary TEXT NOT NULL,
             isa TEXT NOT NULL,
-            payload TEXT NOT NULL
+            payload BLOB NOT NULL
         );
         CREATE INDEX idx_instruction_mnemonic ON instructions_data (mnemonic);
-        CREATE VIRTUAL TABLE intrinsics_fts USING fts5(name, signature, description, header, isa, category, instructions, notes, aliases);
-        CREATE VIRTUAL TABLE instructions_fts USING fts5(key, mnemonic, form, summary, isa, linked_intrinsics, aliases);
+        CREATE VIRTUAL TABLE intrinsics_fts USING fts5(name, signature, description, header, isa, category, instructions, notes, aliases, summary, name_tokens);
+        CREATE VIRTUAL TABLE instructions_fts USING fts5(key, mnemonic, form, summary, isa, linked_intrinsics, aliases, key_tokens);
         """
     )
     cur.execute("INSERT INTO meta VALUES (?, ?)", ("schema_version", SQLITE_SCHEMA_VERSION))
     cur.execute("INSERT INTO meta VALUES (?, ?)", ("generated_at", catalog.generated_at))
-    for source in catalog.sources:
-        cur.execute("INSERT INTO sources VALUES (?, ?)", (source.source, json.dumps(asdict(source), sort_keys=True)))
+
+    # Sources
+    source_rows = [(s.source, msgpack.packb(asdict(s), use_bin_type=True)) for s in catalog.sources]
+    cur.executemany("INSERT INTO sources VALUES (?, ?)", source_rows)
+
+    # Build a mnemonic -> summary lookup from instructions for fast access
+    _instr_summary: dict[str, str] = {}
+    for irec in catalog.instructions:
+        if irec.mnemonic and irec.summary and irec.mnemonic not in _instr_summary:
+            _instr_summary[irec.mnemonic] = irec.summary
+
+    # Intrinsics data + FTS
+    intrinsics_data_rows = []
+    intrinsics_fts_rows = []
     for record in catalog.intrinsics:
-        payload = json.dumps(asdict(record), separators=(",", ":"), sort_keys=True)
-        cur.execute(
-            "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.name,
-                record.signature,
-                record.description,
-                record.header,
-                " ".join(record.isa),
-                record.category,
-                payload,
-            ),
-        )
-        cur.execute(
-            "INSERT INTO intrinsics_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.name,
-                record.signature,
-                record.description,
-                record.header,
-                " ".join(record.isa),
-                record.category,
-                " ".join(record.instructions),
-                " ".join(record.notes),
-                " ".join(record.aliases),
-            ),
-        )
+        payload = msgpack.packb(asdict(record), use_bin_type=True)
+        intrinsics_data_rows.append((
+            record.name,
+            record.signature,
+            record.description,
+            record.header,
+            " ".join(record.isa),
+            record.category,
+            record.subcategory,
+            payload,
+        ))
+        # Resolve instruction summary from first linked instruction mnemonic
+        instr_summary = ""
+        if record.instructions:
+            mnemonic = record.instructions[0].split("(")[0].split()[0].strip()
+            instr_summary = _instr_summary.get(mnemonic, "")
+        if not instr_summary and record.description:
+            instr_summary = record.description.split(".")[0] + "."
+        intrinsics_fts_rows.append((
+            record.name,
+            record.signature,
+            record.description,
+            record.header,
+            " ".join(record.isa),
+            record.category,
+            " ".join(record.instructions),
+            " ".join(record.notes),
+            " ".join(record.aliases),
+            instr_summary,
+            _tokenize_name(record.name),
+        ))
+    cur.executemany(
+        "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        intrinsics_data_rows,
+    )
+    cur.executemany(
+        "INSERT INTO intrinsics_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        intrinsics_fts_rows,
+    )
+
+    # Instructions data + FTS
+    instructions_data_rows = []
+    instructions_fts_rows = []
     for record in catalog.instructions:
-        payload = json.dumps(asdict(record), separators=(",", ":"), sort_keys=True)
-        cur.execute(
-            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                record.key,
-                record.mnemonic,
-                record.form,
-                record.summary,
-                " ".join(record.isa),
-                payload,
-            ),
-        )
-        cur.execute(
-            "INSERT INTO instructions_fts VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.key,
-                record.mnemonic,
-                record.form,
-                record.summary,
-                " ".join(record.isa),
-                " ".join(record.linked_intrinsics),
-                " ".join(record.aliases),
-            ),
-        )
+        payload = msgpack.packb(asdict(record), use_bin_type=True)
+        instructions_data_rows.append((
+            record.key,
+            record.mnemonic,
+            record.form,
+            record.summary,
+            " ".join(record.isa),
+            payload,
+        ))
+        instructions_fts_rows.append((
+            record.key,
+            record.mnemonic,
+            record.form,
+            record.summary,
+            " ".join(record.isa),
+            " ".join(record.linked_intrinsics),
+            " ".join(record.aliases),
+            _tokenize_name(record.key),
+        ))
+    cur.executemany(
+        "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
+        instructions_data_rows,
+    )
+    cur.executemany(
+        "INSERT INTO instructions_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        instructions_fts_rows,
+    )
+
     conn.commit()
     conn.close()
 
 
 def load_sources_from_db(conn: sqlite3.Connection) -> list[SourceVersion]:
     rows = conn.execute("SELECT payload FROM sources ORDER BY source").fetchall()
-    return [SourceVersion(**json.loads(row["payload"])) for row in rows]
+    return [SourceVersion(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
 def generated_at_from_db(conn: sqlite3.Connection) -> str:
@@ -216,24 +262,24 @@ def generated_at_from_db(conn: sqlite3.Connection) -> str:
 
 def load_intrinsic_from_db(conn: sqlite3.Connection, name: str) -> IntrinsicRecord | None:
     row = conn.execute(
-        "SELECT payload FROM intrinsics_data WHERE lower(name) = lower(?) ORDER BY id LIMIT 1",
+        "SELECT payload FROM intrinsics_data WHERE name = ? ORDER BY id LIMIT 1",
         (name,),
     ).fetchone()
     if not row:
         return None
-    return IntrinsicRecord(**json.loads(row["payload"]))
+    return IntrinsicRecord(**msgpack.unpackb(row["payload"], raw=False))
 
 
 def load_instruction_from_db(conn: sqlite3.Connection, key: str) -> InstructionRecord | None:
-    row = conn.execute("SELECT payload FROM instructions_data WHERE lower(key) = lower(?)", (key,)).fetchone()
+    row = conn.execute("SELECT payload FROM instructions_data WHERE key = ?", (key,)).fetchone()
     if not row:
         return None
-    return InstructionRecord(**json.loads(row["payload"]))
+    return InstructionRecord(**msgpack.unpackb(row["payload"], raw=False))
 
 
 def load_instructions_by_mnemonic_from_db(conn: sqlite3.Connection, mnemonic: str) -> list[InstructionRecord]:
-    rows = conn.execute("SELECT payload FROM instructions_data WHERE lower(mnemonic) = lower(?) ORDER BY key", (mnemonic,)).fetchall()
-    return [InstructionRecord(**json.loads(row["payload"])) for row in rows]
+    rows = conn.execute("SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY key", (mnemonic,)).fetchall()
+    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
 def load_instructions_by_mnemonic_prefix_from_db(conn: sqlite3.Connection, prefix: str, limit: int = 400) -> list[InstructionRecord]:
@@ -241,13 +287,13 @@ def load_instructions_by_mnemonic_prefix_from_db(conn: sqlite3.Connection, prefi
         """
         SELECT payload
         FROM instructions_data
-        WHERE lower(mnemonic) LIKE lower(?) || '%'
+        WHERE mnemonic LIKE ? || '%'
         ORDER BY mnemonic, key
         LIMIT ?
         """,
         (prefix, limit),
     ).fetchall()
-    return [InstructionRecord(**json.loads(row["payload"])) for row in rows]
+    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
 def _fts_match_query(query: str) -> str:
@@ -270,7 +316,7 @@ def search_intrinsic_candidates_from_db(conn: sqlite3.Connection, query: str, li
         """,
         (match_query, limit),
     ).fetchall()
-    return [IntrinsicRecord(**json.loads(row["payload"])) for row in rows]
+    return [IntrinsicRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
 def search_instruction_candidates_from_db(conn: sqlite3.Connection, query: str, limit: int = 200) -> list[InstructionRecord]:
@@ -288,4 +334,4 @@ def search_instruction_candidates_from_db(conn: sqlite3.Connection, query: str, 
         """,
         (match_query, limit),
     ).fetchall()
-    return [InstructionRecord(**json.loads(row["payload"])) for row in rows]
+    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]

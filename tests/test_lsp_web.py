@@ -5,20 +5,30 @@ from pathlib import Path
 
 from simdref.ingest import build_catalog
 from simdref.lsp import _completion_candidates, _hover_markdown
+from simdref.storage import build_sqlite, save_catalog, open_db
 from simdref.web import export_web
 
 
 class LspWebTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._catalog = build_catalog(offline=True)
+        save_catalog(cls._catalog)
+        build_sqlite(cls._catalog)
+        cls._conn = open_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._conn.close()
+
     def test_intrinsic_hover_contains_signature(self):
-        catalog = build_catalog(offline=True)
-        markdown = _hover_markdown(catalog, "_mm256_add_ps")
+        markdown = _hover_markdown(self._conn, "_mm256_add_ps")
         self.assertIsNotNone(markdown)
         self.assertIn("_mm256_add_ps", markdown)
         self.assertIn("Instructions:", markdown)
 
     def test_completion_returns_intrinsics(self):
-        catalog = build_catalog(offline=True)
-        items = _completion_candidates(catalog, "_mm256_a", limit=5)
+        items = _completion_candidates(self._conn, "_mm256_a", limit=5)
         labels = [item["label"] for item in items]
         self.assertIn("_mm256_add_ps", labels)
 

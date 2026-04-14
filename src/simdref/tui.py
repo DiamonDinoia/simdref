@@ -8,13 +8,15 @@ Uses SQLite FTS for fast search instead of loading the full catalog.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
+import subprocess
 from typing import TYPE_CHECKING
 
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.message import Message
 from textual.binding import Binding
@@ -45,48 +47,75 @@ from simdref.perf import variant_perf_summary
 from simdref.queries import linked_instruction_records
 from simdref.search import SearchResult
 from simdref.storage import (
+    SQLITE_PATH,
     load_instruction_from_db,
     load_intrinsic_from_db,
     open_db,
+    sqlite_schema_is_current,
 )
 
-if TYPE_CHECKING:
-    from simdref.models import InstructionRecord, IntrinsicRecord
+from simdref.models import InstructionRecord, IntrinsicRecord
 
 # ---------------------------------------------------------------------------
 # ISA family mapping (mirrors web UI)
 # ---------------------------------------------------------------------------
 
 _ISA_FAMILIES: list[str] = [
-    "x86", "MMX", "SSE", "AVX", "AVX2", "AVX-512", "AVX10", "AMX", "APX", "Other",
+    "x86", "MMX", "SSE", "AVX", "AVX-512", "AVX10", "AMX", "SVML", "Other",
 ]
 
-_DEFAULT_ENABLED: set[str] = {"SSE", "AVX", "AVX2", "AVX-512"}
+_DEFAULT_ENABLED: set[str] = {"SSE", "AVX", "AVX-512"}
+
+# Ordered sub-extensions within each family. Extensions not listed here
+# are appended alphabetically when discovered in the database.
+# Ordered sub-extensions within each family (matches Intel Intrinsics Guide).
+_FAMILY_SUB_ORDER: dict[str, list[str]] = {
+    "SSE": ["SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"],
+    "AVX": ["AVX", "AVX2", "FMA", "F16C", "AVX_VNNI", "AVX_VNNI_INT8", "AVX_VNNI_INT16", "AVX_IFMA", "AVX_NE_CONVERT"],
+    "AVX-512": [
+        "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
+        "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16", "AVX512_VBMI", "AVX512_VBMI2",
+        "AVX512_BITALG", "AVX512IFMA52", "AVX512VPOPCNTDQ", "AVX512_VP2INTERSECT",
+        "VAES", "VPCLMULQDQ", "GFNI",
+    ],
+    "AMX": ["AMX-TILE", "AMX-INT8", "AMX-BF16", "AMX-FP16", "AMX-COMPLEX"],
+}
+
+# Sub-ISAs enabled by default when a family is first toggled on.
+_DEFAULT_SUBS: dict[str, set[str]] = {
+    "SSE": {"SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"},
+    "AVX": {"AVX", "AVX2", "FMA", "F16C"},
+    "AVX-512": {"AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"},
+    "AMX": {"AMX-TILE", "AMX-INT8", "AMX-BF16"},
+}
+
+
+_X86_BASE_ISAS: frozenset[str] = frozenset({
+    "I86", "I186", "I286", "I386", "I486", "I586", "X87", "CMOV",
+})
 
 
 def _isa_family(isa: str) -> str:
-    """Map a single ISA string to its family."""
+    """Map a single ISA string to its family (matches Intel Intrinsics Guide)."""
     d = isa.upper().replace(" ", "")
     if not d or d == "-":
         return "Other"
-    if d.startswith("APX"):
-        return "APX"
+    if d in _X86_BASE_ISAS:
+        return "x86"
+    if d == "SVML":
+        return "SVML"
     if d.startswith("AMX"):
         return "AMX"
     if d.startswith("AVX10"):
         return "AVX10"
-    if d.startswith("AVX512"):
+    if d.startswith("AVX512") or d in ("VAES", "VPCLMULQDQ", "GFNI"):
         return "AVX-512"
-    if d in ("AVX2", "AVX2GATHER"):
-        return "AVX2"
-    if d in ("AVX", "FMA", "FMA4", "F16C", "XOP"):
+    if d in ("AVX", "AVX2", "AVX2GATHER") or d.startswith("AVX_") or d in ("FMA", "FMA4", "F16C", "XOP"):
         return "AVX"
     if d.startswith("SSE") or d.startswith("SSSE"):
         return "SSE"
     if d.startswith("MMX") or d in ("3DNOW", "PENTIUMMMX"):
         return "MMX"
-    if d in ("I86", "I186", "I386", "I486", "I586", "X87", "CMOV", "ADX", "AES", "PCLMULQDQ", "CRC32") or d.startswith("BMI"):
-        return "x86"
     return "Other"
 
 
@@ -95,63 +124,125 @@ def _isa_family(isa: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _name_match_score(name: str, terms: list[str]) -> int:
+    """Score how well query terms match a name. Higher = better match.
+
+    Rewards: all terms present in name, contiguous terms, exact substrings.
+    """
+    name_lower = name.lower().replace("_", " ")
+    score = 0
+    # Count how many terms appear in the name
+    matched = sum(1 for t in terms if t in name_lower)
+    score += matched * 10
+    # Bonus if ALL terms are in the name
+    if matched == len(terms):
+        score += 50
+    # Bonus for contiguous substring: "256 add ps" in "mm256 add ps"
+    query_joined = " ".join(terms)
+    if query_joined in name_lower:
+        score += 100
+    # Bonus for underscore-joined match: "256_add_ps" in name
+    query_underscored = "_".join(terms)
+    if query_underscored in name.lower():
+        score += 100
+    # Penalty for longer names (prefer more specific matches)
+    score -= len(name) // 10
+    return score
+
+
 def _fts_search(
     conn: sqlite3.Connection,
     query: str,
     enabled_families: set[str],
+    enabled_sub_isas: set[str] | None = None,
     limit: int = 30,
 ) -> list[SearchResult]:
-    """Search using SQLite FTS5 with ISA family filtering."""
+    """Search using SQLite FTS5 with ISA family and sub-ISA filtering."""
     results: list[SearchResult] = []
     fts_query = query.replace('"', '""').replace("*", "")
     if not fts_query.strip():
         return results
-    terms = [t for t in fts_query.replace("_", " ").strip().split() if t]
+    terms = [t.lower() for t in fts_query.replace("_", " ").strip().split() if t]
     if not terms:
         return results
-    fts_expr = " ".join(f'"{t}"*' for t in terms)
+    term_expr = " ".join(f'"{t}"*' for t in terms)
+    # Search name/name_tokens first (precise), fall back to all columns (broad)
+    fts_expr = f"{{name name_tokens}} : {term_expr}"
+    fts_expr_broad = term_expr
 
-    # Fetch more than limit to account for ISA filtering
-    fetch_limit = limit * 3
+    # Fetch more than limit to account for filtering and re-ranking
+    fetch_limit = limit * 5
 
-    for row in conn.execute(
-        "SELECT name, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
-        (fts_expr, fetch_limit),
-    ).fetchall():
-        isa_str = row["isa"] or ""
-        families = {_isa_family(v.strip()) for v in isa_str.split(",") if v.strip()}
+    def _isa_visible(isa_str: str) -> bool:
+        parts = [v.strip() for v in isa_str.replace(",", " ").split() if v.strip()]
+        families = {_isa_family(v) for v in parts}
         if enabled_families and not families & enabled_families:
-            continue
-        results.append(SearchResult(
-            kind="intrinsic",
-            key=row["name"],
-            title=row["name"],
-            subtitle=row["description"] or "",
-            score=100,
-        ))
-        if len(results) >= limit:
-            return results
+            return False
+        if enabled_sub_isas is not None:
+            for p in parts:
+                if p in enabled_sub_isas:
+                    return True
+                for sub in enabled_sub_isas:
+                    if p.startswith(sub) and len(p) > len(sub):
+                        return True
+                if _isa_family(p) not in _FAMILY_SUB_ORDER:
+                    return True
+            return False
+        return True
 
-    remaining = limit - len(results)
-    if remaining > 0:
-        for row in conn.execute(
-            "SELECT key, summary, isa FROM instructions_fts WHERE instructions_fts MATCH ? ORDER BY rank LIMIT ?",
-            (fts_expr, fetch_limit),
-        ).fetchall():
-            isa_str = row["isa"] or ""
-            families = {_isa_family(v.strip()) for v in isa_str.split(",") if v.strip()}
-            if enabled_families and not families & enabled_families:
+    # Collect candidates and re-rank by name match quality
+    candidates: list[tuple[int, SearchResult]] = []
+
+    seen: set[str] = set()
+    # Search name columns first (precise), then broaden to all columns.
+    # The name-only query uses {name name_tokens} column filter which
+    # requires schema v7+; fall back to broad search on OperationalError.
+    search_exprs = [fts_expr, fts_expr_broad]
+    for expr in search_exprs:
+        try:
+            rows = conn.execute(
+                "SELECT name, summary, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
+                (expr, fetch_limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for row in rows:
+            if row["name"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
-            results.append(SearchResult(
+            seen.add(row["name"])
+            subtitle = row["summary"] or row["description"] or ""
+            result = SearchResult(
+                kind="intrinsic",
+                key=row["name"],
+                title=row["name"],
+                subtitle=subtitle,
+                score=100,
+            )
+            candidates.append((_name_match_score(row["name"], terms), result))
+
+        try:
+            irows = conn.execute(
+                "SELECT key, summary, isa FROM instructions_fts WHERE instructions_fts MATCH ? ORDER BY rank LIMIT ?",
+                (expr, fetch_limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for row in irows:
+            if row["key"] in seen or not _isa_visible(row["isa"] or ""):
+                continue
+            seen.add(row["key"])
+            result = SearchResult(
                 kind="instruction",
                 key=row["key"],
                 title=row["key"],
                 subtitle=row["summary"] or "",
                 score=90,
-            ))
-            if len(results) >= limit:
-                break
+            )
+            candidates.append((_name_match_score(row["key"], terms), result))
 
+    # Sort by match score descending, then by kind (intrinsics first)
+    candidates.sort(key=lambda c: (-c[0], 0 if c[1].kind == "intrinsic" else 1))
+    results = [r for _, r in candidates[:limit]]
     return results
 
 
@@ -160,29 +251,36 @@ def _fts_search(
 # ---------------------------------------------------------------------------
 
 
-class IsaToggle(Static):
-    """A clickable ISA family toggle chip."""
+class _ToggleChip(Static):
+    """Base clickable toggle chip for ISA/category filters."""
 
     DEFAULT_CSS = """
-    IsaToggle {
+    _ToggleChip {
         width: auto;
         height: 1;
         padding: 0 1;
         margin: 0 0 0 1;
     }
-    IsaToggle.enabled {
+    _ToggleChip.enabled {
         background: $accent;
         color: $text;
     }
-    IsaToggle.disabled {
+    _ToggleChip.disabled {
         background: $surface;
         color: $text-muted;
     }
     """
 
-    def __init__(self, family: str, enabled: bool = False) -> None:
-        super().__init__(family)
-        self.family = family
+    class Toggled(Message):
+        """Posted when a toggle chip is clicked."""
+
+        def __init__(self, toggle: _ToggleChip) -> None:
+            super().__init__()
+            self.toggle = toggle
+
+    def __init__(self, label: str, enabled: bool = False) -> None:
+        super().__init__(label)
+        self.label_text = label
         self.enabled = enabled
         self.add_class("enabled" if enabled else "disabled")
 
@@ -192,12 +290,43 @@ class IsaToggle(Static):
         self.add_class("enabled" if self.enabled else "disabled")
         self.post_message(self.Toggled(self))
 
-    class Toggled(Message):
-        """Posted when an ISA toggle is clicked."""
 
-        def __init__(self, toggle: IsaToggle) -> None:
+class ToggleAllLabel(Static):
+    """Clickable label that toggles all sibling chips on/off."""
+
+    class Clicked(Message):
+        def __init__(self, label: ToggleAllLabel) -> None:
             super().__init__()
-            self.toggle = toggle
+            self.label = label
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked(self))
+
+
+class DefaultButton(Static):
+    """Clickable button that resets filters to defaults."""
+
+    class Clicked(Message):
+        pass
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked())
+
+
+class IsaToggle(_ToggleChip):
+    """A clickable ISA family toggle chip."""
+
+    def __init__(self, family: str, enabled: bool = False) -> None:
+        super().__init__(family, enabled)
+        self.family = family
+
+
+class SubIsaToggle(_ToggleChip):
+    """A clickable sub-ISA extension toggle chip."""
+
+    def __init__(self, isa: str, enabled: bool = True) -> None:
+        super().__init__(isa, enabled)
+        self.isa = isa
 
 
 class ResultItem(ListItem):
@@ -205,8 +334,9 @@ class ResultItem(ListItem):
 
     def __init__(self, result: SearchResult, index: int) -> None:
         self.result = result
-        subtitle = result.subtitle[:60] if result.subtitle else ""
-        label = f"[cyan]{index:>2}[/] [{result.kind}] {result.title}  [dim]{subtitle}[/]"
+        title_color = "cyan" if result.kind == "intrinsic" else "magenta"
+        subtitle = (result.subtitle or "").split("\n")[0]
+        label = f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]  [dim italic]{subtitle}[/]"
         super().__init__(Static(label, markup=True))
 
 
@@ -224,6 +354,34 @@ class SimdrefApp(App):
         height: 1;
         margin: 0 1;
         overflow-x: auto;
+    }
+    #sub-isa-container {
+        height: auto;
+        max-height: 10;
+        margin: 0 1;
+        overflow-y: auto;
+    }
+    .sub-isa-row {
+        height: 1;
+    }
+    .sub-isa-row .sub-fam-label {
+        width: 10;
+        color: $text-muted;
+        text-style: underline;
+    }
+    #isa-bar .isa-label {
+        width: auto;
+        color: $text-muted;
+        padding: 0 1 0 0;
+        text-style: underline;
+    }
+    #isa-bar .default-btn {
+        width: auto;
+        background: $surface;
+        color: $warning;
+        padding: 0 1;
+        margin: 0 0 0 2;
+        text-style: bold;
     }
     #results-list {
         height: auto;
@@ -250,6 +408,7 @@ class SimdrefApp(App):
         Binding("escape", "back", "Back", show=True),
         Binding("f", "toggle_all", "Expand/Collapse All", show=True),
         Binding("1-9", "pick(0)", "Pick result", show=True, key_display="1-9"),
+        Binding("c", "copy_detail", "Copy", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("ctrl+d", "quit", "Quit", show=True, priority=True, key_display="^d"),
         *[Binding(str(n), f"pick({n})", show=False) for n in range(1, 10)],
@@ -262,6 +421,15 @@ class SimdrefApp(App):
         self._all_expanded = False
         self._conn: sqlite3.Connection | None = None
         self._enabled_families: set[str] = set(_DEFAULT_ENABLED)
+        # Build initial sub-ISA set from defaults for enabled families
+        initial_subs: set[str] = set()
+        for fam in _DEFAULT_ENABLED:
+            initial_subs.update(_DEFAULT_SUBS.get(fam, set()))
+        self._enabled_sub_isas: set[str] | None = initial_subs if initial_subs else None
+        self._current_detail: IntrinsicRecord | InstructionRecord | None = None
+        self._batch_toggle = False
+        # Map family -> list of sub-ISA names present in the DB
+        self._family_subs: dict[str, list[str]] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -271,19 +439,86 @@ class SimdrefApp(App):
             value=self._initial_query,
         )
         with Horizontal(id="isa-bar"):
+            yield ToggleAllLabel("ISA:", classes="isa-label", id="isa-toggle-all")
             for family in _ISA_FAMILIES:
                 yield IsaToggle(family, enabled=family in self._enabled_families)
+            yield DefaultButton("Reset", classes="default-btn")
+        yield VerticalScroll(id="sub-isa-container")
         yield ListView(id="results-list")
         yield VerticalScroll(id="detail-scroll")
         yield Label("", id="status-label")
         yield Footer()
 
     def on_mount(self) -> None:
+        if not sqlite_schema_is_current():
+            self._needs_update = True
+            self.query_one("#status-label", Label).update(
+                f"  Database not found or outdated. Press [bold]y[/] to update, [bold]n[/] to quit."
+            )
+            return
+        self._needs_update = False
         self._conn = open_db()
+        self._build_family_subs()
+        # Defer until first layout pass so container width is known
+        self.call_after_refresh(self._refresh_sub_isa_bar)
         if self._initial_query:
             self._run_initial_query()
         else:
             self.query_one("#search-input", Input).focus()
+
+    def on_resize(self) -> None:
+        # Reflow sub-ISA chips only when width actually changes
+        container = self.query_one("#sub-isa-container", VerticalScroll)
+        new_w = container.size.width or 0
+        if new_w and new_w != getattr(self, "_last_sub_width", 0):
+            self._last_sub_width = new_w
+            self.call_after_refresh(self._refresh_sub_isa_bar)
+
+    def _build_family_subs(self) -> None:
+        """Build sub-ISA lists from canonical definitions only."""
+        for fam, subs in _FAMILY_SUB_ORDER.items():
+            if len(subs) > 1:
+                self._family_subs[fam] = list(subs)
+
+    def _refresh_sub_isa_bar(self) -> None:
+        """Rebuild the sub-ISA rows — one or more rows per enabled family."""
+        container = self.query_one("#sub-isa-container", VerticalScroll)
+        container.remove_children()
+
+        max_width = container.size.width or 120
+        label_width = 10  # width of .sub-fam-label
+
+        for fam in _ISA_FAMILIES:
+            if fam not in self._enabled_families or fam not in self._family_subs:
+                continue
+            subs = self._family_subs[fam]
+            defaults = _DEFAULT_SUBS.get(fam, set())
+
+            # Build toggles with their approximate widths
+            toggles: list[SubIsaToggle] = []
+            for sub in subs:
+                if self._enabled_sub_isas is not None:
+                    enabled = sub in self._enabled_sub_isas
+                else:
+                    enabled = sub in defaults if defaults else True
+                toggles.append(SubIsaToggle(sub, enabled=enabled))
+
+            # Split into rows that fit within max_width
+            row_children: list[ToggleAllLabel | SubIsaToggle] = [
+                ToggleAllLabel(f"{fam}:", classes="sub-fam-label"),
+            ]
+            used = label_width
+            for toggle in toggles:
+                chip_w = len(toggle.isa) + 3  # padding + margin
+                if used + chip_w > max_width and len(row_children) > 1:
+                    container.mount(Horizontal(*row_children, classes="sub-isa-row"))
+                    # Continuation row: indent with blank label
+                    row_children = [Static(" " * label_width, classes="sub-fam-label")]
+                    used = label_width
+                row_children.append(toggle)
+                used += chip_w
+            if len(row_children) > 1:
+                container.mount(Horizontal(*row_children, classes="sub-isa-row"))
 
     def on_unmount(self) -> None:
         if self._conn is not None:
@@ -315,14 +550,90 @@ class SimdrefApp(App):
             results_list.index = 0
             self.query_one("#detail-scroll").focus()
 
-    @on(IsaToggle.Toggled)
-    def on_isa_toggled(self, event: IsaToggle.Toggled) -> None:
-        """Re-run search when ISA filter changes."""
+    @on(_ToggleChip.Toggled)
+    def on_toggle_changed(self, event: _ToggleChip.Toggled) -> None:
+        """Re-run search when ISA or sub-ISA filter changes."""
         toggle = event.toggle
-        if toggle.enabled:
-            self._enabled_families.add(toggle.family)
+        if isinstance(toggle, IsaToggle):
+            if toggle.enabled:
+                self._enabled_families.add(toggle.family)
+                # Add default subs for newly enabled family
+                defaults = _DEFAULT_SUBS.get(toggle.family, set())
+                if defaults and self._enabled_sub_isas is not None:
+                    self._enabled_sub_isas.update(defaults)
+            else:
+                self._enabled_families.discard(toggle.family)
+                # Remove subs belonging to disabled family
+                if self._enabled_sub_isas is not None:
+                    fam_subs = set(self._family_subs.get(toggle.family, []))
+                    self._enabled_sub_isas -= fam_subs
+            self._refresh_sub_isa_bar()
+        elif isinstance(toggle, SubIsaToggle):
+            all_subs = list(self.query(SubIsaToggle))
+            enabled = {t.isa for t in all_subs if t.enabled}
+            all_shown = {t.isa for t in all_subs}
+            self._enabled_sub_isas = enabled if enabled != all_shown else None
+        query = self.query_one("#search-input", Input).value.strip()
+        if query:
+            self._do_search(query)
+
+    @on(ToggleAllLabel.Clicked)
+    def on_toggle_all_clicked(self, event: ToggleAllLabel.Clicked) -> None:
+        """Toggle all chips in the same bar/row."""
+        label = event.label
+        if label.id == "isa-toggle-all":
+            toggles = list(self.query(IsaToggle))
+            target = not any(t.enabled for t in toggles)
+            for t in toggles:
+                t.enabled = target
+                t.remove_class("enabled" if not target else "disabled")
+                t.add_class("enabled" if target else "disabled")
+            self._enabled_families = {t.family for t in toggles if t.enabled}
+            if target:
+                # Add defaults for all families
+                subs: set[str] = set()
+                for fam in self._enabled_families:
+                    subs.update(_DEFAULT_SUBS.get(fam, set()))
+                self._enabled_sub_isas = subs if subs else None
+            else:
+                self._enabled_sub_isas = set()
+            self._refresh_sub_isa_bar()
         else:
-            self._enabled_families.discard(toggle.family)
+            # Family-level sub toggle: find sibling SubIsaToggles in same row
+            row = label.parent
+            if row is None:
+                return
+            toggles = list(row.query(SubIsaToggle))
+            if not toggles:
+                return
+            target = not any(t.enabled for t in toggles)
+            for t in toggles:
+                t.enabled = target
+                t.remove_class("enabled" if not target else "disabled")
+                t.add_class("enabled" if target else "disabled")
+            # Rebuild enabled_sub_isas from all visible toggles
+            all_subs = list(self.query(SubIsaToggle))
+            enabled = {t.isa for t in all_subs if t.enabled}
+            self._enabled_sub_isas = enabled if enabled else set()
+        query = self.query_one("#search-input", Input).value.strip()
+        if query:
+            self._do_search(query)
+
+    @on(DefaultButton.Clicked)
+    def on_default_clicked(self) -> None:
+        """Reset all filters to defaults."""
+        self._enabled_families = set(_DEFAULT_ENABLED)
+        initial_subs: set[str] = set()
+        for fam in _DEFAULT_ENABLED:
+            initial_subs.update(_DEFAULT_SUBS.get(fam, set()))
+        self._enabled_sub_isas = initial_subs if initial_subs else None
+        # Update ISA toggle visuals
+        for t in self.query(IsaToggle):
+            target = t.family in self._enabled_families
+            t.enabled = target
+            t.remove_class("enabled" if not target else "disabled")
+            t.add_class("enabled" if target else "disabled")
+        self._refresh_sub_isa_bar()
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
@@ -342,7 +653,7 @@ class SimdrefApp(App):
             self.query_one("#status-label", Label).update("")
             return
         assert self._conn is not None
-        results = _fts_search(self._conn, query, self._enabled_families, limit=30)
+        results = _fts_search(self._conn, query, self._enabled_families, self._enabled_sub_isas, limit=30)
         self._current_results = results
         for i, result in enumerate(results, 1):
             results_list.append(ResultItem(result, i))
@@ -365,7 +676,9 @@ class SimdrefApp(App):
         item = event.item
         if not isinstance(item, ResultItem):
             return
-        self._show_detail(item.result)
+        # Only show detail if the item is in the current results list
+        if item.result in self._current_results:
+            self._show_detail(item.result)
 
     def _show_detail(self, result: SearchResult) -> None:
         detail = self.query_one("#detail-scroll", VerticalScroll)
@@ -375,10 +688,12 @@ class SimdrefApp(App):
         if result.kind == "intrinsic":
             intrinsic = load_intrinsic_from_db(self._conn, result.key)
             if intrinsic:
+                self._current_detail = intrinsic
                 self._render_intrinsic_detail(detail, intrinsic)
         else:
             instruction = load_instruction_from_db(self._conn, result.key)
             if instruction:
+                self._current_detail = instruction
                 self._render_instruction_detail(detail, instruction)
 
     # ------------------------------------------------------------------
@@ -404,13 +719,16 @@ class SimdrefApp(App):
         meta.add_row("signature", intrinsic.signature or "-")
         meta.add_row("header", intrinsic.header or "-")
         meta.add_row("isa", ", ".join(intrinsic.isa) or "-")
-        meta.add_row("category", intrinsic.category or "-")
+        category_display = intrinsic.category or "-"
+        if intrinsic.subcategory:
+            category_display = f"{intrinsic.subcategory} / {intrinsic.category}" if intrinsic.category else intrinsic.subcategory
+        meta.add_row("category", category_display)
+        if intrinsic.description:
+            meta.add_row("description", intrinsic.description)
         if intrinsic.notes:
             meta.add_row("notes", "; ".join(intrinsic.notes))
         linked = self._find_linked_instruction(intrinsic)
         if linked:
-            if linked.summary:
-                meta.add_row("summary", linked.summary)
             url = linked.metadata.get("url", "")
             if url:
                 meta.add_row("url", canonical_url(url))
@@ -532,6 +850,52 @@ class SimdrefApp(App):
     # Actions
     # ------------------------------------------------------------------
 
+    def action_copy_detail(self) -> None:
+        """Copy current detail as plain text to system clipboard."""
+        record = self._current_detail
+        if record is None:
+            return
+        lines: list[str] = []
+        if isinstance(record, IntrinsicRecord):
+            lines.append(record.name)
+            lines.append(record.signature)
+            if record.isa:
+                lines.append(f"ISA: {', '.join(record.isa)}")
+            if record.category:
+                lines.append(f"Category: {record.category}")
+            if record.description:
+                lines.append("")
+                lines.append(record.description)
+            if record.instructions:
+                lines.append("")
+                lines.append(f"Instructions: {', '.join(record.instructions)}")
+        elif isinstance(record, InstructionRecord):
+            lines.append(record.key)
+            if record.summary:
+                lines.append(record.summary)
+            if record.isa:
+                lines.append(f"ISA: {', '.join(record.isa)}")
+            if record.form:
+                lines.append(f"Form: {record.form}")
+        text = "\n".join(lines)
+        self._copy_to_clipboard(text)
+
+    def _copy_to_clipboard(self, text: str) -> None:
+        """Copy text to system clipboard using available tool."""
+        for cmd in (
+            ["wl-copy"],
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, input=text.encode(), check=True, timeout=5)
+                    self.notify("Copied to clipboard", severity="information", timeout=2)
+                    return
+                except (subprocess.SubprocessError, OSError):
+                    continue
+        self.notify("No clipboard tool found (install xclip, xsel, or wl-copy)", severity="warning", timeout=3)
+
     def action_pick(self, index: int) -> None:
         """Select result by number and show its detail."""
         if index < 1 or index > len(self._current_results):
@@ -557,6 +921,46 @@ class SimdrefApp(App):
         self._all_expanded = not self._all_expanded
         for section in self.query(Collapsible):
             section.collapsed = not self._all_expanded
+
+    def on_key(self, event: events.Key) -> None:
+        if not getattr(self, "_needs_update", False):
+            return
+        if event.key == "y":
+            event.prevent_default()
+            self._run_update()
+        elif event.key in ("n", "q"):
+            event.prevent_default()
+            self.exit(1)
+
+    @work(thread=True)
+    def _run_update(self) -> None:
+        from simdref.ingest import build_catalog
+        from simdref.storage import build_sqlite, save_catalog
+
+        def _status(msg: str) -> None:
+            self.call_from_thread(
+                self.query_one("#status-label", Label).update,
+                f"  {msg}",
+            )
+
+        _status("Fetching data and parsing...")
+        catalog = build_catalog(offline=False)
+        _status(f"Saving catalog ({len(catalog.intrinsics)} intrinsics)...")
+        save_catalog(catalog)
+        _status("Building search database...")
+        build_sqlite(catalog)
+        self._needs_update = False
+        self._conn = open_db()
+
+        def _finish() -> None:
+            self._build_family_subs()
+            self.call_after_refresh(self._refresh_sub_isa_bar)
+            self.query_one("#status-label", Label).update(
+                f"  Updated: {len(catalog.intrinsics)} intrinsics, {len(catalog.instructions)} instructions"
+            )
+            self.query_one("#search-input", Input).focus()
+
+        self.call_from_thread(_finish)
 
 
 def run_tui(initial_query: str = "") -> int:

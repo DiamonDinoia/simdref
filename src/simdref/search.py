@@ -149,10 +149,13 @@ def _base_score(query: str, candidate: str) -> float:
     token_overlap = _token_overlap_count(query_tokens, candidate_tokens)
     if token_overlap == 0:
         return 0.0
+    prefix_score = token_prefix + 40.0
+    if prefix_score >= 155.0:
+        return prefix_score
     token_set = fuzz.token_set_ratio(qnorm, cnorm) if qnorm and cnorm else 0.0
     partial = fuzz.partial_ratio(qnorm, cnorm) if qnorm and cnorm else 0.0
     ratio = fuzz.ratio(qnorm, cnorm) if qnorm and cnorm else 0.0
-    return max(token_prefix + 40.0, token_set + 20.0, partial + 10.0, ratio)
+    return max(prefix_score, token_set + 20.0, partial + 10.0, ratio)
 
 
 def _intent_bias(query_kind: str, result_kind: str) -> float:

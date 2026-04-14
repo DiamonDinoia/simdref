@@ -6,8 +6,15 @@ import sys
 from dataclasses import dataclass
 
 from simdref.perf import best_cpi, best_latency
-from simdref.search import find_instruction, find_intrinsic, search_catalog
-from simdref.storage import load_catalog
+from simdref.queries import linked_instruction_records
+from simdref.search import search_records
+from simdref.storage import (
+    load_intrinsic_from_db,
+    load_instruction_from_db,
+    open_db,
+    search_intrinsic_candidates_from_db,
+    search_instruction_candidates_from_db,
+)
 
 
 WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -62,8 +69,8 @@ def _line_prefix(text: str, line: int, character: int) -> str:
     return match.group(0) if match else ""
 
 
-def _hover_markdown(catalog, word: str) -> str | None:
-    intrinsic = find_intrinsic(catalog, word)
+def _hover_markdown(conn, word: str) -> str | None:
+    intrinsic = load_intrinsic_from_db(conn, word)
     if intrinsic is not None:
         lines = [f"```c\n{intrinsic.signature}\n```"]
         if intrinsic.description:
@@ -79,7 +86,7 @@ def _hover_markdown(catalog, word: str) -> str | None:
             lines.append(" | ".join(meta))
         if intrinsic.instructions:
             lines.append(f"Instructions: {', '.join(intrinsic.instructions[:6])}")
-        linked = [item for item in catalog.instructions if intrinsic.name in item.linked_intrinsics]
+        linked = linked_instruction_records(None, intrinsic, conn=conn)
         if linked:
             latencies = [best_latency(item.arch_details) for item in linked if best_latency(item.arch_details) != "-"]
             throughputs = [best_cpi(item.arch_details) for item in linked if best_cpi(item.arch_details) != "-"]
@@ -92,7 +99,7 @@ def _hover_markdown(catalog, word: str) -> str | None:
                 lines.append("Performance: " + ", ".join(perf))
         return "\n\n".join(lines)
 
-    instruction = find_instruction(catalog, word)
+    instruction = load_instruction_from_db(conn, word)
     if instruction is not None:
         lines = [f"```asm\n{instruction.key}\n```"]
         if instruction.summary:
@@ -119,11 +126,14 @@ def _hover_markdown(catalog, word: str) -> str | None:
     return None
 
 
-def _completion_candidates(catalog, prefix: str, limit: int = 50) -> list[dict]:
+def _completion_candidates(conn, prefix: str, limit: int = 50) -> list[dict]:
     prefix_folded = prefix.casefold()
     emitted: set[tuple[str, str]] = set()
     items: list[dict] = []
-    for result in search_catalog(catalog, prefix or "_mm", limit=max(limit * 3, 100)):
+    candidate_limit = max(limit * 3, 100)
+    intrinsics = search_intrinsic_candidates_from_db(conn, prefix or "_mm", limit=candidate_limit)
+    instructions = search_instruction_candidates_from_db(conn, prefix or "_mm", limit=candidate_limit)
+    for result in search_records(intrinsics, instructions, prefix or "_mm", limit=candidate_limit):
         label = result.title
         if prefix_folded and not label.casefold().startswith(prefix_folded):
             continue
@@ -132,21 +142,14 @@ def _completion_candidates(catalog, prefix: str, limit: int = 50) -> list[dict]:
             continue
         emitted.add(key)
         kind = 3 if result.kind == "intrinsic" else 14
-        items.append(
-            {
-                "label": label,
-                "kind": kind,
-                "detail": result.subtitle,
-                "insertText": label,
-            }
-        )
+        items.append({"label": label, "kind": kind, "detail": result.subtitle, "insertText": label})
         if len(items) >= limit:
             return items
     return items
 
 
 def main() -> int:
-    catalog = load_catalog()
+    conn = open_db()
     session = Session(documents={})
     while True:
         message = _jsonrpc_read()
@@ -189,7 +192,7 @@ def main() -> int:
             word = _word_at(text, params["position"]["line"], params["position"]["character"])
             contents = None
             if word:
-                body = _hover_markdown(catalog, word)
+                body = _hover_markdown(conn, word)
                 if body:
                     contents = {"kind": "markdown", "value": body}
             _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"contents": contents} if contents else None})
@@ -198,6 +201,6 @@ def main() -> int:
             uri = params["textDocument"]["uri"]
             text = session.documents.get(uri, "")
             prefix = _line_prefix(text, params["position"]["line"], params["position"]["character"])
-            items = _completion_candidates(catalog, prefix)
+            items = _completion_candidates(conn, prefix)
             _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"isIncomplete": False, "items": items}})
     return 0

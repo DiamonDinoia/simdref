@@ -30,6 +30,7 @@ let focusedIndex = -1;
 let renderTimer = null;
 let acItems = [];              // current autocomplete entries
 let acIndex = -1;              // highlighted autocomplete index
+let visibleSet = null;
 
 /* Detail chunk cache: prefix -> Promise<data> */
 const chunkCache = new Map();
@@ -39,6 +40,11 @@ const defaultEnabledIsas = new Set(["SSE", "AVX", "AVX2", "AVX-512"]);
 let availableIsas = [];
 let enabledIsas = new Set();
 let enableAllIsas = false;
+
+/* Category state */
+let availableCategories = [];
+let enabledCategories = new Set();
+let enableAllCategories = true;
 
 /* ── Theme ────────────────────────────────────────────────────────── */
 function getEffectiveTheme() {
@@ -124,6 +130,20 @@ function isaVisible(values) {
   if (enableAllIsas) return true;
   const f = isaFamilies(values);
   return f.length > 0 && f.some(v => enabledIsas.has(v));
+}
+
+function categoryVisible(category) {
+  if (enableAllCategories) return true;
+  if (!category) return true;  // instructions have no category — always show
+  return enabledCategories.has(category);
+}
+
+function rebuildVisibleSet() {
+  visibleSet = new Set();
+  for (let i = 0; i < searchEntries.length; i++) {
+    const e = searchEntries[i];
+    if (isaVisible(e.item.isa) && categoryVisible(e.item.category)) visibleSet.add(i);
+  }
 }
 
 /* ── ISA sort key (chronological) ─────────────────────────────────── */
@@ -240,7 +260,9 @@ function candidateIndexes(query) {
   let cur = new Set(lists[0]);
   for (const l of lists.slice(1)) {
     const allowed = new Set(l);
-    cur = new Set([...cur].filter(i => allowed.has(i)));
+    const next = new Set();
+    for (const i of cur) if (allowed.has(i)) next.add(i);
+    cur = next;
     if (!cur.size) break;
   }
   return [...cur];
@@ -407,11 +429,12 @@ function renderIntrinsicDetail(item, detail) {
   return `
     <div class="detail-head">
       <span class="result-kind intrinsic">intrinsic</span>
-      <h2>${esc(item.name)}</h2>
+      <h2>${esc(item.name)} <button class="copy-btn" data-copy="${esc(item.name)}" title="Copy name">&#x2398;</button></h2>
       <div class="detail-sub">${esc(detail ? detail.signature : item.signature)}</div>
       <div class="chips">
         ${(item.isa || []).map(v => `<span class="chip">${esc(displayIsa([v]))}</span>`).join("")}
         ${item.category ? `<span class="chip">${esc(item.category)}</span>` : ""}
+        ${item.subcategory ? `<span class="chip">${esc(item.subcategory)}</span>` : ""}
         ${item.header ? `<span class="chip">${esc(item.header)}</span>` : ""}
       </div>
     </div>
@@ -427,7 +450,7 @@ function renderIntrinsicDetail(item, detail) {
       <dl class="kv">
         <dt>Header</dt><dd>${esc(item.header || "-")}</dd>
         <dt>ISA</dt><dd>${esc(displayIsa(item.isa))}</dd>
-        <dt>Category</dt><dd>${esc(item.category || "-")}</dd>
+        <dt>Category</dt><dd>${esc(item.category || "-")}${item.subcategory ? ` (${esc(item.subcategory)})` : ""}</dd>
         ${detail && detail.notes && detail.notes.length ? `<dt>Notes</dt><dd>${esc(detail.notes.join("; "))}</dd>` : ""}
         ${detail && detail._url ? `<dt>uops.info</dt><dd><a href="${esc(detail._url)}" target="_blank" rel="noreferrer">${esc(detail._url)}</a></dd>` : ""}
         ${detail && detail._urlRef ? `<dt>Reference</dt><dd><a href="${esc(detail._urlRef)}" target="_blank" rel="noreferrer">${esc(detail._urlRef)}</a></dd>` : ""}
@@ -468,7 +491,7 @@ function renderInstructionDetail(item, detail) {
   return `
     <div class="detail-head">
       <span class="result-kind instruction">instruction</span>
-      <h2>${esc(displayInstr(item.key || item.mnemonic))}</h2>
+      <h2>${esc(displayInstr(item.key || item.mnemonic))} <button class="copy-btn" data-copy="${esc(displayInstr(item.key || item.mnemonic))}" title="Copy name">&#x2398;</button></h2>
       <div class="detail-sub">${esc(displayInstr(d.form || item.form || item.mnemonic))}</div>
       <div class="chips">
         ${(item.isa || []).map(v => `<span class="chip">${esc(displayIsa([v]))}</span>`).join("")}
@@ -596,6 +619,8 @@ function renderIsaFilters() {
       const isa = cb.dataset.isa;
       if (cb.checked) enabledIsas.add(isa); else enabledIsas.delete(isa);
       enableAllIsas = false;
+      visibleSet = null;
+      rebuildVisibleSet();
       updateIsaSummary();
       renderIsaFilters();
       renderResults();
@@ -613,15 +638,87 @@ function applyIsaPreset(mode) {
       ? new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)))
       : new Set();
   }
+  visibleSet = null;
+  rebuildVisibleSet();
   renderIsaFilters();
   renderResults();
 }
+
+/* ── Category Filters ────────────────────────────────────────────── */
+const catPanel = document.createElement("div");
+catPanel.id = "cat-panel";
+catPanel.className = "isa-panel hidden";
+catPanel.innerHTML = `<div class="isa-presets">
+  <button id="cat-all" class="preset-btn" type="button">All</button>
+  <button id="cat-none" class="preset-btn" type="button">None</button>
+</div><div id="cat-chips" class="isa-group-items"></div>`;
+isaPanel.parentNode.insertBefore(catPanel, isaPanel.nextSibling);
+
+const catToggleBtn = document.createElement("button");
+catToggleBtn.id = "cat-toggle";
+catToggleBtn.className = "isa-toggle-btn";
+catToggleBtn.type = "button";
+catToggleBtn.title = "Category filter";
+catToggleBtn.innerHTML = `<span id="cat-summary">Category: All</span>
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>`;
+document.querySelector(".search-bar").appendChild(catToggleBtn);
+
+catToggleBtn.addEventListener("click", () => catPanel.classList.toggle("hidden"));
+
+function updateCatSummary() {
+  const el = document.getElementById("cat-summary");
+  if (enableAllCategories) { el.textContent = "Category: All"; return; }
+  const n = enabledCategories.size;
+  if (!n) { el.textContent = "Category: None"; return; }
+  if (n <= 2) { el.textContent = "Category: " + [...enabledCategories].join(", "); return; }
+  el.textContent = `Category: ${[...enabledCategories].slice(0, 2).join(", ")} +${n - 2}`;
+}
+
+function renderCatFilters() {
+  const chipsEl = document.getElementById("cat-chips");
+  chipsEl.innerHTML = availableCategories.map(cat => `
+    <label class="isa-chip ${enabledCategories.has(cat) || enableAllCategories ? "active" : ""}">
+      <input type="checkbox" data-cat="${esc(cat)}" ${enabledCategories.has(cat) || enableAllCategories ? "checked" : ""}>
+      ${esc(cat)}
+    </label>
+  `).join("");
+  for (const cb of chipsEl.querySelectorAll("input[data-cat]")) {
+    cb.addEventListener("change", () => {
+      const cat = cb.dataset.cat;
+      if (cb.checked) enabledCategories.add(cat); else enabledCategories.delete(cat);
+      enableAllCategories = false;
+      visibleSet = null;
+      rebuildVisibleSet();
+      updateCatSummary();
+      renderCatFilters();
+      renderResults();
+    });
+  }
+  updateCatSummary();
+}
+
+document.getElementById("cat-all").addEventListener("click", () => {
+  enableAllCategories = true;
+  visibleSet = null;
+  rebuildVisibleSet();
+  renderCatFilters();
+  renderResults();
+});
+document.getElementById("cat-none").addEventListener("click", () => {
+  enableAllCategories = false;
+  enabledCategories = new Set();
+  visibleSet = null;
+  rebuildVisibleSet();
+  renderCatFilters();
+  renderResults();
+});
 
 /* ── Results rendering ────────────────────────────────────────────── */
 function renderResults() {
   const query = queryInput.value.trim();
   if (!catalog) return;
-  const visible = searchEntries.filter(e => isaVisible(e.item.isa));
+  if (visibleSet === null) rebuildVisibleSet();
+  const visible = searchEntries.filter((_, i) => visibleSet.has(i));
 
   if (!query) {
     resultPool = [
@@ -630,7 +727,7 @@ function renderResults() {
     ];
   } else {
     const cids = candidateIndexes(query);
-    const pool = cids == null ? visible : cids.map(i => searchEntries[i]).filter(Boolean).filter(e => isaVisible(e.item.isa));
+    const pool = cids == null ? visible : cids.filter(i => visibleSet.has(i)).map(i => searchEntries[i]);
     resultPool = pool
       .map(e => ({...e, score: rankEntry(query, e)}))
       .filter(e => Number.isFinite(e.score) && e.score >= 35)
@@ -649,7 +746,7 @@ function renderResults() {
     : `${resultPool.length} results`;
 
   resultsNode.innerHTML = resultPool.map((e, i) => `
-    <article class="result ${e.key === activeKey ? "active" : ""} ${i === focusedIndex ? "focused" : ""}" data-key="${esc(e.key)}" data-index="${i}">
+    <article class="result ${e.kind}-kind ${e.key === activeKey ? "active" : ""} ${i === focusedIndex ? "focused" : ""}" data-key="${esc(e.key)}" data-index="${i}">
       <div class="result-top">
         <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
         <span class="result-isa">${esc(displayIsa(e.item.isa))}</span>
@@ -785,8 +882,16 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // / or Ctrl+K: focus search
-  if ((e.key === "/" || (e.key === "k" && (e.ctrlKey || e.metaKey))) && !inInput) {
+  // Ctrl+K: focus search (works everywhere)
+  if (e.key === "k" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    queryInput.focus();
+    queryInput.select();
+    return;
+  }
+
+  // /: focus search (when not in input)
+  if (e.key === "/" && !inInput) {
     e.preventDefault();
     queryInput.focus();
     queryInput.select();
@@ -843,8 +948,70 @@ document.addEventListener("keydown", (e) => {
   // Enter/l: select
   if (e.key === "Enter" || e.key === "l") { selectFocused(); return; }
 
+  // [ / ]: previous/next result (alternate to j/k)
+  if (e.key === "]") {
+    e.preventDefault();
+    focusResult(Math.min(focusedIndex + 1, resultPool.length - 1));
+    selectFocused();
+    return;
+  }
+  if (e.key === "[") {
+    e.preventDefault();
+    focusResult(Math.max(focusedIndex - 1, 0));
+    selectFocused();
+    return;
+  }
+
+  // Home/End: jump to first/last result
+  if (e.key === "Home") {
+    e.preventDefault();
+    focusResult(0);
+    selectFocused();
+    return;
+  }
+  if (e.key === "End") {
+    e.preventDefault();
+    focusResult(resultPool.length - 1);
+    selectFocused();
+    return;
+  }
+
+  // Tab/Shift+Tab: switch focus between results and detail panels
+  if (e.key === "Tab") {
+    e.preventDefault();
+    if (e.shiftKey) resultsNode.focus();
+    else detailNode.focus();
+    return;
+  }
+
+  // c: copy current intrinsic/instruction name to clipboard
+  if (e.key === "c") {
+    const copyBtn = detailNode.querySelector(".copy-btn");
+    if (copyBtn) copyBtn.click();
+    return;
+  }
+
+  // s: toggle sidebar collapse (mobile)
+  if (e.key === "s") {
+    const panel = document.getElementById("results-panel");
+    panel.classList.toggle("collapsed");
+    return;
+  }
+
   // h: back to search
   if (e.key === "h") { queryInput.focus(); queryInput.select(); return; }
+});
+
+/* ── Copy button clicks ──────────────────────────────────────────── */
+detailNode.addEventListener("click", (e) => {
+  const btn = e.target.closest(".copy-btn");
+  if (!btn) return;
+  e.preventDefault();
+  const text = btn.dataset.copy;
+  if (text) navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = "\u2713";
+    setTimeout(() => { btn.textContent = "\u2398"; }, 1200);
+  });
 });
 
 /* ── Cross-reference clicks ───────────────────────────────────────── */
@@ -915,6 +1082,12 @@ fetch("search-index.json")
     enabledIsas = new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)));
 
     renderIsaFilters();
+
+    availableCategories = [...new Set(data.intrinsics.map(i => i.category).filter(Boolean))].sort();
+    renderCatFilters();
+
+    rebuildVisibleSet();
+
     metaNode.textContent = `${data.intrinsics.length} intrinsics \u00b7 ${data.instructions.length} instructions`;
 
     const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));

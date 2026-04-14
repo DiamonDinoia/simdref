@@ -29,25 +29,25 @@ class IntrinsicRecord:
     header: str
     isa: list[str] = field(default_factory=list)
     category: str = ""
+    subcategory: str = ""
     instructions: list[str] = field(default_factory=list)
     instruction_refs: list[dict[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
     source: str = "intel"
+    _search_blob: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        fields = [
+            self.name, self.signature, self.description, self.header,
+            self.category, " ".join(self.isa), " ".join(self.instructions),
+            " ".join(self.aliases),
+        ]
+        self._search_blob = " ".join(x for x in fields if x)
 
     @property
     def search_blob(self) -> str:
-        fields = [
-            self.name,
-            self.signature,
-            self.description,
-            self.header,
-            self.category,
-            " ".join(self.isa),
-            " ".join(self.instructions),
-            " ".join(self.aliases),
-        ]
-        return " ".join(x for x in fields if x)
+        return self._search_blob
 
 
 @dataclass(slots=True)
@@ -65,6 +65,15 @@ class InstructionRecord:
     aliases: list[str] = field(default_factory=list)
     description: dict[str, str] = field(default_factory=dict)
     source: str = "uops.info"
+    _search_blob: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        fields = [
+            self.mnemonic, self.form, self.summary,
+            " ".join(self.isa), " ".join(self.operands),
+            " ".join(self.linked_intrinsics), " ".join(self.aliases),
+        ]
+        self._search_blob = " ".join(x for x in fields if x)
 
     @property
     def key(self) -> str:
@@ -77,16 +86,7 @@ class InstructionRecord:
 
     @property
     def search_blob(self) -> str:
-        fields = [
-            self.mnemonic,
-            self.form,
-            self.summary,
-            " ".join(self.isa),
-            " ".join(self.operands),
-            " ".join(self.linked_intrinsics),
-            " ".join(self.aliases),
-        ]
-        return " ".join(x for x in fields if x)
+        return self._search_blob
 
 
 @dataclass(slots=True)

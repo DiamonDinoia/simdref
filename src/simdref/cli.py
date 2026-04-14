@@ -111,12 +111,12 @@ def _release_asset_url(asset_name: str) -> str:
 
 
 def _download_from_release() -> None:
-    """Download pre-built catalog.json and catalog.db from GitHub Release."""
+    """Download pre-built catalog and database from GitHub Release."""
     from simdref.storage import ensure_dir
 
     ensure_dir(DATA_DIR)
 
-    for asset in ("catalog.json", "catalog.db"):
+    for asset in ("catalog.msgpack", "catalog.db"):
         url = _release_asset_url(asset)
         dest = DATA_DIR / asset
         console.print(f"downloading {asset}...", style="dim")
@@ -185,7 +185,7 @@ def _catalog_meta(catalog) -> dict:
 
 
 def _search_runtime(conn, query: str, limit: int = 20) -> tuple[list[SearchResult], dict[str, object], dict[str, object]]:
-    candidate_limit = max(limit * 12, 120)
+    candidate_limit = max(limit * 6, 60)
     intrinsics = search_intrinsic_candidates_from_db(conn, query, limit=candidate_limit)
     instructions = search_instruction_candidates_from_db(conn, query, limit=candidate_limit)
     results = search_records(intrinsics, instructions, query, limit=limit)
