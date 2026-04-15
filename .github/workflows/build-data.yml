@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "0 0 * * 1" # Weekly Monday midnight UTC
   workflow_dispatch:
+  release:
+    types:
+      - published
 
 permissions:
   contents: write
@@ -14,6 +17,9 @@ jobs:
     outputs:
       data_tag: ${{ steps.meta.outputs.data_tag }}
       schema_tag: ${{ steps.meta.outputs.schema_tag }}
+      publish_mutable: ${{ steps.meta.outputs.publish_mutable }}
+      publish_versioned: ${{ steps.meta.outputs.publish_versioned }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,16 +44,34 @@ jobs:
           )
           echo "data_tag=data-v${VERSION}-schema${SCHEMA}" >> "$GITHUB_OUTPUT"
           echo "schema_tag=data-schema${SCHEMA}-latest" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "publish_versioned=true" >> "$GITHUB_OUTPUT"
+            echo "publish_mutable=true" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "${{ github.ref_name }}" = "${{ github.event.repository.default_branch }}" ]; then
+            echo "publish_versioned=false" >> "$GITHUB_OUTPUT"
+            echo "publish_mutable=true" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish_versioned=false" >> "$GITHUB_OUTPUT"
+            echo "publish_mutable=false" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build catalog from upstream
         run: simdref update --build-local --with-sdm
 
       - name: Upload versioned catalog release assets
+        if: steps.meta.outputs.publish_versioned == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.data_tag }}
           name: Data Build ${{ steps.meta.outputs.data_tag }}
-          prerelease: true
+          prerelease: ${{ steps.meta.outputs.is_prerelease }}
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
@@ -55,6 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload schema-compatible catalog release assets
+        if: steps.meta.outputs.publish_mutable == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.schema_tag }}
@@ -67,6 +92,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload latest catalog release assets
+        if: steps.meta.outputs.publish_mutable == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: data-latest
@@ -84,6 +110,7 @@ jobs:
           path: web/
 
   build-wheel:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,14 +130,16 @@ jobs:
           path: dist/
 
       - name: Attach wheel to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: data-latest
+          tag_name: ${{ github.event.release.tag_name }}
           files: dist/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-testpypi:
+    if: github.event_name == 'release' && github.event.release.prerelease == true
     needs: build-wheel
     runs-on: ubuntu-latest
     permissions:
@@ -131,6 +160,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   deploy-pages:
+    if: github.event_name != 'release' && github.ref_name == github.event.repository.default_branch
     needs: build
     runs-on: ubuntu-latest
     permissions:

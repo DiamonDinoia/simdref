@@ -19,7 +19,7 @@ import zipfile
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -735,22 +735,41 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
         intrinsic.instructions = sorted(set(linked))
 
 
-def build_catalog(offline: bool = False, include_sdm: bool = False) -> Catalog:
+def build_catalog(
+    offline: bool = False,
+    include_sdm: bool = False,
+    *,
+    status: Callable[[str], None] | None = None,
+) -> Catalog:
+    emit = status or (lambda _msg: None)
+    emit("Fetching Intel intrinsics data")
     intel_text, intel_source = fetch_intel_data(offline=offline)
+    emit(f"Fetched Intel intrinsics data from {intel_source.url}")
+    emit("Fetching uops.info instruction data")
     uops_text, uops_source = fetch_uops_xml(offline=offline)
+    emit(f"Fetched uops.info instruction data from {uops_source.url}")
+    emit("Parsing intrinsic catalog")
     intrinsics = parse_intel_payload(intel_text)
+    emit(f"Parsed {len(intrinsics)} intrinsics")
+    emit("Parsing instruction catalog")
     instructions = parse_uops_xml(uops_text)
+    emit(f"Parsed {len(instructions)} instructions")
+    emit("Linking intrinsics to instructions")
     link_records(intrinsics, instructions)
+    emit("Linked intrinsics and instructions")
 
     # Parse Intel SDM PDF for rich descriptions only when explicitly requested.
     sdm_path = _find_intel_sdm_pdf(offline=offline) if include_sdm else None
     if sdm_path is not None:
         try:
-            descriptions = parse_intel_sdm(sdm_path)
+            emit(f"Parsing Intel SDM descriptions from {sdm_path}")
+            descriptions = parse_intel_sdm(sdm_path, status=status)
             _merge_descriptions(instructions, descriptions)
+            emit("Merged Intel SDM descriptions into instruction records")
         except Exception:
             pass  # PDF parsing failure is non-fatal
 
+    emit("Assembling final catalog")
     return Catalog(
         intrinsics=sorted(intrinsics, key=lambda item: item.name),
         instructions=sorted(instructions, key=lambda item: (item.mnemonic, item.form)),

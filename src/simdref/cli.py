@@ -21,6 +21,7 @@ from pathlib import Path
 
 import httpx
 import typer
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from typer.core import TyperGroup
 
 from simdref.display import (
@@ -160,11 +161,60 @@ def _download_from_release() -> None:
 
 def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = False) -> None:
     """Build catalog, SQLite, manpages, and web bundle locally."""
-    catalog = build_catalog(offline=offline, include_sdm=include_sdm)
-    save_catalog(catalog)
-    build_sqlite(catalog)
-    write_manpages(catalog, man_dir)
-    export_web(catalog, WEB_DIR)
+    interactive_progress = console.is_terminal and os.environ.get("GITHUB_ACTIONS") != "true"
+
+    if not interactive_progress:
+        def _status(msg: str) -> None:
+            console.print(msg, style="dim")
+
+        _status("Building local catalog")
+        catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
+        _status("Saving catalog snapshot")
+        save_catalog(catalog)
+        _status("Building SQLite search database")
+        build_sqlite(catalog)
+        _status("Writing manpages")
+        write_manpages(catalog, man_dir)
+        _status("Exporting static web bundle")
+        export_web(catalog, WEB_DIR)
+        console.print(
+            f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
+            style="green",
+        )
+        return
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    )
+    with progress:
+        task = progress.add_task("Building local catalog", total=4)
+
+        def _status(msg: str) -> None:
+            progress.update(task, description=msg)
+
+        catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
+        progress.advance(task, 1)
+
+        progress.update(task, description="Saving catalog snapshot")
+        save_catalog(catalog)
+        progress.advance(task, 1)
+
+        progress.update(task, description="Building SQLite search database")
+        build_sqlite(catalog)
+        progress.advance(task, 1)
+
+        progress.update(task, description="Writing manpages and exporting static web bundle")
+        write_manpages(catalog, man_dir)
+        export_web(catalog, WEB_DIR)
+        progress.advance(task, 1)
+
+        progress.update(task, description="Local build complete")
+
     console.print(
         f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",

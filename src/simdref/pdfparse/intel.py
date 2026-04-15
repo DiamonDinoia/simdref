@@ -11,9 +11,12 @@ headings and size-9 body text within each instruction's page range.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 from simdref.pdfparse.base import extract_sections_from_chars
 
@@ -139,7 +142,11 @@ def parse_instruction_title(text: str) -> tuple[str, str] | None:
     return mnemonic, summary
 
 
-def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, object]]:
+def parse_intel_sdm(
+    pdf_path: Path,
+    *,
+    status: Callable[[str], None] | None = None,
+) -> dict[str, dict[str, object]]:
     """Parse the Intel SDM PDF and return per-mnemonic description payloads.
 
     Returns a dict mapping uppercase mnemonic to a payload with:
@@ -159,16 +166,21 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, object]]:
     total = len(pdf.pages)
     log.info("total pages: %d", total)
 
+    interactive_progress = sys.stderr.isatty() and os.environ.get("GITHUB_ACTIONS") != "true"
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         MofNCompleteColumn(),
+        transient=True,
     )
-    progress.start()
+    if interactive_progress:
+        progress.start()
+    if status is not None:
+        status(f"Opened Intel SDM PDF with {total} pages")
 
     # Phase 1: identify instruction title pages (fast — no table detection).
-    scan_task = progress.add_task("Scanning pages", total=total)
+    scan_task = progress.add_task("Scanning pages", total=total) if interactive_progress else None
     title_pages: list[tuple[int, str, str]] = []
     for i in range(total):
         page = pdf.pages[i]
@@ -179,13 +191,18 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, object]]:
             parsed = parse_instruction_title(title_text)
             if parsed is not None:
                 title_pages.append((i, parsed[0], parsed[1]))
-        progress.advance(scan_task)
+        if interactive_progress and scan_task is not None:
+            progress.advance(scan_task)
+        elif status is not None and ((i + 1) % 250 == 0 or i + 1 == total):
+            status(f"Scanning SDM title pages: {i + 1}/{total}")
 
     log.info("found %d instruction title pages", len(title_pages))
+    if status is not None:
+        status(f"Found {len(title_pages)} instruction title pages in Intel SDM")
 
     # Phase 2: extract sections for each instruction.
     # Table bounding boxes are computed on-demand (only instruction pages).
-    extract_task = progress.add_task("Extracting descriptions", total=len(title_pages))
+    extract_task = progress.add_task("Extracting descriptions", total=len(title_pages)) if interactive_progress else None
     page_table_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
     result: dict[str, dict[str, object]] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
@@ -292,9 +309,15 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, object]]:
             part = part.strip()
             if part:
                 result[part.upper()] = payload
-        progress.advance(extract_task)
+        if interactive_progress and extract_task is not None:
+            progress.advance(extract_task)
+        elif status is not None and ((idx + 1) % 50 == 0 or idx + 1 == len(title_pages)):
+            status(f"Extracting SDM descriptions: {idx + 1}/{len(title_pages)} instructions")
 
-    progress.stop()
+    if interactive_progress:
+        progress.stop()
     pdf.close()
     log.info("extracted descriptions for %d mnemonics", len(result))
+    if status is not None:
+        status(f"Extracted SDM descriptions for {len(result)} mnemonic variants")
     return result

@@ -1027,7 +1027,7 @@ class SimdrefApp(App):
             )
 
         _status("Fetching data and parsing...")
-        catalog = build_catalog(offline=False, include_sdm=False)
+        catalog = build_catalog(offline=False, include_sdm=False, status=_status)
         _status(f"Saving catalog ({len(catalog.intrinsics)} intrinsics)...")
         save_catalog(catalog)
         _status("Building search database...")

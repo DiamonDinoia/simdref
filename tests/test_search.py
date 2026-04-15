@@ -107,6 +107,16 @@ class SearchTests(unittest.TestCase):
         )
         self.assertEqual(summary, "Add 32-bit integer operands.")
 
+    def test_build_catalog_emits_status_messages(self):
+        messages: list[str] = []
+        catalog = build_catalog(offline=True, status=messages.append)
+        self.assertTrue(catalog.intrinsics)
+        self.assertTrue(catalog.instructions)
+        self.assertTrue(any("Fetching Intel intrinsics data" in msg for msg in messages))
+        self.assertTrue(any("Parsing intrinsic catalog" in msg for msg in messages))
+        self.assertTrue(any("Linking intrinsics to instructions" in msg for msg in messages))
+        self.assertTrue(any("Assembling final catalog" in msg for msg in messages))
+
     def test_masked_summary_prefix(self):
         summary = _instruction_summary(
             "VADDPS",
