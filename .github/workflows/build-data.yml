@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "0 0 * * 1" # Weekly Monday midnight UTC
   workflow_dispatch:
+    inputs:
+      run_build:
+        description: "Run the expensive upstream data build on this ref"
+        required: false
+        default: false
+        type: boolean
   release:
     types:
       - published
@@ -13,6 +19,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name == 'schedule' || github.event_name == 'release' || github.ref_name == github.event.repository.default_branch || github.event.inputs.run_build == 'true'
     runs-on: ubuntu-latest
     outputs:
       data_tag: ${{ steps.meta.outputs.data_tag }}
