@@ -11,6 +11,7 @@ and bundled fixture files for fully offline operation.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -22,9 +23,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 import httpx
+import msgpack
 
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 from simdref.pdfparse.intel import INTEL_SDM_URL, parse_intel_sdm
+from simdref.storage import DATA_DIR, ensure_dir
 
 UOPS_XML_URL = "https://uops.info/instructions.xml"
 INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
@@ -44,6 +47,13 @@ LOCAL_UOPS_XMLS = [
 LOCAL_INTEL_SDM_PDFS = [
     _REPO_ROOT / "vendor" / "intel" / "intel-sdm.pdf",
 ]
+INTEL_SDM_CACHE_PATH = DATA_DIR / "intel-sdm-descriptions.msgpack"
+_INTEL_SDM_CACHE_VERSION = 1
+_INTEL_SDM_SIGNATURE_PATHS = (
+    Path(__file__).resolve(),
+    Path(__file__).resolve().parent / "pdfparse" / "base.py",
+    Path(__file__).resolve().parent / "pdfparse" / "intel.py",
+)
 
 
 def now_iso() -> str:
@@ -52,6 +62,82 @@ def now_iso() -> str:
 
 def _fixture_text(name: str) -> str:
     return resources.files("simdref.fixtures").joinpath(name).read_text()
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _sdm_parser_signature() -> str:
+    hasher = hashlib.sha256()
+    for path in _INTEL_SDM_SIGNATURE_PATHS:
+        hasher.update(path.read_bytes())
+    return hasher.hexdigest()
+
+
+def _load_cached_intel_sdm(
+    pdf_path: Path,
+    *,
+    status: Callable[[str], None] | None = None,
+    cache_path: Path = INTEL_SDM_CACHE_PATH,
+) -> dict[str, dict[str, object]] | None:
+    if not cache_path.exists():
+        return None
+    try:
+        payload = msgpack.unpackb(cache_path.read_bytes(), raw=False)
+    except Exception:
+        return None
+    if payload.get("cache_version") != _INTEL_SDM_CACHE_VERSION:
+        return None
+    if payload.get("parser_signature") != _sdm_parser_signature():
+        return None
+    if payload.get("pdf_url") != INTEL_SDM_URL:
+        return None
+    if payload.get("pdf_sha256") != _sha256_file(pdf_path):
+        return None
+    descriptions = payload.get("descriptions")
+    if not isinstance(descriptions, dict):
+        return None
+    if status is not None:
+        status(f"Loaded cached Intel SDM descriptions for {len(descriptions)} mnemonic variants")
+    return descriptions
+
+
+def _save_cached_intel_sdm(
+    pdf_path: Path,
+    descriptions: dict[str, dict[str, object]],
+    *,
+    cache_path: Path = INTEL_SDM_CACHE_PATH,
+) -> None:
+    ensure_dir(cache_path.parent)
+    payload = {
+        "cache_version": _INTEL_SDM_CACHE_VERSION,
+        "parser_signature": _sdm_parser_signature(),
+        "pdf_url": INTEL_SDM_URL,
+        "pdf_sha256": _sha256_file(pdf_path),
+        "descriptions": descriptions,
+    }
+    cache_path.write_bytes(msgpack.packb(payload, use_bin_type=True))
+
+
+def load_or_parse_intel_sdm(
+    pdf_path: Path,
+    *,
+    status: Callable[[str], None] | None = None,
+    cache_path: Path = INTEL_SDM_CACHE_PATH,
+) -> dict[str, dict[str, object]]:
+    cached = _load_cached_intel_sdm(pdf_path, status=status, cache_path=cache_path)
+    if cached is not None:
+        return cached
+    descriptions = parse_intel_sdm(pdf_path, status=status)
+    _save_cached_intel_sdm(pdf_path, descriptions, cache_path=cache_path)
+    if status is not None:
+        status(f"Cached Intel SDM descriptions for {len(descriptions)} mnemonic variants")
+    return descriptions
 
 
 def _fetch_text(url: str) -> str:
@@ -762,8 +848,8 @@ def build_catalog(
     sdm_path = _find_intel_sdm_pdf(offline=offline) if include_sdm else None
     if sdm_path is not None:
         try:
-            emit(f"Parsing Intel SDM descriptions from {sdm_path}")
-            descriptions = parse_intel_sdm(sdm_path, status=status)
+            emit(f"Preparing Intel SDM descriptions from {sdm_path}")
+            descriptions = load_or_parse_intel_sdm(sdm_path, status=status)
             _merge_descriptions(instructions, descriptions)
             emit("Merged Intel SDM descriptions into instruction records")
         except Exception:

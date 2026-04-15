@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from simdref.pdfparse.base import extract_sections_from_chars
 
@@ -67,6 +69,7 @@ from simdref.pdfparse.intel import (
     INTEL_SDM_URL,
 )
 from simdref.ingest import _merge_descriptions
+from simdref import ingest
 from simdref.models import InstructionRecord
 
 
@@ -216,3 +219,31 @@ def test_merge_descriptions_adds_sections_and_pdf_reference():
     assert item.metadata["intel-sdm-page-start"] == "123"
     assert item.metadata["intel-sdm-page-end"] == "125"
     assert item.metadata["intel-sdm-url"] == f"{INTEL_SDM_URL}#page=123"
+
+
+def test_load_or_parse_intel_sdm_uses_cache(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "intel-sdm.pdf"
+    cache_path = tmp_path / "intel-sdm-cache.msgpack"
+    pdf_path.write_bytes(b"fake-pdf")
+
+    calls: list[Path] = []
+
+    def _fake_parse(path, *, status=None):
+        calls.append(path)
+        if status is not None:
+            status("parsed")
+        return {
+            "ADDPD": {
+                "sections": {"Description": "Add packed doubles."},
+                "page_start": 10,
+                "page_end": 11,
+            }
+        }
+
+    monkeypatch.setattr(ingest, "parse_intel_sdm", _fake_parse)
+
+    first = ingest.load_or_parse_intel_sdm(pdf_path, cache_path=cache_path)
+    second = ingest.load_or_parse_intel_sdm(pdf_path, cache_path=cache_path)
+
+    assert first == second
+    assert calls == [pdf_path]

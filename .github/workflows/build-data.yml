@@ -30,13 +30,25 @@ jobs:
       publish_versioned: ${{ steps.meta.outputs.publish_versioned }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - run: pip install -e .
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Restore Intel SDM description cache
+        uses: actions/cache@v5
+        with:
+          path: data/derived/intel-sdm-descriptions.msgpack
+          key: intel-sdm-descriptions-${{ runner.os }}-${{ hashFiles('src/simdref/ingest.py', 'src/simdref/pdfparse/*.py') }}
+
+      - run: uv pip install -e .
 
       - name: Compute data release tags
         id: meta
@@ -114,7 +126,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: web/
 
@@ -124,18 +136,22 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - run: pip install build
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
 
-      - run: python -m build
+      - run: uv build
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel
           path: dist/
@@ -160,7 +176,7 @@ jobs:
       url: https://test.pypi.org/p/simdref
     steps:
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheel
           path: dist/
@@ -183,4 +199,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
