@@ -21,6 +21,8 @@ jobs:
   build:
     if: github.event_name == 'schedule' || github.event_name == 'release' || github.ref_name == github.event.repository.default_branch || github.event.inputs.run_build == 'true'
     runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
     outputs:
       data_tag: ${{ steps.meta.outputs.data_tag }}
       schema_tag: ${{ steps.meta.outputs.schema_tag }}
@@ -70,7 +72,7 @@ jobs:
           fi
 
       - name: Build catalog from upstream
-        run: simdref update --build-local --with-sdm
+        run: python -u -m simdref update --build-local --with-sdm
 
       - name: Upload versioned catalog release assets
         if: steps.meta.outputs.publish_versioned == 'true'
@@ -119,6 +121,8 @@ jobs:
   build-wheel:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
