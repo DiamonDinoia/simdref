@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - gh-pages
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+
+      - name: Run Python test suite
+        run: python -m pytest tests
+
+      - name: Check Python syntax
+        run: python -m py_compile src/simdref/cli.py src/simdref/display.py src/simdref/ingest.py src/simdref/pdfparse/base.py src/simdref/pdfparse/intel.py src/simdref/tui.py src/simdref/web.py
+
+      - name: Check web syntax
+        run: node --check src/simdref/templates/app.js
+
+  smoke-update:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Refresh runtime from release assets
+        run: simdref update --man-dir "$RUNNER_TEMP/man"
+
+      - name: Inspect runtime
+        run: simdref doctor
+
+      - name: Validate runtime artifacts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from simdref.storage import SQLITE_PATH, WEB_DIR, open_db, sqlite_schema_is_current
+
+          assert sqlite_schema_is_current(), "SQLite schema is not current after update"
+          with open_db(SQLITE_PATH) as conn:
+              intrinsics = conn.execute("select count(*) from intrinsics_data").fetchone()[0]
+              instructions = conn.execute("select count(*) from instructions_data").fetchone()[0]
+          assert intrinsics > 1000, f"unexpected intrinsic count: {intrinsics}"
+          assert instructions > 1000, f"unexpected instruction count: {instructions}"
+
+          search_index = WEB_DIR / "search-index.json"
+          intrinsic_details = WEB_DIR / "intrinsic-details.json"
+          assert search_index.exists(), f"missing {search_index}"
+          assert intrinsic_details.exists(), f"missing {intrinsic_details}"
+
+          payload = json.loads(search_index.read_text())
+          assert len(payload.get("intrinsics", [])) == intrinsics
+          assert len(payload.get("instructions", [])) == instructions
+          assert "isa_config" in payload
+          PY
+
+  package:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build distributables
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build

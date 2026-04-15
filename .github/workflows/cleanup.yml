@@ -1,0 +1,128 @@
+name: Cleanup Repository Hygiene
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log actions without deleting anything"
+        required: false
+        default: true
+        type: boolean
+      branch_grace_days:
+        description: "Delete merged branches older than this many days"
+        required: false
+        default: "14"
+        type: string
+      artifact_grace_days:
+        description: "Delete workflow artifacts older than this many days"
+        required: false
+        default: "14"
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: read
+
+concurrency:
+  group: cleanup-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup merged branches and old artifacts
+        uses: actions/github-script@v7
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+          BRANCH_GRACE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch_grace_days || '14' }}
+          ARTIFACT_GRACE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.artifact_grace_days || '14' }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const defaultBranch = context.payload.repository.default_branch;
+            const dryRun = String(process.env.DRY_RUN).toLowerCase() === "true";
+            const branchGraceDays = Number(process.env.BRANCH_GRACE_DAYS || "14");
+            const artifactGraceDays = Number(process.env.ARTIFACT_GRACE_DAYS || "14");
+            const now = Date.now();
+            const branchCutoff = now - branchGraceDays * 24 * 60 * 60 * 1000;
+            const artifactCutoff = now - artifactGraceDays * 24 * 60 * 60 * 1000;
+            const protectedBranches = new Set([defaultBranch, "gh-pages"]);
+            let deletedBranches = 0;
+            let deletedArtifacts = 0;
+
+            const openBranchSet = new Set();
+            for await (const page of github.paginate.iterator(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            })) {
+              for (const pr of page.data) {
+                if (pr.head?.repo?.full_name === `${owner}/${repo}`) {
+                  openBranchSet.add(pr.head.ref);
+                }
+              }
+            }
+
+            for await (const page of github.paginate.iterator(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "closed",
+              sort: "updated",
+              direction: "desc",
+              per_page: 100,
+            })) {
+              for (const pr of page.data) {
+                if (!pr.merged_at) continue;
+                if (!pr.head?.ref || !pr.head?.repo || pr.head.repo.full_name !== `${owner}/${repo}`) continue;
+                if (protectedBranches.has(pr.head.ref)) continue;
+                if (openBranchSet.has(pr.head.ref)) continue;
+                if (new Date(pr.merged_at).getTime() > branchCutoff) continue;
+
+                core.info(`${dryRun ? "[dry-run] would delete" : "deleting"} merged branch ${pr.head.ref} from PR #${pr.number}`);
+                if (!dryRun) {
+                  try {
+                    await github.rest.git.deleteRef({ owner, repo, ref: `heads/${pr.head.ref}` });
+                    deletedBranches += 1;
+                  } catch (error) {
+                    core.warning(`failed to delete branch ${pr.head.ref}: ${error.message}`);
+                  }
+                }
+              }
+            }
+
+            for await (const page of github.paginate.iterator(github.rest.actions.listArtifactsForRepo, {
+              owner,
+              repo,
+              per_page: 100,
+            })) {
+              for (const artifact of page.data.artifacts) {
+                if (new Date(artifact.created_at).getTime() > artifactCutoff) continue;
+
+                core.info(`${dryRun ? "[dry-run] would delete" : "deleting"} artifact ${artifact.name} (#${artifact.id})`);
+                if (!dryRun) {
+                  try {
+                    await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: artifact.id });
+                    deletedArtifacts += 1;
+                  } catch (error) {
+                    core.warning(`failed to delete artifact ${artifact.id}: ${error.message}`);
+                  }
+                }
+              }
+            }
+
+            await core.summary
+              .addHeading("Cleanup Summary")
+              .addRaw(`dry_run=${dryRun}\n`)
+              .addRaw(`deleted_branches=${deletedBranches}\n`)
+              .addRaw(`deleted_artifacts=${deletedArtifacts}\n`)
+              .addRaw("Immutable versioned data releases are intentionally left untouched; mutable schema-latest/data-latest releases are updated in place.\n")
+              .write();
