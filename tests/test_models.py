@@ -52,3 +52,28 @@ def test_catalog_from_dict_without_description():
     }
     catalog = Catalog.from_dict(payload)
     assert catalog.instructions[0].description == {}
+
+
+def test_instruction_record_derives_operands_and_metrics():
+    record = InstructionRecord(
+        mnemonic="ADDPS",
+        form="ADDPS (XMM, XMM)",
+        summary="Add packed single precision floating-point values.",
+        operand_details=[
+            {"idx": "0", "r": "1", "type": "reg", "width": "128", "xtype": "f32", "name": "xmm"},
+            {"idx": "1", "w": "1", "type": "reg", "width": "128", "xtype": "f32", "name": "xmm"},
+        ],
+        arch_details={
+            "SKL": {
+                "measurement": {"TP_loop": "1.0", "uops": "1"},
+                "latencies": [{"cycles": "3"}],
+                "doc": {},
+                "iaca": [],
+            }
+        },
+    )
+    assert record.operands == [
+        "idx=0 r reg 128 f32 xmm",
+        "idx=1 w reg 128 f32 xmm",
+    ]
+    assert record.metrics == {"SKL": {"TP_loop": "1.0", "uops": "1"}}

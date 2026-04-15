@@ -8,7 +8,7 @@ holding thousands of records.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -19,6 +19,15 @@ class SourceVersion:
     fetched_at: str
     url: str
     used_fixture: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "version": self.version,
+            "fetched_at": self.fetched_at,
+            "url": self.url,
+            "used_fixture": self.used_fixture,
+        }
 
 
 @dataclass(slots=True)
@@ -49,6 +58,22 @@ class IntrinsicRecord:
     def search_blob(self) -> str:
         return self._search_blob
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "signature": self.signature,
+            "description": self.description,
+            "header": self.header,
+            "isa": self.isa,
+            "category": self.category,
+            "subcategory": self.subcategory,
+            "instructions": self.instructions,
+            "instruction_refs": self.instruction_refs,
+            "notes": self.notes,
+            "aliases": self.aliases,
+            "source": self.source,
+        }
+
 
 @dataclass(slots=True)
 class InstructionRecord:
@@ -56,18 +81,22 @@ class InstructionRecord:
     form: str
     summary: str
     isa: list[str] = field(default_factory=list)
-    operands: list[str] = field(default_factory=list)
     operand_details: list[dict[str, str]] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
     arch_details: dict[str, dict[str, Any]] = field(default_factory=dict)
     linked_intrinsics: list[str] = field(default_factory=list)
-    metrics: dict[str, dict[str, str]] = field(default_factory=dict)
     aliases: list[str] = field(default_factory=list)
     description: dict[str, str] = field(default_factory=dict)
     source: str = "uops.info"
     _search_blob: str = field(default="", repr=False)
+    _key: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self._key = self.form.strip()
+        if not self._key:
+            self._key = self.mnemonic
+        elif not self._key.casefold().startswith(self.mnemonic.casefold()):
+            self._key = f"{self.mnemonic} {self._key}".strip()
         fields = [
             self.mnemonic, self.form, self.summary,
             " ".join(self.isa), " ".join(self.operands),
@@ -77,16 +106,61 @@ class InstructionRecord:
 
     @property
     def key(self) -> str:
-        form = self.form.strip()
-        if not form:
-            return self.mnemonic
-        if form.casefold().startswith(self.mnemonic.casefold()):
-            return form
-        return f"{self.mnemonic} {form}".strip()
+        return self._key
+
+    @property
+    def operands(self) -> list[str]:
+        rendered: list[str] = []
+        for operand in self.operand_details:
+            rendered_rw = "".join(flag for flag in ("r", "w") if operand.get(flag) == "1")
+            idx = operand.get("idx", "")
+            text_parts = [
+                f"idx={idx}" if idx else "",
+                rendered_rw,
+                operand.get("type", ""),
+                operand.get("width", ""),
+                operand.get("xtype", ""),
+                operand.get("name", ""),
+            ]
+            text = " ".join(part for part in text_parts if part)
+            if text:
+                rendered.append(text)
+        return rendered
 
     @property
     def search_blob(self) -> str:
         return self._search_blob
+
+    @property
+    def metrics(self) -> dict[str, dict[str, str]]:
+        return {
+            arch: measurement
+            for arch, details in self.arch_details.items()
+            if (measurement := details.get("measurement"))
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mnemonic": self.mnemonic,
+            "form": self.form,
+            "summary": self.summary,
+            "isa": self.isa,
+            "operand_details": self.operand_details,
+            "metadata": self.metadata,
+            "arch_details": self.arch_details,
+            "linked_intrinsics": self.linked_intrinsics,
+            "aliases": self.aliases,
+            "description": self.description,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "InstructionRecord":
+        data = dict(payload)
+        data.pop("metrics", None)
+        data.pop("operands", None)
+        data.setdefault("description", {})
+        return cls(**data)
 
 
 @dataclass(slots=True)
@@ -97,13 +171,18 @@ class Catalog:
     generated_at: str
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "intrinsics": [item.to_dict() for item in self.intrinsics],
+            "instructions": [item.to_dict() for item in self.instructions],
+            "sources": [item.to_dict() for item in self.sources],
+            "generated_at": self.generated_at,
+        }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Catalog":
         return cls(
             intrinsics=[IntrinsicRecord(**item) for item in payload.get("intrinsics", [])],
-            instructions=[InstructionRecord(**item) for item in payload.get("instructions", [])],
+            instructions=[InstructionRecord.from_dict(item) for item in payload.get("instructions", [])],
             sources=[SourceVersion(**item) for item in payload.get("sources", [])],
             generated_at=payload["generated_at"],
         )

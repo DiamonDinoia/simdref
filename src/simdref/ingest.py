@@ -15,9 +15,11 @@ import hashlib
 import io
 import json
 import re
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import UTC, datetime
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable
@@ -54,6 +56,8 @@ _INTEL_SDM_SIGNATURE_PATHS = (
     Path(__file__).resolve().parent / "pdfparse" / "base.py",
     Path(__file__).resolve().parent / "pdfparse" / "intel.py",
 )
+_UOPS_METADATA_KEYS = frozenset({"category", "cpl", "extension", "iclass", "iform", "url", "url-ref"})
+_UOPS_OPERAND_KEYS = ("idx", "r", "w", "type", "width", "xtype", "name")
 
 
 def now_iso() -> str:
@@ -72,11 +76,31 @@ def _sha256_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
+@lru_cache(maxsize=1)
 def _sdm_parser_signature() -> str:
     hasher = hashlib.sha256()
     for path in _INTEL_SDM_SIGNATURE_PATHS:
         hasher.update(path.read_bytes())
     return hasher.hexdigest()
+
+
+def _iter_xml_elements(source: str | Path, tag: str):
+    context = ET.iterparse(io.StringIO(source) if isinstance(source, str) else source, events=("start", "end"))
+    root = None
+    for event, elem in context:
+        if event == "start" and root is None:
+            root = elem
+            continue
+        if event != "end" or elem.tag != tag:
+            continue
+        yield elem
+        elem.clear()
+        if root is not None:
+            root.clear()
+
+
+def _intern_small(value: str) -> str:
+    return sys.intern(value) if value and len(value) <= 32 else value
 
 
 def _load_cached_intel_sdm(
@@ -162,7 +186,7 @@ def _read_local_intel_archive() -> tuple[str, SourceVersion] | None:
     return None
 
 
-def fetch_uops_xml(offline: bool = False) -> tuple[str, SourceVersion]:
+def fetch_uops_xml(offline: bool = False) -> tuple[str | Path, SourceVersion]:
     if offline:
         return _fixture_text("uops_sample.xml"), SourceVersion(
             source="uops.info",
@@ -173,7 +197,7 @@ def fetch_uops_xml(offline: bool = False) -> tuple[str, SourceVersion]:
         )
     for xml_path in LOCAL_UOPS_XMLS:
         if xml_path.exists():
-            return xml_path.read_text(), SourceVersion(
+            return xml_path, SourceVersion(
                 source="uops.info",
                 version=f"local-xml:{xml_path.name}",
                 fetched_at=now_iso(),
@@ -394,11 +418,16 @@ def _merge_descriptions(
 
 def _normalize_isa(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [str(item) for item in value if item]
+        return [_intern_small(str(item)) for item in value if item]
     if isinstance(value, str):
-        parts = re.split(r"[,/|]\s*|\s{2,}", value)
-        return [part.strip() for part in parts if part.strip()]
+        return list(_normalize_isa_string(value))
     return []
+
+
+@lru_cache(maxsize=512)
+def _normalize_isa_string(value: str) -> tuple[str, ...]:
+    parts = re.split(r"[,/|]\s*|\s{2,}", value)
+    return tuple(_intern_small(part.strip()) for part in parts if part.strip())
 
 
 def _canonical_instruction_key(name: str, form: str) -> str:
@@ -411,6 +440,7 @@ def _canonical_instruction_key(name: str, form: str) -> str:
     return f"{instruction_name} ({instruction_form.upper()})"
 
 
+@lru_cache(maxsize=128)
 def _normalize_operand_xtype(value: str) -> str:
     xtype = value.strip()
     if not xtype:
@@ -590,9 +620,8 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
         xml_blob = match.group("body").replace("\\\n", "")
         stripped = bytes(xml_blob, "utf-8").decode("unicode_escape").strip()
     if stripped.startswith("<?xml") or stripped.startswith("<intrinsics_list"):
-        root = ET.fromstring(stripped)
         records: list[IntrinsicRecord] = []
-        for node in root.findall(".//intrinsic"):
+        for node in _iter_xml_elements(stripped, "intrinsic"):
             name = node.attrib.get("name", "").strip()
             if not name:
                 continue
@@ -699,12 +728,10 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
     return records
 
 
-def parse_uops_xml(text: str) -> list[InstructionRecord]:
-    root = ET.fromstring(text)
+def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
     records: list[InstructionRecord] = []
-    for node in root.findall(".//instruction"):
-        mnemonic = node.attrib.get("asm") or node.attrib.get("name") or ""
-        mnemonic = mnemonic.strip()
+    for node in _iter_xml_elements(source, "instruction"):
+        mnemonic = _intern_small((node.attrib.get("asm") or node.attrib.get("name") or "").strip())
         if not mnemonic:
             continue
         form = (
@@ -716,57 +743,44 @@ def parse_uops_xml(text: str) -> list[InstructionRecord]:
         ).strip()
         raw_summary = node.attrib.get("summary", "").strip()
         isa = _normalize_isa(node.attrib.get("isa-set", "") or node.attrib.get("extension", "") or node.attrib.get("isa", ""))
-        operands: list[str] = []
         operand_details: list[dict[str, str]] = []
         metadata = {
-            key: value
+            key: (_intern_small(value.strip()) if key in {"category", "cpl", "extension", "iclass"} else value.strip())
             for key, value in node.attrib.items()
-            if key not in {"string", "summary"}
+            if key in _UOPS_METADATA_KEYS
         }
         if raw_summary:
             metadata["uops_summary"] = raw_summary
-        metrics: dict[str, dict[str, str]] = {}
         arch_details: dict[str, dict[str, Any]] = {}
         for child in node:
-            tag = child.tag.lower()
+            tag = child.tag
             if tag == "operand":
-                rendered_rw = "".join(flag for flag in ("r", "w") if child.attrib.get(flag) == "1")
                 xtype = _normalize_operand_xtype(child.attrib.get("xtype", "").strip())
-                text_parts = [
-                    f"idx={child.attrib.get('idx', '').strip()}",
-                    rendered_rw,
-                    child.attrib.get("type", "").strip(),
-                    child.attrib.get("memory-prefix", "").strip(),
-                    child.attrib.get("width", "").strip(),
-                    xtype,
-                    child.attrib.get("name", "").strip(),
-                    (child.text or "").strip(),
-                ]
-                rendered = " ".join(part for part in text_parts if part)
-                if rendered:
-                    operands.append(rendered)
-                operand_payload = {key: value for key, value in child.attrib.items()}
-                operand_payload["xtype"] = xtype
-                operand_details.append(operand_payload | {"values": (child.text or "").strip()})
-            if tag in {"architecture", "measurement", "doc"}:
-                if tag == "architecture":
-                    arch = child.attrib.get("name") or child.attrib.get("uarch") or child.attrib.get("arch")
-                    if not arch:
-                        continue
-                    arch_entry: dict[str, Any] = {"measurement": {}, "latencies": [], "doc": {}, "iaca": []}
-                    for grandchild in child:
-                        grand_tag = grandchild.tag
-                        if grand_tag == "measurement":
-                            arch_entry["measurement"] = dict(grandchild.attrib)
-                            for latency in grandchild.findall("./latency"):
-                                arch_entry["latencies"].append(dict(latency.attrib))
-                            if arch_entry["measurement"]:
-                                metrics[arch] = dict(arch_entry["measurement"])
-                        elif grand_tag == "doc":
-                            arch_entry["doc"] = dict(grandchild.attrib)
-                        elif grand_tag == "IACA":
-                            arch_entry["iaca"].append(dict(grandchild.attrib))
-                    arch_details[arch] = arch_entry
+                operand_payload = {
+                    key: (_intern_small(value.strip()) if key in {"type", "width", "name"} else value.strip())
+                    for key, value in child.attrib.items()
+                    if key in _UOPS_OPERAND_KEYS
+                }
+                if xtype:
+                    operand_payload["xtype"] = _intern_small(xtype)
+                operand_details.append(operand_payload)
+            elif tag == "architecture":
+                arch = child.attrib.get("name") or child.attrib.get("uarch") or child.attrib.get("arch")
+                if not arch:
+                    continue
+                arch = _intern_small(arch)
+                arch_entry: dict[str, Any] = {"measurement": {}, "latencies": [], "doc": {}, "iaca": []}
+                for grandchild in child:
+                    grand_tag = grandchild.tag
+                    if grand_tag == "measurement":
+                        arch_entry["measurement"] = dict(grandchild.attrib)
+                        for latency in grandchild.findall("./latency"):
+                            arch_entry["latencies"].append(dict(latency.attrib))
+                    elif grand_tag == "doc":
+                        arch_entry["doc"] = dict(grandchild.attrib)
+                    elif grand_tag == "IACA":
+                        arch_entry["iaca"].append(dict(grandchild.attrib))
+                arch_details[arch] = arch_entry
         summary = _instruction_summary(mnemonic, raw_summary, operand_details)
         records.append(
             InstructionRecord(
@@ -774,11 +788,9 @@ def parse_uops_xml(text: str) -> list[InstructionRecord]:
                 form=form,
                 summary=summary,
                 isa=isa,
-                operands=operands,
                 operand_details=operand_details,
                 metadata=metadata,
                 arch_details=arch_details,
-                metrics=metrics,
             )
         )
     return records

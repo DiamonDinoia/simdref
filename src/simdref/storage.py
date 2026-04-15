@@ -1,8 +1,7 @@
-"""JSON and SQLite persistence for the simdref catalog.
+"""Msgpack and SQLite persistence for the simdref catalog.
 
-Provides dual-format storage: a JSON file for portability and complete
-serialisation, and a SQLite database with FTS5 virtual tables for fast
-full-text search with BM25 ranking.
+Stores a compact msgpack snapshot for reuse and a SQLite database with
+FTS5 virtual tables for fast full-text search with BM25 ranking.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import os
 import re
 import sqlite3
 import sys
-from dataclasses import asdict
+from itertools import islice
 from pathlib import Path
 
 import msgpack
@@ -57,6 +56,7 @@ CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
 SQLITE_SCHEMA_VERSION = "8"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+SQLITE_INSERT_BATCH_SIZE = 512
 
 
 def ensure_dir(path: Path) -> None:
@@ -70,7 +70,23 @@ def load_catalog(path: Path = CATALOG_PATH) -> Catalog:
 
 def save_catalog(catalog: Catalog, path: Path = CATALOG_PATH) -> None:
     ensure_dir(path.parent)
-    path.write_bytes(msgpack.packb(catalog.to_dict(), use_bin_type=True))
+    packer = msgpack.Packer(use_bin_type=True)
+    with path.open("wb") as fh:
+        fh.write(packer.pack_map_header(4))
+        fh.write(packer.pack("intrinsics"))
+        fh.write(packer.pack_array_header(len(catalog.intrinsics)))
+        for record in catalog.intrinsics:
+            fh.write(packer.pack(record.to_dict()))
+        fh.write(packer.pack("instructions"))
+        fh.write(packer.pack_array_header(len(catalog.instructions)))
+        for record in catalog.instructions:
+            fh.write(packer.pack(record.to_dict()))
+        fh.write(packer.pack("sources"))
+        fh.write(packer.pack_array_header(len(catalog.sources)))
+        for source in catalog.sources:
+            fh.write(packer.pack(source.to_dict()))
+        fh.write(packer.pack("generated_at"))
+        fh.write(packer.pack(catalog.generated_at))
 
 
 def open_db(path: Path = SQLITE_PATH) -> sqlite3.Connection:
@@ -113,6 +129,15 @@ def _tokenize_name(name: str) -> str:
     VADDPS (YMM, YMM, YMM) → vaddps ymm ymm ymm
     """
     return " ".join(_ALPHA_NUM_SPLIT.findall(name)).lower()
+
+
+def _batched(items, size: int = SQLITE_INSERT_BATCH_SIZE):
+    iterator = iter(items)
+    while True:
+        batch = list(islice(iterator, size))
+        if not batch:
+            break
+        yield batch
 
 
 def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
@@ -161,8 +186,12 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     cur.execute("INSERT INTO meta VALUES (?, ?)", ("generated_at", catalog.generated_at))
 
     # Sources
-    source_rows = [(s.source, msgpack.packb(asdict(s), use_bin_type=True)) for s in catalog.sources]
-    cur.executemany("INSERT INTO sources VALUES (?, ?)", source_rows)
+    source_rows = (
+        (source.source, msgpack.packb(source.to_dict(), use_bin_type=True))
+        for source in catalog.sources
+    )
+    for batch in _batched(source_rows):
+        cur.executemany("INSERT INTO sources VALUES (?, ?)", batch)
 
     # Build a mnemonic -> summary lookup from instructions for fast access
     _instr_summary: dict[str, str] = {}
@@ -171,11 +200,11 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             _instr_summary[irec.mnemonic] = irec.summary
 
     # Intrinsics data + FTS
-    intrinsics_data_rows = []
-    intrinsics_fts_rows = []
+    intrinsics_data_batch = []
+    intrinsics_fts_batch = []
     for record in catalog.intrinsics:
-        payload = msgpack.packb(asdict(record), use_bin_type=True)
-        intrinsics_data_rows.append((
+        payload = msgpack.packb(record.to_dict(), use_bin_type=True)
+        intrinsics_data_batch.append((
             record.name,
             record.signature,
             record.description,
@@ -185,14 +214,13 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             record.subcategory,
             payload,
         ))
-        # Resolve instruction summary from first linked instruction mnemonic
         instr_summary = ""
         if record.instructions:
             mnemonic = record.instructions[0].split("(")[0].split()[0].strip()
             instr_summary = _instr_summary.get(mnemonic, "")
         if not instr_summary and record.description:
             instr_summary = record.description.split(".")[0] + "."
-        intrinsics_fts_rows.append((
+        intrinsics_fts_batch.append((
             record.name,
             record.signature,
             record.description,
@@ -205,21 +233,33 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             instr_summary,
             _tokenize_name(record.name),
         ))
-    cur.executemany(
-        "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        intrinsics_data_rows,
-    )
-    cur.executemany(
-        "INSERT INTO intrinsics_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        intrinsics_fts_rows,
-    )
+        if len(intrinsics_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
+            cur.executemany(
+                "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                intrinsics_data_batch,
+            )
+            cur.executemany(
+                "INSERT INTO intrinsics_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                intrinsics_fts_batch,
+            )
+            intrinsics_data_batch.clear()
+            intrinsics_fts_batch.clear()
+    if intrinsics_data_batch:
+        cur.executemany(
+            "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            intrinsics_data_batch,
+        )
+        cur.executemany(
+            "INSERT INTO intrinsics_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            intrinsics_fts_batch,
+        )
 
     # Instructions data + FTS
-    instructions_data_rows = []
-    instructions_fts_rows = []
+    instructions_data_batch = []
+    instructions_fts_batch = []
     for record in catalog.instructions:
-        payload = msgpack.packb(asdict(record), use_bin_type=True)
-        instructions_data_rows.append((
+        payload = msgpack.packb(record.to_dict(), use_bin_type=True)
+        instructions_data_batch.append((
             record.key,
             record.mnemonic,
             record.form,
@@ -227,7 +267,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             " ".join(record.isa),
             payload,
         ))
-        instructions_fts_rows.append((
+        instructions_fts_batch.append((
             record.key,
             record.mnemonic,
             record.form,
@@ -237,14 +277,26 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             " ".join(record.aliases),
             _tokenize_name(record.key),
         ))
-    cur.executemany(
-        "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
-        instructions_data_rows,
-    )
-    cur.executemany(
-        "INSERT INTO instructions_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        instructions_fts_rows,
-    )
+        if len(instructions_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
+            cur.executemany(
+                "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
+                instructions_data_batch,
+            )
+            cur.executemany(
+                "INSERT INTO instructions_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                instructions_fts_batch,
+            )
+            instructions_data_batch.clear()
+            instructions_fts_batch.clear()
+    if instructions_data_batch:
+        cur.executemany(
+            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
+            instructions_data_batch,
+        )
+        cur.executemany(
+            "INSERT INTO instructions_fts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            instructions_fts_batch,
+        )
 
     conn.commit()
     conn.close()
