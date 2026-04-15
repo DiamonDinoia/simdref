@@ -1,9 +1,8 @@
 """Command-line interface for simdref.
 
-This module defines the Typer application with all subcommands (``update``,
-``search``, ``show``, ``llm``, ``complete``, ``man``, ``doctor``, ``tui``,
-``export-web``, ``shell-init``) and the smart bare-word lookup that fires
-when no recognised subcommand is given.
+This module defines the Typer application, its maintenance/export commands,
+and the smart bare-word lookup that fires when no recognised subcommand is
+given.
 
 Display and formatting logic lives in :mod:`simdref.display`.
 """
@@ -22,7 +21,7 @@ from pathlib import Path
 
 import httpx
 import typer
-from rich.prompt import Prompt
+from typer.core import TyperGroup
 
 from simdref.display import (
     console,
@@ -37,6 +36,7 @@ from simdref.display import (
     render_instruction_variants,
     render_search_results,
 )
+from simdref import __version__
 from simdref.ingest import build_catalog
 from simdref.manpages import open_manpage, write_manpages
 from simdref.perf import variant_perf_summary
@@ -47,6 +47,7 @@ from simdref.storage import (
     DATA_DIR,
     DEFAULT_MAN_DIR,
     SQLITE_PATH,
+    SQLITE_SCHEMA_VERSION,
     WEB_DIR,
     build_sqlite,
     load_catalog,
@@ -64,7 +65,18 @@ from simdref.tui import run_tui
 from simdref.web import export_web
 
 
-app = typer.Typer(help="Search Intel intrinsic and uops.info data from one local catalog.")
+class SimdrefGroup(TyperGroup):
+    """Top-level CLI group with usage that reflects bare-query mode."""
+
+    def collect_usage_pieces(self, ctx):  # type: ignore[override]
+        return ["[OPTIONS] [QUERY] | COMMAND [ARGS]..."]
+
+
+app = typer.Typer(
+    cls=SimdrefGroup,
+    help="Local SIMD reference across Intel intrinsics, instruction data, performance measurements, and SDM-derived descriptions.\n\nRun without arguments to open the TUI. Pass a bare query to search or open matching results directly.",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 SHOW_FP16_ISAS = False
 SHORT_MODE = False
 FULL_MODE = False
@@ -106,8 +118,14 @@ RELEASE_TAG = "data-latest"
 # ---------------------------------------------------------------------------
 
 
-def _release_asset_url(asset_name: str) -> str:
-    return f"https://github.com/{GITHUB_REPO}/releases/download/{RELEASE_TAG}/{asset_name}"
+def _release_tag_candidates() -> list[str]:
+    version_tag = f"data-v{__version__}-schema{SQLITE_SCHEMA_VERSION}"
+    schema_tag = f"data-schema{SQLITE_SCHEMA_VERSION}-latest"
+    return [version_tag, schema_tag, RELEASE_TAG]
+
+
+def _release_asset_url(tag: str, asset_name: str) -> str:
+    return f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/{asset_name}"
 
 
 def _download_from_release() -> None:
@@ -117,20 +135,96 @@ def _download_from_release() -> None:
     ensure_dir(DATA_DIR)
 
     for asset in ("catalog.msgpack", "catalog.db"):
-        url = _release_asset_url(asset)
         dest = DATA_DIR / asset
-        console.print(f"downloading {asset}...", style="dim")
-        try:
-            with httpx.stream("GET", url, follow_redirects=True, timeout=120) as resp:
-                resp.raise_for_status()
-                with open(dest, "wb") as f:
-                    for chunk in resp.iter_bytes(chunk_size=1024 * 64):
-                        f.write(chunk)
-        except httpx.HTTPStatusError as exc:
-            console.print(f"failed to download {asset}: {exc.response.status_code}", style="red")
-            console.print("the pre-built release may not exist yet — try 'simdref update' to build locally", style="yellow")
-            raise typer.Exit(code=1) from exc
+        for tag in _release_tag_candidates():
+            url = _release_asset_url(tag, asset)
+            console.print(f"downloading {asset} from {tag}...", style="dim")
+            try:
+                with httpx.stream("GET", url, follow_redirects=True, timeout=120) as resp:
+                    resp.raise_for_status()
+                    with open(dest, "wb") as f:
+                        for chunk in resp.iter_bytes(chunk_size=1024 * 64):
+                            f.write(chunk)
+                break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    continue
+                console.print(f"failed to download {asset}: {exc.response.status_code}", style="red")
+                raise typer.Exit(code=1) from exc
+        else:
+            console.print(f"failed to download {asset}: no compatible release asset found", style="red")
+            console.print("try 'simdref update --build-local' to build locally", style="yellow")
+            raise typer.Exit(code=1)
     console.print("download complete", style="green")
+
+
+def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = False) -> None:
+    """Build catalog, SQLite, manpages, and web bundle locally."""
+    catalog = build_catalog(offline=offline, include_sdm=include_sdm)
+    save_catalog(catalog)
+    build_sqlite(catalog)
+    write_manpages(catalog, man_dir)
+    export_web(catalog, WEB_DIR)
+    console.print(
+        f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
+        style="green",
+    )
+
+
+def _refresh_runtime_from_existing_catalog(*, man_dir: Path) -> None:
+    """Rebuild derived runtime artifacts from the local msgpack snapshot.
+
+    This is substantially cheaper than a full local source rebuild and is
+    sufficient when the catalog is already present but the SQLite schema,
+    manpages, or web export need to be refreshed.
+    """
+    if not CATALOG_PATH.exists():
+        raise typer.Exit(code=1)
+    catalog = load_catalog()
+    build_sqlite(catalog)
+    write_manpages(catalog, man_dir)
+    export_web(catalog, WEB_DIR)
+    console.print(
+        f"refreshed runtime from existing catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
+        style="green",
+    )
+
+
+def _finalize_runtime_from_download(*, man_dir: Path) -> None:
+    """Refresh local derived artifacts after downloading release assets."""
+    if not CATALOG_PATH.exists():
+        raise typer.Exit(code=1)
+    catalog = load_catalog()
+    write_manpages(catalog, man_dir)
+    export_web(catalog, WEB_DIR)
+    console.print(
+        f"refreshed local web/man assets from downloaded catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
+        style="green",
+    )
+
+
+def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = True) -> None:
+    """Prefer pre-built assets; optionally fall back to fixtures."""
+    try:
+        _download_from_release()
+        if sqlite_schema_is_current():
+            _finalize_runtime_from_download(man_dir=man_dir)
+            return
+        if CATALOG_PATH.exists():
+            console.print("downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog", style="yellow")
+            _refresh_runtime_from_existing_catalog(man_dir=man_dir)
+            return
+        console.print("downloaded runtime schema is not current; falling back to bundled fixtures", style="yellow")
+    except typer.Exit:
+        if CATALOG_PATH.exists():
+            console.print("download failed; refreshing runtime from the existing local catalog", style="yellow")
+            _refresh_runtime_from_existing_catalog(man_dir=man_dir)
+            return
+        if not fallback_offline:
+            raise
+        console.print("falling back to bundled fixtures", style="yellow")
+
+    _build_runtime_locally(offline=True, man_dir=man_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -139,25 +233,9 @@ def _download_from_release() -> None:
 
 
 def _bootstrap_interactive() -> None:
-    """Prompt the user to choose how to set up the catalog on first run."""
-    console.print("\n[bold]No catalog found.[/bold] How would you like to set up simdref?\n")
-    console.print("  [cyan][1][/cyan] Download pre-built data from GitHub Release (recommended, fast)")
-    console.print("  [cyan][2][/cyan] Build locally from upstream sources (crawls Intel + uops.info)\n")
-
-    choice = Prompt.ask("Choice", choices=["1", "2"], default="1")
-
-    if choice == "1":
-        _download_from_release()
-    else:
-        catalog = build_catalog(offline=False)
-        save_catalog(catalog)
-        build_sqlite(catalog)
-        write_manpages(catalog, DEFAULT_MAN_DIR)
-        export_web(catalog, WEB_DIR)
-        console.print(
-            f"built catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
-            style="green",
-        )
+    """Bootstrap runtime data with a lightweight default path."""
+    console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
+    _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR, fallback_offline=True)
 
 
 def ensure_catalog():
@@ -173,7 +251,8 @@ def ensure_runtime() -> None:
         _bootstrap_interactive()
         return
     if not sqlite_schema_is_current():
-        build_sqlite(load_catalog())
+        console.print("runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog", style="yellow")
+        _refresh_runtime_from_existing_catalog(man_dir=DEFAULT_MAN_DIR)
 
 
 def _catalog_meta(catalog) -> dict:
@@ -411,32 +490,35 @@ def _smart_lookup(query: str) -> int:
 
 @app.command()
 def update(
-    offline: bool = typer.Option(False, help="Use bundled fixtures instead of fetching upstream."),
+    offline: bool = typer.Option(False, help="Build locally from bundled fixtures instead of downloading pre-built data."),
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
+    build_local: bool = typer.Option(False, "--build-local", help="Build locally from upstream sources. This uses substantially more RAM than the default download path."),
+    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. This is the heaviest local-build path and is mainly intended for CI/release generation."),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
-    """Rebuild catalog from upstream sources."""
+    """Refresh runtime data.
+
+    Default behavior downloads the pre-built release assets. Use
+    ``--build-local`` for a full local rebuild, or ``--offline`` for the
+    bundled fixture dataset.
+    """
+    if offline and from_release:
+        raise typer.BadParameter("--offline cannot be combined with --from-release")
+    if offline and build_local:
+        raise typer.BadParameter("--offline already implies a local fixture build; do not combine it with --build-local")
+    if with_sdm and not build_local:
+        raise typer.BadParameter("--with-sdm requires --build-local")
+
     if from_release:
         _download_from_release()
+        _finalize_runtime_from_download(man_dir=man_dir)
         return
-    catalog = build_catalog(offline=offline)
-    save_catalog(catalog)
-    build_sqlite(catalog)
-    write_manpages(catalog, man_dir)
-    export_web(catalog, WEB_DIR)
-    console.print(
-        f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
-        style="green",
-    )
 
+    if not offline and not build_local:
+        _download_release_or_fallback(man_dir=man_dir, fallback_offline=True)
+        return
 
-@app.command()
-def search(query: list[str] = typer.Argument(help="Search query (multiple tokens allowed)."), limit: int = typer.Option(20, help="Maximum number of results.")) -> None:
-    """Search intrinsics and instructions."""
-    query = " ".join(query)
-    ensure_runtime()
-    with open_db() as conn:
-        _print_search_results_runtime(conn, query, limit=limit)
+    _build_runtime_locally(offline=offline, man_dir=man_dir, include_sdm=with_sdm)
 
 
 @app.command()
@@ -474,91 +556,6 @@ def llm(query: list[str] = typer.Argument(help="Search query (multiple tokens al
 
 
 @app.command()
-def complete(prefix: str = typer.Argument(""), limit: int = typer.Option(50, help="Maximum number of completion candidates.")) -> None:
-    """List completion candidates for a query prefix."""
-    ensure_runtime()
-    prefix_folded = prefix.casefold()
-    with open_db() as conn:
-        results, intrinsic_map, instruction_map = _search_runtime(conn, prefix or "_mm", limit=max(limit, 100))
-    emitted: list[str] = []
-    for result in results:
-        if result.kind == "intrinsic":
-            item = intrinsic_map.get(result.key)
-            if item is not None and not isa_visible(item.isa, show_fp16=SHOW_FP16_ISAS):
-                continue
-        elif result.kind == "instruction":
-            item = instruction_map.get(result.key)
-            if item is not None and not isa_visible(item.isa, show_fp16=SHOW_FP16_ISAS):
-                continue
-        if result.title.casefold().startswith(prefix_folded) or not prefix_folded:
-            if result.title not in emitted:
-                emitted.append(result.title)
-    if prefix_folded:
-        for intrinsic in intrinsic_map.values():
-            if isa_visible(intrinsic.isa, show_fp16=SHOW_FP16_ISAS) and intrinsic.name.casefold().startswith(prefix_folded) and intrinsic.name not in emitted:
-                emitted.append(intrinsic.name)
-        for instruction in instruction_map.values():
-            if isa_visible(instruction.isa, show_fp16=SHOW_FP16_ISAS) and instruction.key.casefold().startswith(prefix_folded) and instruction.key not in emitted:
-                emitted.append(instruction.key)
-    for candidate in emitted[:limit]:
-        print(candidate)
-
-
-@app.command("shell-init")
-def shell_init(shell: str = typer.Argument("bash")) -> None:
-    """Print shell completion setup script."""
-    if shell != "bash":
-        raise typer.BadParameter("only bash is supported")
-    print(
-        """
-_simdref_complete() {
-  local cur
-  cur="${COMP_WORDS[COMP_CWORD]}"
-  COMPREPLY=( $(simdref complete "$cur") )
-}
-complete -F _simdref_complete simdref
-""".strip()
-    )
-
-
-@app.command()
-def show(kind: str, name: str) -> None:
-    """Display a specific intrinsic or instruction."""
-    ensure_runtime()
-    if kind == "intrinsic":
-        with open_db() as conn:
-            item = load_intrinsic_from_db(conn, name)
-            if item is None:
-                raise typer.Exit(code=1)
-            render_intrinsic(None, item, conn=conn)
-        return
-    items = _find_instructions_fast(name)
-    if not items:
-        raise typer.Exit(code=1)
-    with open_db() as conn:
-        exact_form = next((item for item in items if item.key.casefold() == name.casefold()), None)
-        if exact_form is not None:
-            render_instruction(None, exact_form, conn=conn)
-        elif len(items) == 1:
-            render_instruction(None, items[0], conn=conn)
-        else:
-            render_instruction_variants(name, items, show_fp16=SHOW_FP16_ISAS)
-
-
-@app.command()
-def man(name: str, man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Root man directory.")) -> None:
-    """Open manpage for intrinsic or instruction."""
-    catalog = ensure_catalog()
-    intrinsic = find_intrinsic(catalog, name)
-    if intrinsic is not None:
-        raise typer.Exit(code=open_manpage(name, man_dir))
-    instructions = find_instructions(catalog, name)
-    if instructions:
-        raise typer.Exit(code=open_manpage(instructions[0].mnemonic, man_dir))
-    raise typer.Exit(code=1)
-
-
-@app.command()
 def doctor() -> None:
     """Validate installation and show catalog stats."""
     catalog = ensure_catalog()
@@ -577,19 +574,22 @@ def doctor() -> None:
     console.print(table)
 
 
-@app.command()
-def tui() -> None:
-    """Run the interactive terminal UI."""
-    ensure_runtime()
-    raise typer.Exit(code=run_tui())
-
-
-@app.command("export-web")
-def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
-    """Export static web app."""
+def _export_web_impl(web_dir: Path) -> None:
     catalog = ensure_catalog()
     export_web(catalog, web_dir)
     console.print(f"exported static web app to {web_dir}", style="green")
+
+
+@app.command("web")
+def web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
+    """Export static web app."""
+    _export_web_impl(web_dir)
+
+
+@app.command("export-web", hidden=True)
+def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
+    """Export static web app."""
+    _export_web_impl(web_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ def main() -> int:
         FULL_MODE = True
         argv = [arg for arg in argv if arg not in ("--full", "-f")]
     sys.argv = [sys.argv[0], *argv]
-    commands = {"update", "search", "show", "man", "doctor", "tui", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
+    commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         return _smart_lookup(" ".join(argv))
     if not argv:

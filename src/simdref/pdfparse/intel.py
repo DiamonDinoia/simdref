@@ -139,11 +139,16 @@ def parse_instruction_title(text: str) -> tuple[str, str] | None:
     return mnemonic, summary
 
 
-def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
-    """Parse the Intel SDM PDF and return per-mnemonic description sections.
+def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, object]]:
+    """Parse the Intel SDM PDF and return per-mnemonic description payloads.
 
-    Returns a dict mapping uppercase mnemonic to a dict of section name -> text.
-    Mnemonics with ``/`` separators are expanded so each variant maps to the same dict.
+    Returns a dict mapping uppercase mnemonic to a payload with:
+    * ``sections``: dict of section name -> text
+    * ``page_start``: 1-based first page in the PDF
+    * ``page_end``: 1-based last page in the PDF
+
+    Mnemonics with ``/`` separators are expanded so each variant maps to the
+    same payload.
     """
     import pdfplumber
 
@@ -182,7 +187,7 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
     # Table bounding boxes are computed on-demand (only instruction pages).
     extract_task = progress.add_task("Extracting descriptions", total=len(title_pages))
     page_table_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
-    result: dict[str, dict[str, str]] = {}
+    result: dict[str, dict[str, object]] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
         page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
 
@@ -227,11 +232,6 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
             canonical = normalize_section_name(heading)
             if canonical in _DISCARD_SECTIONS:
                 continue
-            # Keep only recognized sections and exception variants.
-            if canonical not in KNOWN_SECTIONS:
-                lower = canonical.lower()
-                if not lower.endswith("exceptions") or lower[0].isdigit() or "table" in lower:
-                    continue
             # Filter footer and residual junk lines.
             filtered = [
                 (x0, text) for x0, text in line_tuples
@@ -283,10 +283,15 @@ def parse_intel_sdm(pdf_path: Path) -> dict[str, dict[str, str]]:
             if cleaned:
                 sections[canonical] = cleaned
 
+        payload = {
+            "sections": sections,
+            "page_start": page_start + 1,
+            "page_end": page_end,
+        }
         for part in mnemonic.split("/"):
             part = part.strip()
             if part:
-                result[part.upper()] = sections
+                result[part.upper()] = payload
         progress.advance(extract_task)
 
     progress.stop()

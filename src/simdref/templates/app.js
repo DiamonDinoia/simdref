@@ -11,7 +11,8 @@ const metaNode       = $("meta");
 const resultsCount   = $("results-count");
 const isaSummary     = $("isa-summary");
 const isaPanel       = $("isa-panel");
-const isaGroups      = $("isa-groups");
+const isaFamiliesNode = $("isa-families");
+const isaSubgroupsNode = $("isa-subgroups");
 const themeToggle    = $("theme-toggle");
 const themeIconLight = $("theme-icon-light");
 const themeIconDark  = $("theme-icon-dark");
@@ -31,20 +32,25 @@ let renderTimer = null;
 let acItems = [];              // current autocomplete entries
 let acIndex = -1;              // highlighted autocomplete index
 let visibleSet = null;
+let renderedCount = 0;
+let loadMoreScheduled = false;
+const INITIAL_RENDER_BATCH = 50;
+const RENDER_BATCH_SIZE = 10;
+const LOAD_MORE_THRESHOLD_PX = 600;
 
 /* Detail chunk cache: prefix -> Promise<data> */
 const chunkCache = new Map();
 
 /* ISA state */
-const defaultEnabledIsas = new Set(["SSE", "AVX", "AVX2", "AVX-512"]);
+let defaultEnabledIsas = new Set(["SSE", "AVX", "AVX-512"]);
 let availableIsas = [];
 let enabledIsas = new Set();
 let enableAllIsas = false;
+let enabledSubIsas = new Map();
 
-/* Category state */
-let availableCategories = [];
-let enabledCategories = new Set();
-let enableAllCategories = true;
+let FAMILY_SUB_ORDER = {};
+let DEFAULT_SUBS = {};
+let isaFamilyOrder = {};
 
 /* ── Theme ────────────────────────────────────────────────────────── */
 function getEffectiveTheme() {
@@ -78,7 +84,7 @@ function canonUrl(v) {
 }
 
 function displayInstr(v) {
-  return String(v || "").replace(/{evex}\s*/ig, "").replaceAll("_EVEX", "").trim();
+  return String(v || "").trim();
 }
 
 function tokens(v) {
@@ -87,62 +93,108 @@ function tokens(v) {
 }
 
 function displayIsa(values) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of (values || [])) {
-    const v = String(raw || "");
-    let base = v.replace(/_(128|256|512)$/i, "").replace(/_SCALAR$/i, "");
-    const u = base.toUpperCase();
-    if (u.startsWith("AVX10_")) {
-      const parts = base.split("_");
-      base = `AVX10.${parts[1]}${parts.length > 2 ? " " + parts.slice(2).join(" ") : ""}`;
-    } else if (u.startsWith("AVX512")) {
-      let suffix = base.slice(6);
-      base = suffix.startsWith("_") ? `AVX512 ${suffix.slice(1).replaceAll("_", " ")}` : `AVX512${suffix}`;
-    } else if (u.startsWith("AMX_")) {
-      base = `AMX-${base.split("_", 2)[1].replaceAll("_", "-")}`;
-    }
-    if (!seen.has(base)) { seen.add(base); out.push(base); }
+  return Array.isArray(values) ? (values.join(", ") || "-") : String(values || "-");
+}
+
+function defaultSubsForFamily(family) {
+  const order = FAMILY_SUB_ORDER[family] || [];
+  const defaults = DEFAULT_SUBS[family] || new Set(order);
+  return new Set(order.filter(sub => defaults.has(sub)));
+}
+
+function initEnabledSubIsas() {
+  enabledSubIsas = new Map();
+  for (const family of availableIsas) {
+    enabledSubIsas.set(family, FAMILY_SUB_ORDER[family] ? defaultSubsForFamily(family) : new Set());
   }
-  return out.join(", ") || "-";
 }
 
-function isaFamily(v) {
-  const d = displayIsa([v]).toUpperCase().replaceAll(" ", "");
-  if (!d || d === "-") return "Other";
-  if (d.startsWith("APX")) return "APX";
-  if (d.startsWith("AMX")) return "AMX";
-  if (d.startsWith("AVX10")) return "AVX10";
-  if (d.startsWith("AVX512")) return "AVX-512";
-  if (d === "AVX2" || d === "AVX2GATHER") return "AVX2";
-  if (d === "AVX" || d === "FMA" || d === "FMA4" || d === "F16C" || d === "XOP") return "AVX";
-  if (d.startsWith("SSE") || d.startsWith("SSSE")) return "SSE";
-  if (d.startsWith("MMX") || d === "3DNOW" || d === "PENTIUMMMX") return "MMX";
-  if (d === "I86" || d === "I186" || d === "I386" || d === "I486" || d === "I586" || d.startsWith("BMI") || d === "ADX" || d === "AES" || d === "PCLMULQDQ" || d === "CRC32" || d === "CMOV" || d === "X87") return "x86";
-  return "Other";
+function ensureManualIsaState() {
+  if (!enableAllIsas) return;
+  enableAllIsas = false;
+  enabledIsas = new Set(availableIsas);
+  for (const family of availableIsas) {
+    if (FAMILY_SUB_ORDER[family]) enabledSubIsas.set(family, new Set(FAMILY_SUB_ORDER[family]));
+  }
 }
 
-function isaFamilies(values) {
-  return [...new Set((values || []).map(isaFamily).filter(Boolean))];
-}
-
-function isaVisible(values) {
+function isaVisible(item) {
   if (enableAllIsas) return true;
-  const f = isaFamilies(values);
-  return f.length > 0 && f.some(v => enabledIsas.has(v));
-}
-
-function categoryVisible(category) {
-  if (enableAllCategories) return true;
-  if (!category) return true;  // instructions have no category — always show
-  return enabledCategories.has(category);
+  for (const family of (item.isa_families || [])) {
+    if (!enabledIsas.has(family)) continue;
+    if (!FAMILY_SUB_ORDER[family]) return true;
+    const enabledSubs = enabledSubIsas.get(family);
+    const entrySubs = item.isa_subs || [];
+    if (entrySubs.some(subIsa => enabledSubs && enabledSubs.has(subIsa))) return true;
+  }
+  return false;
 }
 
 function rebuildVisibleSet() {
   visibleSet = new Set();
   for (let i = 0; i < searchEntries.length; i++) {
     const e = searchEntries[i];
-    if (isaVisible(e.item.isa) && categoryVisible(e.item.category)) visibleSet.add(i);
+    if (isaVisible(e.item)) visibleSet.add(i);
+  }
+}
+
+function resultMarkup(entries, offset = 0) {
+  return entries.map((e, i) => `
+    <article class="result ${e.kind}-kind ${e.key === activeKey ? "active" : ""} ${offset + i === focusedIndex ? "focused" : ""}" data-key="${esc(e.key)}" data-index="${offset + i}">
+      <div class="result-top">
+        <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
+        <span class="result-isa">${esc(e.item.display_isa || displayIsa(e.item.isa))}</span>
+      </div>
+      <div class="result-title">${esc(e.title)}</div>
+      <div class="result-meta">
+        ${e.item.lat && e.item.lat !== "-" ? `<span class="result-perf">LAT ${esc(e.item.lat)}</span>` : ""}
+        ${e.item.cpi && e.item.cpi !== "-" ? `<span class="result-perf">CPI ${esc(e.item.cpi)}</span>` : ""}
+      </div>
+      <div class="result-summary">${esc(e.subtitle || "")}</div>
+    </article>
+  `).join("");
+}
+
+function syncResultsCount(query) {
+  const shown = Math.min(renderedCount, resultPool.length);
+  if (query) {
+    resultsCount.textContent = shown < resultPool.length
+      ? `Showing ${shown} of ${resultPool.length} results for "${query}"`
+      : `${resultPool.length} result${resultPool.length !== 1 ? "s" : ""} for "${query}"`;
+  } else {
+    resultsCount.textContent = shown < resultPool.length
+      ? `Showing ${shown} of ${resultPool.length} results`
+      : `${resultPool.length} results`;
+  }
+}
+
+function renderVisibleResults(reset = false) {
+  const nextCount = Math.min(renderedCount, resultPool.length);
+  if (reset) {
+    resultsNode.innerHTML = resultMarkup(resultPool.slice(0, nextCount), 0);
+    return;
+  }
+  const currentCount = resultsNode.querySelectorAll(".result").length;
+  if (nextCount > currentCount) {
+    resultsNode.insertAdjacentHTML("beforeend", resultMarkup(resultPool.slice(currentCount, nextCount), currentCount));
+  }
+}
+
+function loadMoreResults() {
+  if (renderedCount >= resultPool.length) return;
+  renderedCount = Math.min(renderedCount + RENDER_BATCH_SIZE, resultPool.length);
+  renderVisibleResults(false);
+  syncResultsCount(queryInput.value.trim());
+}
+
+function maybeLoadMoreResults() {
+  while (
+    renderedCount < resultPool.length &&
+    resultsNode.scrollHeight - (resultsNode.scrollTop + resultsNode.clientHeight) <= LOAD_MORE_THRESHOLD_PX
+  ) {
+    const before = renderedCount;
+    loadMoreResults();
+    if (renderedCount === before) break;
   }
 }
 
@@ -159,7 +211,7 @@ const chronology = {
 const chronologyEntries = Object.entries(chronology).sort((a, b) => b[0].length - a[0].length);
 
 function isaSortKey(values) {
-  const norms = (values && values.length ? values : ["-"]).map(v => displayIsa([v]).toUpperCase());
+  const norms = (values && values.length ? values : ["-"]).map(v => String(Array.isArray(v) ? displayIsa(v) : v || "-").toUpperCase());
   function rank(v) {
     const c = v.replaceAll(" ", "");
     for (const [pfx, bucket] of chronologyEntries) { if (c.startsWith(pfx)) return bucket; }
@@ -238,7 +290,7 @@ function buildSearchIndexes(entries) {
   searchTokenIndex = new Map();
   searchPrefixIndex = new Map();
   entries.forEach((entry, i) => {
-    entry.searchTokens = [...new Set(entry.fields.flatMap(f => tokens(f)))];
+    entry.searchTokens = [...new Set((entry.item.search_tokens || entry.fields.flatMap(f => tokens(f))))];
     for (const t of entry.searchTokens) {
       if (!searchTokenIndex.has(t)) searchTokenIndex.set(t, []);
       searchTokenIndex.get(t).push(i);
@@ -432,9 +484,7 @@ function renderIntrinsicDetail(item, detail) {
       <h2>${esc(item.name)} <button class="copy-btn" data-copy="${esc(item.name)}" title="Copy name">&#x2398;</button></h2>
       <div class="detail-sub">${esc(detail ? detail.signature : item.signature)}</div>
       <div class="chips">
-        ${(item.isa || []).map(v => `<span class="chip">${esc(displayIsa([v]))}</span>`).join("")}
-        ${item.category ? `<span class="chip">${esc(item.category)}</span>` : ""}
-        ${item.subcategory ? `<span class="chip">${esc(item.subcategory)}</span>` : ""}
+        ${((item.display_isa_tokens || item.isa || [])).map(v => `<span class="chip">${esc(Array.isArray(v) ? displayIsa(v) : v)}</span>`).join("")}
         ${item.header ? `<span class="chip">${esc(item.header)}</span>` : ""}
       </div>
     </div>
@@ -443,26 +493,27 @@ function renderIntrinsicDetail(item, detail) {
       <div>${esc(detail ? detail.description : item.description)}</div>
     </section>
     ${detail && detail._instrDescription && Object.keys(detail._instrDescription).length ? `<section class="section">
+      <h3>Instruction Semantics</h3>
       ${renderDescriptionSections(detail._instrDescription)}
     </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
       <dl class="kv">
         <dt>Header</dt><dd>${esc(item.header || "-")}</dd>
-        <dt>ISA</dt><dd>${esc(displayIsa(item.isa))}</dd>
-        <dt>Category</dt><dd>${esc(item.category || "-")}${item.subcategory ? ` (${esc(item.subcategory)})` : ""}</dd>
+        <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
         ${detail && detail.notes && detail.notes.length ? `<dt>Notes</dt><dd>${esc(detail.notes.join("; "))}</dd>` : ""}
         ${detail && detail._url ? `<dt>uops.info</dt><dd><a href="${esc(detail._url)}" target="_blank" rel="noreferrer">${esc(detail._url)}</a></dd>` : ""}
         ${detail && detail._urlRef ? `<dt>Reference</dt><dd><a href="${esc(detail._urlRef)}" target="_blank" rel="noreferrer">${esc(detail._urlRef)}</a></dd>` : ""}
+        ${detail && detail._sdmUrl ? `<dt>Intel SDM</dt><dd><a href="${esc(detail._sdmUrl)}" target="_blank" rel="noreferrer">Open PDF${detail._sdmPageStart ? ` (page ${esc(detail._sdmPageStart)})` : ""}</a></dd>` : ""}
       </dl>
     </section>
     <section class="section">
       <h3>Instructions</h3>
       ${linked.length ? renderTable(
         [
-          {key: "key", label: "Instruction", render: r => `<a class="xref" href="#${encodeURIComponent(r.key)}" data-kind="instruction" data-key="${esc(r.key)}">${esc(displayInstr(r.key))}</a>`},
+          {key: "key", label: "Instruction", render: r => `<a class="xref" href="#${encodeURIComponent(r.key)}" data-kind="instruction" data-key="${esc(r.key)}">${esc(r.display_key || r.key)}</a>`},
           {key: "summary", label: "Summary"},
-          {key: "isa", label: "ISA", render: r => esc(displayIsa(r.isa))},
+          {key: "isa", label: "ISA", render: r => esc(r.display_isa || displayIsa(r.isa))},
         ],
         linked
       ) : `<div style="color:var(--text-muted);font-size:0.82rem">No linked instructions.</div>`}
@@ -491,11 +542,10 @@ function renderInstructionDetail(item, detail) {
   return `
     <div class="detail-head">
       <span class="result-kind instruction">instruction</span>
-      <h2>${esc(displayInstr(item.key || item.mnemonic))} <button class="copy-btn" data-copy="${esc(displayInstr(item.key || item.mnemonic))}" title="Copy name">&#x2398;</button></h2>
-      <div class="detail-sub">${esc(displayInstr(d.form || item.form || item.mnemonic))}</div>
+      <h2>${esc(item.display_key || item.key || item.mnemonic)} <button class="copy-btn" data-copy="${esc(item.display_key || item.key || item.mnemonic)}" title="Copy name">&#x2398;</button></h2>
+      <div class="detail-sub">${esc(d.display_form || item.display_form || d.form || item.form || item.display_mnemonic || item.mnemonic)}</div>
       <div class="chips">
-        ${(item.isa || []).map(v => `<span class="chip">${esc(displayIsa([v]))}</span>`).join("")}
-        ${meta.category ? `<span class="chip">${esc(meta.category)}</span>` : ""}
+        ${((item.display_isa_tokens || item.isa || [])).map(v => `<span class="chip">${esc(Array.isArray(v) ? displayIsa(v) : v)}</span>`).join("")}
         ${meta.cpl ? `<span class="chip">CPL ${esc(meta.cpl)}</span>` : ""}
       </div>
     </div>
@@ -504,17 +554,18 @@ function renderInstructionDetail(item, detail) {
       <div>${esc(d.summary || item.summary || "-")}</div>
     </section>
     ${d.description && Object.keys(d.description).length ? `<section class="section">
+      <h3>Instruction Semantics</h3>
       ${renderDescriptionSections(d.description)}
     </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
       <dl class="kv">
-        <dt>Mnemonic</dt><dd class="mono">${esc(item.mnemonic)}</dd>
-        <dt>Form</dt><dd class="mono">${esc(displayInstr(d.form || item.form || "-"))}</dd>
-        <dt>ISA</dt><dd>${esc(displayIsa(item.isa))}</dd>
-        <dt>Category</dt><dd>${esc(meta.category || "-")}</dd>
+        <dt>Mnemonic</dt><dd class="mono">${esc(item.display_mnemonic || item.mnemonic)}</dd>
+        <dt>Form</dt><dd class="mono">${esc(d.display_form || item.display_form || d.form || item.form || "-")}</dd>
+        <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
         ${meta.url ? `<dt>uops.info</dt><dd><a href="${esc(canonUrl(meta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta.url))}</a></dd>` : ""}
         ${meta["url-ref"] ? `<dt>Reference</dt><dd><a href="${esc(canonUrl(meta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta["url-ref"]))}</a></dd>` : ""}
+        ${meta["intel-sdm-url"] ? `<dt>Intel SDM</dt><dd><a href="${esc(meta["intel-sdm-url"])}" target="_blank" rel="noreferrer">Open PDF${meta["intel-sdm-page-start"] ? ` (page ${esc(meta["intel-sdm-page-start"])})` : ""}</a></dd>` : ""}
       </dl>
     </section>
     <section class="section">
@@ -523,7 +574,7 @@ function renderInstructionDetail(item, detail) {
         [
           {key: "name", label: "Intrinsic", render: r => `<a class="xref" href="#${encodeURIComponent(r.name)}" data-kind="intrinsic" data-key="${esc(r.name)}">${esc(r.name)}</a>`},
           {key: "description", label: "Description"},
-          {key: "isa", label: "ISA", render: r => esc(displayIsa(r.isa))},
+          {key: "isa", label: "ISA", render: r => esc(r.display_isa || displayIsa(r.isa))},
         ],
         linked
       ) : `<div style="color:var(--text-muted);font-size:0.82rem">No linked intrinsics.</div>`}
@@ -568,6 +619,8 @@ async function renderDetail(entry) {
         detail._instrDescription = instrDetail.description || {};
         detail._url = instrDetail.metadata ? canonUrl(instrDetail.metadata.url) : "";
         detail._urlRef = instrDetail.metadata ? canonUrl(instrDetail.metadata["url-ref"]) : "";
+        detail._sdmUrl = instrDetail.metadata ? instrDetail.metadata["intel-sdm-url"] || "" : "";
+        detail._sdmPageStart = instrDetail.metadata ? instrDetail.metadata["intel-sdm-page-start"] || "" : "";
       }
     }
     if (!detail) {
@@ -575,6 +628,8 @@ async function renderDetail(entry) {
       detail = intrDetails[entry.item.name] || entry.item;
       detail._measurements = [];
       detail._operands = [];
+      detail._sdmUrl = "";
+      detail._sdmPageStart = "";
     }
     detailNode.innerHTML = renderIntrinsicDetail(entry.item, detail);
   } else {
@@ -588,10 +643,6 @@ async function renderDetail(entry) {
 }
 
 /* ── ISA Filters ──────────────────────────────────────────────────── */
-const isaFamilyOrder = {
-  "x86": 0, "MMX": 1, "SSE": 2, "AVX": 3, "AVX2": 4,
-  "AVX-512": 5, "AVX10": 6, "AMX": 7, "APX": 8, "Other": 9,
-};
 
 function updateIsaSummary() {
   if (enableAllIsas) { isaSummary.textContent = "ISA: All"; return; }
@@ -602,23 +653,73 @@ function updateIsaSummary() {
 }
 
 function renderIsaFilters() {
-  // Group ISAs by family
-  const groups = new Map();
-  for (const isa of availableIsas) {
-    if (!groups.has(isa)) groups.set(isa, isa);
-  }
-  isaGroups.innerHTML = availableIsas.map(isa => `
-    <label class="isa-chip ${enabledIsas.has(isa) || enableAllIsas ? "active" : ""}">
-      <input type="checkbox" data-isa="${esc(isa)}" ${enabledIsas.has(isa) || enableAllIsas ? "checked" : ""}>
-      ${esc(isa)}
-    </label>
-  `).join("");
+  isaFamiliesNode.innerHTML = availableIsas.map(family => {
+    const familyActive = enableAllIsas || enabledIsas.has(family);
+    return `<label class="isa-chip ${familyActive ? "active" : ""}">
+      <input type="checkbox" data-family="${esc(family)}" ${familyActive ? "checked" : ""}>
+      ${esc(family)}
+    </label>`;
+  }).join("");
 
-  for (const cb of isaGroups.querySelectorAll("input[data-isa]")) {
+  isaSubgroupsNode.innerHTML = availableIsas.flatMap(family => {
+    const subs = FAMILY_SUB_ORDER[family];
+    const familyActive = enableAllIsas || enabledIsas.has(family);
+    if (!subs || !familyActive) return [];
+    const enabledSubs = enabledSubIsas.get(family) || new Set();
+    return [`<div class="isa-group">
+      <button class="isa-group-label family-active" type="button" data-group-family="${esc(family)}">${esc(family)}</button>
+      <div class="isa-group-items">
+        ${subs.map(sub => `<label class="isa-chip ${(enableAllIsas || enabledSubs.has(sub)) ? "active" : ""}">
+          <input type="checkbox" data-sub-isa="${esc(sub)}" data-family="${esc(family)}" ${(enableAllIsas || enabledSubs.has(sub)) ? "checked" : ""}>
+          ${esc(sub)}
+        </label>`).join("")}
+      </div>
+    </div>`];
+  }).join("");
+
+  for (const cb of isaFamiliesNode.querySelectorAll("input[data-family]")) {
     cb.addEventListener("change", () => {
-      const isa = cb.dataset.isa;
-      if (cb.checked) enabledIsas.add(isa); else enabledIsas.delete(isa);
-      enableAllIsas = false;
+      const family = cb.dataset.family;
+      ensureManualIsaState();
+      if (cb.checked) enabledIsas.add(family); else enabledIsas.delete(family);
+      visibleSet = null;
+      rebuildVisibleSet();
+      updateIsaSummary();
+      renderIsaFilters();
+      renderResults();
+    });
+  }
+
+  for (const btn of isaSubgroupsNode.querySelectorAll("button[data-group-family]")) {
+    btn.addEventListener("click", () => {
+      const family = btn.dataset.groupFamily;
+      ensureManualIsaState();
+      const familyActive = enabledIsas.has(family);
+      if (familyActive) {
+        enabledIsas.delete(family);
+        enabledSubIsas.set(family, new Set());
+      } else {
+        enabledIsas.add(family);
+        enabledSubIsas.set(family, defaultSubsForFamily(family));
+      }
+      visibleSet = null;
+      rebuildVisibleSet();
+      updateIsaSummary();
+      renderIsaFilters();
+      renderResults();
+    });
+  }
+
+  for (const cb of isaSubgroupsNode.querySelectorAll("input[data-sub-isa]")) {
+    cb.addEventListener("change", () => {
+      const family = cb.dataset.family;
+      const subIsa = cb.dataset.subIsa;
+      ensureManualIsaState();
+      enabledIsas.add(family);
+      const familySubs = new Set(enabledSubIsas.get(family) || []);
+      if (cb.checked) familySubs.add(subIsa); else familySubs.delete(subIsa);
+      enabledSubIsas.set(family, familySubs);
+      if (!familySubs.size) enabledIsas.delete(family);
       visibleSet = null;
       rebuildVisibleSet();
       updateIsaSummary();
@@ -637,81 +738,18 @@ function applyIsaPreset(mode) {
     enabledIsas = mode === "default"
       ? new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)))
       : new Set();
+    initEnabledSubIsas();
+    if (mode === "none") {
+      for (const family of availableIsas) {
+        if (FAMILY_SUB_ORDER[family]) enabledSubIsas.set(family, new Set());
+      }
+    }
   }
   visibleSet = null;
   rebuildVisibleSet();
   renderIsaFilters();
   renderResults();
 }
-
-/* ── Category Filters ────────────────────────────────────────────── */
-const catPanel = document.createElement("div");
-catPanel.id = "cat-panel";
-catPanel.className = "isa-panel hidden";
-catPanel.innerHTML = `<div class="isa-presets">
-  <button id="cat-all" class="preset-btn" type="button">All</button>
-  <button id="cat-none" class="preset-btn" type="button">None</button>
-</div><div id="cat-chips" class="isa-group-items"></div>`;
-isaPanel.parentNode.insertBefore(catPanel, isaPanel.nextSibling);
-
-const catToggleBtn = document.createElement("button");
-catToggleBtn.id = "cat-toggle";
-catToggleBtn.className = "isa-toggle-btn";
-catToggleBtn.type = "button";
-catToggleBtn.title = "Category filter";
-catToggleBtn.innerHTML = `<span id="cat-summary">Category: All</span>
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>`;
-document.querySelector(".search-bar").appendChild(catToggleBtn);
-
-catToggleBtn.addEventListener("click", () => catPanel.classList.toggle("hidden"));
-
-function updateCatSummary() {
-  const el = document.getElementById("cat-summary");
-  if (enableAllCategories) { el.textContent = "Category: All"; return; }
-  const n = enabledCategories.size;
-  if (!n) { el.textContent = "Category: None"; return; }
-  if (n <= 2) { el.textContent = "Category: " + [...enabledCategories].join(", "); return; }
-  el.textContent = `Category: ${[...enabledCategories].slice(0, 2).join(", ")} +${n - 2}`;
-}
-
-function renderCatFilters() {
-  const chipsEl = document.getElementById("cat-chips");
-  chipsEl.innerHTML = availableCategories.map(cat => `
-    <label class="isa-chip ${enabledCategories.has(cat) || enableAllCategories ? "active" : ""}">
-      <input type="checkbox" data-cat="${esc(cat)}" ${enabledCategories.has(cat) || enableAllCategories ? "checked" : ""}>
-      ${esc(cat)}
-    </label>
-  `).join("");
-  for (const cb of chipsEl.querySelectorAll("input[data-cat]")) {
-    cb.addEventListener("change", () => {
-      const cat = cb.dataset.cat;
-      if (cb.checked) enabledCategories.add(cat); else enabledCategories.delete(cat);
-      enableAllCategories = false;
-      visibleSet = null;
-      rebuildVisibleSet();
-      updateCatSummary();
-      renderCatFilters();
-      renderResults();
-    });
-  }
-  updateCatSummary();
-}
-
-document.getElementById("cat-all").addEventListener("click", () => {
-  enableAllCategories = true;
-  visibleSet = null;
-  rebuildVisibleSet();
-  renderCatFilters();
-  renderResults();
-});
-document.getElementById("cat-none").addEventListener("click", () => {
-  enableAllCategories = false;
-  enabledCategories = new Set();
-  visibleSet = null;
-  rebuildVisibleSet();
-  renderCatFilters();
-  renderResults();
-});
 
 /* ── Results rendering ────────────────────────────────────────────── */
 function renderResults() {
@@ -721,10 +759,7 @@ function renderResults() {
   const visible = searchEntries.filter((_, i) => visibleSet.has(i));
 
   if (!query) {
-    resultPool = [
-      ...visible.filter(e => e.kind === "intrinsic").slice(0, 20),
-      ...visible.filter(e => e.kind === "instruction").slice(0, 20),
-    ];
+    resultPool = visible;
   } else {
     const cids = candidateIndexes(query);
     const pool = cids == null ? visible : cids.filter(i => visibleSet.has(i)).map(i => searchEntries[i]);
@@ -734,39 +769,17 @@ function renderResults() {
       .sort((a, b) =>
         b.score - a.score
         || (a.kind !== b.kind ? (a.kind === "instruction" ? -1 : 1) : 0)
-        || (() => { const [aa,ab] = isaSortKey(a.item.isa); const [ba,bb] = isaSortKey(b.item.isa); return aa-ba||ab-bb; })()
+        || (() => { const [aa,ab] = isaSortKey(a.item.display_isa_tokens || a.item.isa); const [ba,bb] = isaSortKey(b.item.display_isa_tokens || b.item.isa); return aa-ba||ab-bb; })()
         || naturalCmp(a.title, b.title)
         || a.title.length - b.title.length
       )
-      .slice(0, 50);
+      .slice(0, 5000);
   }
 
-  resultsCount.textContent = query
-    ? `${resultPool.length} result${resultPool.length !== 1 ? "s" : ""} for "${query}"`
-    : `${resultPool.length} results`;
-
-  resultsNode.innerHTML = resultPool.map((e, i) => `
-    <article class="result ${e.kind}-kind ${e.key === activeKey ? "active" : ""} ${i === focusedIndex ? "focused" : ""}" data-key="${esc(e.key)}" data-index="${i}">
-      <div class="result-top">
-        <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
-        <span class="result-isa">${esc(displayIsa(e.item.isa))}</span>
-      </div>
-      <div class="result-title">${esc(e.kind === "instruction" ? displayInstr(e.title) : e.title)}</div>
-      <div class="result-meta">
-        ${e.item.lat && e.item.lat !== "-" ? `<span class="result-perf">LAT ${esc(e.item.lat)}</span>` : ""}
-        ${e.item.cpi && e.item.cpi !== "-" ? `<span class="result-perf">CPI ${esc(e.item.cpi)}</span>` : ""}
-      </div>
-      <div class="result-summary">${esc(e.subtitle || "")}</div>
-    </article>
-  `).join("");
-
-  for (const node of resultsNode.querySelectorAll(".result")) {
-    node.addEventListener("click", () => {
-      const idx = parseInt(node.dataset.index);
-      focusedIndex = idx;
-      renderDetail(resultPool[idx]);
-    });
-  }
+  renderedCount = Math.min(INITIAL_RENDER_BATCH, resultPool.length);
+  syncResultsCount(query);
+  renderVisibleResults(true);
+  requestAnimationFrame(() => maybeLoadMoreResults());
 
   // Auto-select
   const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
@@ -796,7 +809,7 @@ function updateAutocomplete() {
   acNode.innerHTML = acItems.map((e, i) => `
     <div class="ac-item" data-ac="${i}">
       <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
-      <span class="ac-name">${esc(e.kind === "instruction" ? displayInstr(e.title) : e.title)}</span>
+      <span class="ac-name">${esc(e.title)}</span>
       <span class="ac-desc">${esc(e.subtitle || "")}</span>
     </div>
   `).join("");
@@ -827,7 +840,7 @@ function highlightAcItem(idx) {
 function selectAcItem(idx) {
   if (idx < 0 || idx >= acItems.length) return;
   const entry = acItems[idx];
-  queryInput.value = entry.kind === "instruction" ? displayInstr(entry.title) : entry.title;
+  queryInput.value = entry.title;
   hideAutocomplete();
   renderResults();
   if (resultPool.length) {
@@ -839,6 +852,10 @@ function selectAcItem(idx) {
 /* ── Keyboard navigation ──────────────────────────────────────────── */
 function focusResult(idx) {
   if (idx < 0 || idx >= resultPool.length) return;
+  while (idx >= renderedCount && renderedCount < resultPool.length) {
+    renderedCount = Math.min(renderedCount + RENDER_BATCH_SIZE, resultPool.length);
+    renderVisibleResults(false);
+  }
   focusedIndex = idx;
   for (const n of resultsNode.querySelectorAll(".result")) {
     n.classList.toggle("focused", parseInt(n.dataset.index) === idx);
@@ -851,6 +868,39 @@ function selectFocused() {
   if (focusedIndex >= 0 && focusedIndex < resultPool.length) {
     renderDetail(resultPool[focusedIndex]);
   }
+}
+
+resultsNode.addEventListener("click", (e) => {
+  const node = e.target.closest(".result");
+  if (!node) return;
+  const idx = parseInt(node.dataset.index);
+  focusedIndex = idx;
+  renderDetail(resultPool[idx]);
+  focusResult(idx);
+});
+
+resultsNode.addEventListener("scroll", () => {
+  if (loadMoreScheduled) return;
+  loadMoreScheduled = true;
+  requestAnimationFrame(() => {
+    loadMoreScheduled = false;
+    maybeLoadMoreResults();
+  });
+});
+
+function refineSearchFromResultsKey(key) {
+  if (key === "Backspace") {
+    if (!queryInput.value) return false;
+    queryInput.focus();
+    queryInput.value = queryInput.value.slice(0, -1);
+    scheduleRender();
+    return true;
+  }
+  if (key.length !== 1) return false;
+  queryInput.focus();
+  queryInput.value += key;
+  scheduleRender();
+  return true;
 }
 
 document.addEventListener("keydown", (e) => {
@@ -898,28 +948,17 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // In search input: arrow keys navigate autocomplete, then results
+  // In search input: arrow keys navigate results directly
   if (inInput && document.activeElement === queryInput) {
-    const acOpen = !acNode.classList.contains("hidden") && acItems.length;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (acOpen) highlightAcItem(Math.min(acIndex + 1, acItems.length - 1));
-      else focusResult(Math.min(focusedIndex + 1, resultPool.length - 1));
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (acOpen && acIndex > 0) highlightAcItem(acIndex - 1);
-      else if (acOpen && acIndex === 0) { acIndex = -1; for (const el of acNode.querySelectorAll(".ac-item")) el.classList.remove("ac-active"); }
-      else focusResult(Math.max(focusedIndex - 1, 0));
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (acOpen && acIndex >= 0) { selectAcItem(acIndex); }
-      else { hideAutocomplete(); renderResults(); }
-      return;
-    }
+    return;
+  }
+
+  if (
+    (document.activeElement === resultsNode || document.activeElement === detailNode) &&
+    !e.ctrlKey && !e.metaKey && !e.altKey &&
+    refineSearchFromResultsKey(e.key)
+  ) {
+    e.preventDefault();
     return;
   }
 
@@ -930,6 +969,16 @@ document.addEventListener("keydown", (e) => {
 
   // f: toggle ISA filter
   if (e.key === "f") { isaPanel.classList.toggle("hidden"); return; }
+
+  if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    resultsNode.scrollBy({ top: e.key === "ArrowDown" ? 120 : -120, behavior: "smooth" });
+    return;
+  }
+  if (e.shiftKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+    e.preventDefault();
+    return;
+  }
 
   // j/k or arrows: navigate results
   if (e.key === "j" || e.key === "ArrowDown") {
@@ -1026,10 +1075,10 @@ detailNode.addEventListener("click", (e) => {
   let entry = null;
   if (kind === "intrinsic") {
     const item = catalog.intrByName[key];
-    if (item) entry = { kind: "intrinsic", key: item.name, title: item.name, subtitle: item.description, item, fields: [] };
+    if (item) entry = { kind: "intrinsic", key: item.name, title: item.name, subtitle: item.description, item, fields: item.search_fields || [] };
   } else {
     const item = catalog.instrByKey[key];
-    if (item) entry = { kind: "instruction", key: item.key, title: displayInstr(item.key), subtitle: item.summary, item, fields: [] };
+    if (item) entry = { kind: "instruction", key: item.key, title: item.display_key || item.key, subtitle: item.summary, item, fields: item.search_fields || [] };
   }
   if (entry) renderDetail(entry);
 });
@@ -1042,6 +1091,45 @@ $("isa-all").addEventListener("click", () => applyIsaPreset("all"));
 $("close-shortcuts").addEventListener("click", () => shortcutsOverlay.classList.add("hidden"));
 themeToggle.addEventListener("click", toggleTheme);
 queryInput.addEventListener("input", scheduleRender);
+queryInput.addEventListener("keydown", (e) => {
+  if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    e.stopPropagation();
+    resultsNode.scrollBy({ top: e.key === "ArrowDown" ? 120 : -120, behavior: "smooth" });
+    return;
+  }
+  if (e.shiftKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    e.stopPropagation();
+    focusResult(Math.min(focusedIndex + 1, resultPool.length - 1));
+    selectFocused();
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    e.stopPropagation();
+    focusResult(Math.max(focusedIndex - 1, 0));
+    selectFocused();
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    e.stopPropagation();
+    hideAutocomplete();
+    if (focusedIndex >= 0) selectFocused();
+    else if (resultPool.length) {
+      focusResult(0);
+      selectFocused();
+    } else {
+      renderResults();
+    }
+  }
+});
 queryInput.addEventListener("blur", () => setTimeout(hideAutocomplete, 150));
 queryInput.addEventListener("focus", () => { if (queryInput.value.trim().length >= 2) updateAutocomplete(); });
 
@@ -1050,8 +1138,8 @@ window.addEventListener("hashchange", () => {
   const key = decodeURIComponent(location.hash.replace(/^#/, ""));
   if (!catalog || !key) return;
   const entry = resultPool.find(e => e.key === key)
-    || (catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].description, item: catalog.intrByName[key], fields: []} : null)
-    || (catalog.instrByKey[key] ? {kind: "instruction", key, title: displayInstr(key), subtitle: catalog.instrByKey[key].summary, item: catalog.instrByKey[key], fields: []} : null);
+    || (catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].description, item: catalog.intrByName[key], fields: catalog.intrByName[key].search_fields || []} : null)
+    || (catalog.instrByKey[key] ? {kind: "instruction", key, title: catalog.instrByKey[key].display_key || key, subtitle: catalog.instrByKey[key].summary, item: catalog.instrByKey[key], fields: catalog.instrByKey[key].search_fields || []} : null);
   if (entry) renderDetail(entry);
 });
 
@@ -1060,6 +1148,11 @@ fetch("search-index.json")
   .then(r => r.json())
   .then(data => {
     catalog = data;
+    const config = data.isa_config || {};
+    defaultEnabledIsas = new Set(config.default_enabled || [...defaultEnabledIsas]);
+    FAMILY_SUB_ORDER = config.family_sub_order || {};
+    DEFAULT_SUBS = Object.fromEntries(Object.entries(config.default_subs || {}).map(([family, values]) => [family, new Set(values)]));
+    isaFamilyOrder = config.family_order || {};
     catalog.intrByName = Object.fromEntries(data.intrinsics.map(i => [i.name, i]));
     catalog.instrByKey = Object.fromEntries(data.instructions.map(i => [i.key, i]));
     catalog.instrByMnem = Object.fromEntries(data.instructions.map(i => [i.mnemonic, i]));
@@ -1067,24 +1160,22 @@ fetch("search-index.json")
     searchEntries = [
       ...data.intrinsics.map(i => ({
         kind: "intrinsic", key: i.name, title: i.name, subtitle: i.description, item: i,
-        fields: [i.name, i.signature || "", i.description || "", i.header || "", displayIsa(i.isa), (i.instructions || []).join(" ")],
+        fields: i.search_fields || [i.name, i.signature || "", i.description || "", i.header || "", i.display_isa || displayIsa(i.isa), (i.instructions || []).join(" ")],
       })),
       ...data.instructions.map(i => ({
-        kind: "instruction", key: i.key, title: displayInstr(i.key), subtitle: i.summary, item: i,
-        fields: [i.mnemonic || "", i.form || "", i.summary || "", displayIsa(i.isa), (i.linked_intrinsics || []).join(" ")],
+        kind: "instruction", key: i.key, title: i.display_key || i.key, subtitle: i.summary, item: i,
+        fields: i.search_fields || [i.display_mnemonic || i.mnemonic || "", i.display_form || i.form || "", i.summary || "", i.display_isa || displayIsa(i.isa), (i.linked_intrinsics || []).join(" ")],
       })),
     ];
 
     buildSearchIndexes(searchEntries);
 
-    availableIsas = [...new Set(searchEntries.flatMap(e => isaFamilies(e.item.isa)))]
+    availableIsas = [...new Set(searchEntries.flatMap(e => e.item.isa_families || []))]
       .sort((a, b) => (isaFamilyOrder[a] ?? 99) - (isaFamilyOrder[b] ?? 99) || a.localeCompare(b));
     enabledIsas = new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)));
+    initEnabledSubIsas();
 
     renderIsaFilters();
-
-    availableCategories = [...new Set(data.intrinsics.map(i => i.category).filter(Boolean))].sort();
-    renderCatFilters();
 
     rebuildVisibleSet();
 

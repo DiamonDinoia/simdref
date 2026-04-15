@@ -66,10 +66,12 @@ def extract_sections_from_chars(
     headings. Characters with font size <= *body_max_size* are accumulated
     as body text under the current heading.
 
-    If *known_headings* is provided, lines whose text exactly matches a
-    known heading name are also treated as headings regardless of font
-    size. This handles PDFs where section headings use the same font size
-    as body text.
+    If *known_headings* is provided, heading detection switches to
+    **whitelist mode**: a line is a heading ONLY if its lowercased text
+    matches the known headings set.  Lines at heading font size that do
+    NOT match are demoted to body text under the current heading.  When
+    *known_headings* is ``None``, the original font-size-only heuristic
+    is used (backward compatibility).
 
     Returns a dict mapping heading text to a list of ``(x0, text)`` tuples
     preserving the left-edge position for indentation reconstruction.
@@ -80,9 +82,10 @@ def extract_sections_from_chars(
     body_parts: list[tuple[float, str]] = []
 
     for _top, size, line_x0, text in lines:
-        is_heading = size >= heading_min_size
-        if not is_heading and known_headings is not None:
-            is_heading = text.lower() in known_headings
+        if known_headings is not None:
+            is_heading = text.lower().strip() in known_headings
+        else:
+            is_heading = size >= heading_min_size
         if is_heading:
             if current_heading is not None and body_parts:
                 sections[current_heading] = body_parts

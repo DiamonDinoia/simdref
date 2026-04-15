@@ -33,12 +33,15 @@
   </div>
 
   <div id="isa-panel" class="isa-panel">
-    <div class="isa-presets">
-      <button id="isa-default" class="preset-btn" type="button">Default</button>
-      <button id="isa-none" class="preset-btn" type="button">None</button>
-      <button id="isa-all" class="preset-btn" type="button">All</button>
+    <div class="isa-toolbar">
+      <div id="isa-families" class="isa-family-chips"></div>
+      <div class="isa-presets">
+        <button id="isa-default" class="preset-btn" type="button">Default</button>
+        <button id="isa-none" class="preset-btn" type="button">None</button>
+        <button id="isa-all" class="preset-btn" type="button">All</button>
+      </div>
     </div>
-    <div id="isa-groups" class="isa-groups"></div>
+    <div id="isa-subgroups" class="isa-groups"></div>
   </div>
 
   <div class="layout">
@@ -57,11 +60,17 @@
     <div class="overlay-content">
       <h3>Keyboard Shortcuts</h3>
       <table class="shortcuts-table">
-        <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
+        <tr><td><kbd>/</kbd> <kbd>Ctrl+K</kbd></td><td>Focus search</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Blur / close</td></tr>
-        <tr><td><kbd>j</kbd> <kbd>&darr;</kbd></td><td>Next result</td></tr>
-        <tr><td><kbd>k</kbd> <kbd>&uarr;</kbd></td><td>Previous result</td></tr>
+        <tr><td><kbd>j</kbd> <kbd>&darr;</kbd> <kbd>]</kbd></td><td>Next result</td></tr>
+        <tr><td><kbd>k</kbd> <kbd>&uarr;</kbd> <kbd>[</kbd></td><td>Previous result</td></tr>
+        <tr><td><kbd>Home</kbd></td><td>First result</td></tr>
+        <tr><td><kbd>End</kbd></td><td>Last result</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>Select result</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Focus detail panel</td></tr>
+        <tr><td><kbd>Shift+Tab</kbd></td><td>Focus results panel</td></tr>
+        <tr><td><kbd>c</kbd></td><td>Copy name to clipboard</td></tr>
+        <tr><td><kbd>s</kbd></td><td>Toggle sidebar</td></tr>
         <tr><td><kbd>f</kbd></td><td>Toggle ISA filter</td></tr>
         <tr><td><kbd>d</kbd></td><td>Toggle dark mode</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show shortcuts</td></tr>

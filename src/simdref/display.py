@@ -96,14 +96,45 @@ ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
 
 _ISA_PREFIXES_BY_LEN = sorted(ISA_CHRONOLOGY.items(), key=lambda kv: len(kv[0]), reverse=True)
 
+ISA_FAMILY_ORDER: dict[str, int] = {
+    "x86": 0, "MMX": 1, "SSE": 2, "AVX": 3,
+    "AVX-512": 4, "AVX10": 5, "AMX": 6, "APX": 7, "SVML": 8, "Other": 9,
+}
+
+DEFAULT_ENABLED_ISAS: tuple[str, ...] = ("SSE", "AVX", "AVX-512")
+
+FAMILY_SUB_ORDER: dict[str, list[str]] = {
+    "SSE": ["SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"],
+    "AVX": ["AVX", "AVX2", "FMA", "F16C", "AVX_VNNI", "AVX_VNNI_INT8", "AVX_VNNI_INT16", "AVX_IFMA", "AVX_NE_CONVERT"],
+    "AVX-512": [
+        "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
+        "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16", "AVX512_VBMI", "AVX512_VBMI2",
+        "AVX512_BITALG", "AVX512IFMA52", "AVX512VPOPCNTDQ", "AVX512_VP2INTERSECT",
+        "VAES", "VPCLMULQDQ", "GFNI",
+    ],
+    "AMX": ["AMX-TILE", "AMX-INT8", "AMX-BF16", "AMX-FP16", "AMX-COMPLEX"],
+}
+
+DEFAULT_SUBS: dict[str, set[str]] = {
+    "SSE": {"SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"},
+    "AVX": {"AVX", "AVX2", "FMA", "F16C"},
+    "AVX-512": {"AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"},
+    "AMX": {"AMX-TILE", "AMX-INT8", "AMX-BF16"},
+}
+
+X86_BASE_ISAS: frozenset[str] = frozenset({
+    "I86", "I186", "I286", "I386", "I486", "I586", "X87", "CMOV",
+})
+
 # ---------------------------------------------------------------------------
 # Compiled patterns (simple helpers avoid regex where possible)
 # ---------------------------------------------------------------------------
 
 _NORMALIZE_TEXT_RE = re.compile(r"[^a-z0-9]+")
 
-# Matches ``{evex}`` with optional trailing whitespace.
-_EVEX_TAG = "{evex}"
+# Matches display-only instruction decorators like ``{evex}``, ``{load}``,
+# ``{disp8}``, etc. at the beginning of a form/mnemonic.
+_LEADING_INSTR_TAG_RE = re.compile(r"^(?:\s*\{[^}]+\}\s*)+")
 
 # ---------------------------------------------------------------------------
 # Microarchitecture helpers
@@ -219,18 +250,15 @@ def _column_width_budget(rows: list[dict], columns: list[str], label_map: dict[s
 # ---------------------------------------------------------------------------
 
 
-def _strip_evex(text: str) -> str:
-    """Remove ``{evex}`` tags and ``_EVEX`` suffixes without regex."""
-    result = text
-    lower = result.lower()
-    while _EVEX_TAG in lower:
-        idx = lower.index(_EVEX_TAG)
-        end = idx + len(_EVEX_TAG)
-        while end < len(result) and result[end] == " ":
-            end += 1
-        result = result[:idx] + result[end:]
-        lower = result.lower()
-    return result.replace("_EVEX", "")
+def strip_instruction_decorators(text: str) -> str:
+    """Remove display-only leading decorators and EVEX suffix markers."""
+    result = text or ""
+    while True:
+        stripped = _LEADING_INSTR_TAG_RE.sub("", result, count=1)
+        if stripped == result:
+            break
+        result = stripped
+    return result.replace("_EVEX", "").strip()
 
 
 def display_isa(values: list[str]) -> str:
@@ -265,6 +293,63 @@ def display_isa(values: list[str]) -> str:
             seen.add(normalized)
             rendered.append(normalized)
     return ", ".join(rendered) or "-"
+
+
+def normalize_isa_token(isa: str) -> str:
+    """Normalize ISA tokens for family and sub-ISA matching."""
+    return isa.upper().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
+
+
+def isa_family(isa: str) -> str:
+    """Map a single ISA token to its high-level family."""
+    d = normalize_isa_token(display_isa([isa]) or isa)
+    if not d or d == "-":
+        return "Other"
+    if d in X86_BASE_ISAS or d.startswith("BMI") or d in ("ADX", "AES", "PCLMULQDQ", "CRC32"):
+        return "x86"
+    if d == "SVML":
+        return "SVML"
+    if d.startswith("APX"):
+        return "APX"
+    if d.startswith("AMX"):
+        return "AMX"
+    if d.startswith("AVX10"):
+        return "AVX10"
+    if d.startswith("AVX512") or d in ("VAES", "VPCLMULQDQ", "GFNI"):
+        return "AVX-512"
+    if d in ("AVX", "AVX2", "AVX2GATHER") or d.startswith("AVX") or d in ("FMA", "FMA4", "F16C", "XOP"):
+        return "AVX"
+    if d.startswith("SSE") or d.startswith("SSSE"):
+        return "SSE"
+    if d.startswith("MMX") or d in ("3DNOW", "PENTIUMMMX"):
+        return "MMX"
+    return "Other"
+
+
+def isa_families(values: list[str]) -> list[str]:
+    """Deduplicated ISA families for a list of ISA tokens."""
+    seen: set[str] = set()
+    families: list[str] = []
+    for value in values:
+        family = isa_family(value)
+        if family and family not in seen:
+            seen.add(family)
+            families.append(family)
+    return families
+
+
+def isa_to_sub_isa(raw_isa: str) -> str | None:
+    """Map a raw ISA token to its configured family sub-ISA."""
+    family = isa_family(raw_isa)
+    subs = FAMILY_SUB_ORDER.get(family)
+    if not subs:
+        return None
+    normalized = normalize_isa_token(display_isa([raw_isa]) or raw_isa)
+    for sub in subs:
+        candidate = normalize_isa_token(sub)
+        if normalized == candidate or normalized.startswith(candidate):
+            return sub
+    return None
 
 
 def isa_sort_key(values: list[str]) -> tuple[int, int, str]:
@@ -318,8 +403,8 @@ def canonical_url(path: str) -> str:
 
 def instruction_query_text(item) -> str:
     """Build a clean query string from an instruction's form."""
-    form = _strip_evex(item.form or "")
-    name = item.mnemonic
+    form = strip_instruction_decorators(item.form or "")
+    name = strip_instruction_decorators(item.mnemonic or "")
     if "(" in form:
         form_name = form.split("(", 1)[0].strip()
         if form_name:
@@ -334,7 +419,7 @@ def instruction_query_text(item) -> str:
 
 
 def display_instruction_form(form: str) -> str:
-    return _strip_evex(form or "").strip() or "-"
+    return strip_instruction_decorators(form or "") or "-"
 
 
 def display_instruction_title(item) -> str:
@@ -556,6 +641,10 @@ def print_instruction_metadata(item) -> None:
         table.add_row("url", canonical_url(url))
     if item.metadata.get("url-ref"):
         table.add_row("reference", canonical_url(item.metadata["url-ref"]))
+    if item.metadata.get("intel-sdm-url"):
+        page = item.metadata.get("intel-sdm-page-start", "")
+        url = item.metadata["intel-sdm-url"]
+        table.add_row("intel sdm", f"{url} (page {page})" if page else url)
     if item.metadata.get("extension"):
         table.add_row("isa", item.metadata["extension"])
     if item.metadata.get("category"):
@@ -650,6 +739,10 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
             table.add_row("url", canonical_url(primary.metadata["url"]))
         if primary.metadata.get("url-ref"):
             table.add_row("reference", canonical_url(primary.metadata["url-ref"]))
+        if primary.metadata.get("intel-sdm-url"):
+            page = primary.metadata.get("intel-sdm-page-start", "")
+            url = primary.metadata["intel-sdm-url"]
+            table.add_row("intel sdm", f"{url} (page {page})" if page else url)
     console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
     if not short and primary and primary.description:
         print_description_sections(primary.description, full=full)
@@ -681,6 +774,10 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
             table.add_row("url", canonical_url(url))
         if item.metadata.get("url-ref"):
             table.add_row("reference", canonical_url(item.metadata["url-ref"]))
+        if item.metadata.get("intel-sdm-url"):
+            page = item.metadata.get("intel-sdm-page-start", "")
+            url = item.metadata["intel-sdm-url"]
+            table.add_row("intel sdm", f"{url} (page {page})" if page else url)
         if item.metadata.get("category"):
             table.add_row("category", item.metadata["category"])
         if item.metadata.get("cpl"):

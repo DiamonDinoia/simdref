@@ -15,7 +15,7 @@ manpages, and a static web app.
 
 ```bash
 pip install simdref
-simdref update          # fetch Intel intrinsics + uops.info data
+simdref update          # download pre-built data; falls back to fixtures if needed
 simdref doctor          # verify installation
 ```
 
@@ -32,7 +32,7 @@ git clone https://github.com/DiamonDinoia/simdref.git
 cd simdref
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/simdref update
+.venv/bin/simdref update --build-local
 ```
 
 ## Usage
@@ -52,16 +52,12 @@ simdref VADDPS 2             # pick variant #2 from the list
 
 | Command | Description |
 |---------|-------------|
-| `simdref update [--offline]` | Rebuild catalog from upstream (or fixtures) |
-| `simdref search <query>` | Ranked search results table |
-| `simdref show intrinsic <name>` | Display a specific intrinsic |
-| `simdref show instruction <name>` | Display a specific instruction |
+| `simdref update` | Download pre-built compatible data, with fixture fallback |
+| `simdref update --build-local` | Rebuild catalog locally from upstream sources |
+| `simdref update --offline` | Build the bundled fixture dataset locally |
 | `simdref llm <query>` | Structured JSON output for LLM consumption |
-| `simdref man <name>` | Open generated manpage |
-| `simdref complete <prefix>` | List completion candidates |
 | `simdref shell-init bash` | Print bash completion setup |
-| `simdref tui` | Interactive terminal UI |
-| `simdref export-web` | Generate static web app |
+| `simdref web` | Generate static web app |
 | `simdref doctor` | Validate installation |
 
 ### LSP
@@ -84,7 +80,7 @@ vim.lsp.start({
 ### Web app
 
 ```bash
-simdref export-web --web-dir ./web
+simdref web --web-dir ./web
 python3 -m http.server -d ./web 8000
 # open http://localhost:8000
 ```
@@ -105,8 +101,10 @@ Publishable directly to GitHub Pages.
 | Intel Intrinsics Guide | Function signatures, descriptions, ISA, categories | ~4K intrinsics |
 | uops.info | Instructions, operands, latency, throughput, port usage | ~3K instructions |
 
-The `update` command fetches from upstream CDNs with automatic fallback to
-bundled fixtures when offline. Vendor archives can also be placed in `vendor/`.
+The default `update` path downloads pre-built data from GitHub Releases using
+schema/version-compatible tags when available, with bundled fixtures as the
+safe fallback. Use `simdref update --build-local` for a full local rebuild.
+Vendor archives can also be placed in `vendor/`.
 
 ## Architecture
 

@@ -20,7 +20,7 @@ else
   "$VENV_DIR/bin/pip" install "$REPO_DIR"
 fi
 
-"$VENV_DIR/bin/python" -m simdref update --offline --man-dir "$MAN_DIR"
+"$VENV_DIR/bin/python" -m simdref update --man-dir "$MAN_DIR"
 
 ln -sf "$VENV_DIR/bin/simdref" "$BIN_DIR/simdref"
 ln -sf "$VENV_DIR/bin/simdref-lsp" "$BIN_DIR/simdref-lsp"

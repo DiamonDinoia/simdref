@@ -64,7 +64,10 @@ from simdref.pdfparse.intel import (
     parse_instruction_title,
     KNOWN_SECTIONS,
     normalize_section_name,
+    INTEL_SDM_URL,
 )
+from simdref.ingest import _merge_descriptions
+from simdref.models import InstructionRecord
 
 
 def test_parse_instruction_title_basic():
@@ -106,3 +109,110 @@ def test_known_sections():
 def test_normalize_fpu_sections():
     assert normalize_section_name("FPU Flags Affected") == "FPU Flags Affected"
     assert normalize_section_name("Floating-Point Exceptions") == "Floating-Point Exceptions"
+
+
+def test_whitelist_rejects_garbage_headings():
+    """With known_headings, table captions at heading size are demoted to body."""
+    known = frozenset({"description", "operation"})
+    chars = []
+    y = 100
+    # "Description" at heading size — should be detected as heading
+    for ch in "Description":
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "Real body text.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+    y += 20
+    # "Table 5-8. VF..." at heading size — should NOT be a heading
+    garbage = "Table 5-8. VFMSUB Notation"
+    for ch in garbage:
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "More body text.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+
+    sections = extract_sections_from_chars(
+        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=known,
+    )
+    assert "Description" in sections
+    # Garbage heading should NOT appear as a section
+    assert "Table 5-8. VFMSUB Notation" not in sections
+    # Body text after the garbage line should still be under "Description"
+    body_texts = [text for _, text in sections["Description"]]
+    assert "Real body text." in body_texts
+    assert "More body text." in body_texts
+
+
+def test_whitelist_passes_through_without_known_headings():
+    """Without known_headings, font-size heuristic still works."""
+    chars = []
+    y = 100
+    for ch in "AnyHeading":
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "Body.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+
+    sections = extract_sections_from_chars(
+        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=None,
+    )
+    assert "AnyHeading" in sections
+
+
+def test_whitelist_drops_heading_size_garbage():
+    """Lines at heading font size that aren't known headings are silently dropped."""
+    known = frozenset({"description", "operation"})
+    chars = []
+    y = 100
+    for ch in "Description":
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "Body line 1.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+    y += 20
+    # Pseudocode symbol at heading size — should be dropped (not in body)
+    for ch in "IF (COUNT & COUNTMASK) = 1":
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "Body line 2.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+
+    sections = extract_sections_from_chars(
+        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=known,
+    )
+    assert "Description" in sections
+    body_texts = [text for _, text in sections["Description"]]
+    assert "Body line 1." in body_texts
+    assert "Body line 2." in body_texts
+    # The garbage line at heading size should NOT appear in any section body
+    all_body = " ".join(text for sec in sections.values() for _, text in sec)
+    assert "IF (COUNT" not in all_body
+
+
+def test_merge_descriptions_adds_sections_and_pdf_reference():
+    instructions = [
+        InstructionRecord(
+            mnemonic="VADDPD",
+            form="VADDPD (YMM, YMM, YMM)",
+            summary="Add packed double-precision floating-point values.",
+            isa=["AVX"],
+        )
+    ]
+    descriptions = {
+        "ADDPD": {
+            "sections": {
+                "Description": "Add packed double-precision floating-point values.",
+                "Operation": "DEST := SRC1 + SRC2",
+            },
+            "page_start": 123,
+            "page_end": 125,
+        }
+    }
+
+    _merge_descriptions(instructions, descriptions)
+
+    item = instructions[0]
+    assert item.description["Description"].startswith("Add packed")
+    assert item.metadata["intel-sdm-page-start"] == "123"
+    assert item.metadata["intel-sdm-page-end"] == "125"
+    assert item.metadata["intel-sdm-url"] == f"{INTEL_SDM_URL}#page=123"

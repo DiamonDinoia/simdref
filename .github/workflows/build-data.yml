@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      data_tag: ${{ steps.meta.outputs.data_tag }}
+      schema_tag: ${{ steps.meta.outputs.schema_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,20 +23,57 @@ jobs:
 
       - run: pip install -e .
 
+      - name: Compute data release tags
+        id: meta
+        run: |
+          VERSION=$(python - <<'PY'
+          from simdref import __version__
+          print(__version__)
+          PY
+          )
+          SCHEMA=$(python - <<'PY'
+          from simdref.storage import SQLITE_SCHEMA_VERSION
+          print(SQLITE_SCHEMA_VERSION)
+          PY
+          )
+          echo "data_tag=data-v${VERSION}-schema${SCHEMA}" >> "$GITHUB_OUTPUT"
+          echo "schema_tag=data-schema${SCHEMA}-latest" >> "$GITHUB_OUTPUT"
+
       - name: Build catalog from upstream
-        run: simdref update
+        run: simdref update --build-local --with-sdm
 
-      - name: Export static web app
-        run: simdref export-web
+      - name: Upload versioned catalog release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.data_tag }}
+          name: Data Build ${{ steps.meta.outputs.data_tag }}
+          prerelease: true
+          files: |
+            data/derived/catalog.msgpack
+            data/derived/catalog.db
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload catalog as release assets
+      - name: Upload schema-compatible catalog release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.schema_tag }}
+          name: Latest Schema-Compatible Data Build
+          prerelease: true
+          files: |
+            data/derived/catalog.msgpack
+            data/derived/catalog.db
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload latest catalog release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: data-latest
           name: Latest Data Build
           prerelease: true
           files: |
-            data/derived/catalog.json
+            data/derived/catalog.msgpack
             data/derived/catalog.db
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

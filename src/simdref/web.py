@@ -22,6 +22,18 @@ from importlib import resources
 from pathlib import Path
 
 from simdref.models import Catalog
+from simdref.display import (
+    DEFAULT_ENABLED_ISAS,
+    DEFAULT_SUBS,
+    FAMILY_SUB_ORDER,
+    ISA_FAMILY_ORDER,
+    display_isa,
+    display_instruction_form,
+    isa_families,
+    isa_to_sub_isa,
+    normalize_instruction_query,
+    strip_instruction_decorators,
+)
 from simdref.perf import best_numeric, latency_cycle_values, variant_perf_summary
 
 
@@ -70,6 +82,50 @@ def _chunk_prefix(mnemonic: str) -> str:
     return clean[:3] if len(clean) >= 3 else clean
 
 
+def _search_tokens(*values: str) -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for value in values:
+        for token in normalize_instruction_query(value).split():
+            if token and token not in seen:
+                seen.add(token)
+                tokens.append(token)
+    return tokens
+
+
+def _intrinsic_search_fields(item) -> list[str]:
+    return [
+        item.name,
+        item.signature or "",
+        item.description or "",
+        item.header or "",
+        display_isa(item.isa),
+        " ".join(item.instructions or []),
+    ]
+
+
+def _instruction_search_fields(item) -> list[str]:
+    display_key = display_instruction_form(item.key)
+    display_form = display_instruction_form(item.form)
+    return [
+        strip_instruction_decorators(item.mnemonic or ""),
+        display_key,
+        display_form,
+        item.summary or "",
+        display_isa(item.isa),
+        " ".join(item.linked_intrinsics or []),
+    ]
+
+
+def _isa_config() -> dict:
+    return {
+        "family_order": ISA_FAMILY_ORDER,
+        "family_sub_order": FAMILY_SUB_ORDER,
+        "default_enabled": list(DEFAULT_ENABLED_ISAS),
+        "default_subs": {family: sorted(values) for family, values in DEFAULT_SUBS.items()},
+    }
+
+
 def _search_payload(catalog: Catalog) -> dict:
     """Compact search-only payload for fast initial load."""
     # Pre-compute perf summaries for instructions (keyed by instruction key).
@@ -90,6 +146,7 @@ def _search_payload(catalog: Catalog) -> dict:
     return {
         "generated_at": catalog.generated_at,
         "sources": [asdict(source) for source in catalog.sources],
+        "isa_config": _isa_config(),
         "intrinsics": [
             {
                 "name": item.name,
@@ -97,11 +154,15 @@ def _search_payload(catalog: Catalog) -> dict:
                 "description": _truncate(item.description),
                 "header": item.header,
                 "isa": item.isa,
-                "category": item.category,
                 "instructions": item.instructions,
                 "notes": item.notes,
                 "lat": _intrinsic_perf(item)[0],
                 "cpi": _intrinsic_perf(item)[1],
+                "display_isa": display_isa(item.isa),
+                "display_isa_tokens": [display_isa([value]) for value in item.isa],
+                "isa_families": isa_families(item.isa),
+                "search_fields": _intrinsic_search_fields(item),
+                "search_tokens": _search_tokens(*_intrinsic_search_fields(item)),
             }
             for item in catalog.intrinsics
         ],
@@ -115,6 +176,15 @@ def _search_payload(catalog: Catalog) -> dict:
                 "linked_intrinsics": item.linked_intrinsics,
                 "lat": instr_perf[item.key][0],
                 "cpi": instr_perf[item.key][1],
+                "display_key": display_instruction_form(item.key),
+                "display_form": display_instruction_form(item.form),
+                "display_mnemonic": strip_instruction_decorators(item.mnemonic),
+                "display_isa": display_isa(item.isa),
+                "display_isa_tokens": [display_isa([value]) for value in item.isa],
+                "isa_families": isa_families(item.isa),
+                "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
+                "search_fields": _instruction_search_fields(item),
+                "search_tokens": _search_tokens(*_instruction_search_fields(item)),
             }
             for item in catalog.instructions
         ],
@@ -132,9 +202,12 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
         chunks[prefix][item.key] = {
             "mnemonic": item.mnemonic,
             "form": item.form,
+            "display_form": display_instruction_form(item.form),
+            "display_mnemonic": strip_instruction_decorators(item.mnemonic),
             "summary": item.summary,
             "description": item.description,
             "isa": item.isa,
+            "display_isa": display_isa(item.isa),
             "operand_details": [
                 {
                     "idx": op.get("idx", ""),
@@ -149,7 +222,7 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
             ],
             "metadata": {
                 k: v for k, v in item.metadata.items()
-                if k in {"url", "url-ref", "category", "cpl"}
+                if k in {"url", "url-ref", "category", "cpl", "intel-sdm-url", "intel-sdm-page-start", "intel-sdm-page-end"}
             },
             "linked_intrinsics": item.linked_intrinsics,
             "measurements": _web_measurements(item),
@@ -166,7 +239,8 @@ def _intrinsic_details(catalog: Catalog) -> dict[str, dict]:
             "description": item.description,
             "header": item.header,
             "isa": item.isa,
-            "category": item.category,
+            "display_isa": display_isa(item.isa),
+            "display_isa_tokens": [display_isa([value]) for value in item.isa],
             "instructions": item.instructions,
             "notes": item.notes,
         }

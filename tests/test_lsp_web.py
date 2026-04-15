@@ -12,14 +12,17 @@ from simdref.web import export_web
 class LspWebTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        tmp_path = Path(cls._tmpdir.name)
         cls._catalog = build_catalog(offline=True)
-        save_catalog(cls._catalog)
-        build_sqlite(cls._catalog)
-        cls._conn = open_db()
+        save_catalog(cls._catalog, path=tmp_path / "catalog.msgpack")
+        build_sqlite(cls._catalog, path=tmp_path / "catalog.db")
+        cls._conn = open_db(path=tmp_path / "catalog.db")
 
     @classmethod
     def tearDownClass(cls):
         cls._conn.close()
+        cls._tmpdir.cleanup()
 
     def test_intrinsic_hover_contains_signature(self):
         markdown = _hover_markdown(self._conn, "_mm256_add_ps")
@@ -34,6 +37,9 @@ class LspWebTests(unittest.TestCase):
 
     def test_export_web_produces_expected_files(self):
         catalog = build_catalog(offline=True)
+        catalog.instructions[0].metadata["intel-sdm-url"] = "https://example.com/intel-sdm.pdf#page=42"
+        catalog.instructions[0].metadata["intel-sdm-page-start"] = "42"
+        catalog.instructions[0].metadata["intel-sdm-page-end"] = "43"
         with tempfile.TemporaryDirectory() as tmpdir:
             export_web(catalog, Path(tmpdir))
 
@@ -44,6 +50,7 @@ class LspWebTests(unittest.TestCase):
 
             # Search index
             search = json.loads((Path(tmpdir) / "search-index.json").read_text())
+            self.assertIn("isa_config", search)
             self.assertIn("intrinsics", search)
             self.assertIn("instructions", search)
             self.assertTrue(len(search["intrinsics"]) > 0)
@@ -51,6 +58,8 @@ class LspWebTests(unittest.TestCase):
             # Search index instructions have key but no measurements
             instr = search["instructions"][0]
             self.assertIn("key", instr)
+            self.assertIn("display_key", instr)
+            self.assertIn("search_fields", instr)
             self.assertNotIn("measurements", instr)
 
             # Detail chunks directory
@@ -59,13 +68,21 @@ class LspWebTests(unittest.TestCase):
             chunk_files = list(chunks_dir.glob("*.json"))
             self.assertTrue(len(chunk_files) > 0)
 
-            # Spot-check a chunk has measurements and operand_details
-            chunk = json.loads(chunk_files[0].read_text())
-            self.assertIsInstance(chunk, dict)
-            for key, detail in chunk.items():
-                self.assertIn("measurements", detail)
-                self.assertIn("operand_details", detail)
-                break
+            # Spot-check chunks have measurements/operand details and preserve SDM metadata
+            saw_sdm = False
+            for chunk_file in chunk_files:
+                chunk = json.loads(chunk_file.read_text())
+                self.assertIsInstance(chunk, dict)
+                for detail in chunk.values():
+                    self.assertIn("measurements", detail)
+                    self.assertIn("operand_details", detail)
+                    metadata = detail.get("metadata", {})
+                    if metadata.get("intel-sdm-url"):
+                        saw_sdm = True
+                        self.assertEqual(metadata["intel-sdm-url"], "https://example.com/intel-sdm.pdf#page=42")
+                        self.assertEqual(metadata["intel-sdm-page-start"], "42")
+                        self.assertEqual(metadata["intel-sdm-page-end"], "43")
+            self.assertTrue(saw_sdm)
 
             # Intrinsic details
             intr_details = json.loads(

@@ -205,13 +205,105 @@ def _find_intel_sdm_pdf(offline: bool = False) -> Path | None:
 
 def _merge_descriptions(
     instructions: list[InstructionRecord],
-    descriptions: dict[str, dict[str, str]],
+    descriptions: dict[str, dict[str, object]],
 ) -> None:
-    """Merge parsed PDF descriptions into instruction records in-place."""
+    """Merge parsed PDF descriptions into instruction records in-place.
+
+    Tries exact mnemonic match first, then falls back to stripping a
+    leading ``V`` prefix (Intel SDM lists "ADDPD/VADDPD" as a single
+    entry, so VADDPD should inherit ADDPD's description if no separate
+    entry exists).
+    """
+    # Build a list of candidate base mnemonics from a decorated mnemonic.
+    # Strips prefixes like {EVEX}, {NF}, {LOAD}, LOCK, REP, etc.
+    # and tries element-type suffix substitutions (PH->PD, BF16->PS, etc.)
+    _TYPE_SUFFIX_MAP = [
+        ("PH", "PD"), ("PH", "PS"),
+        ("BF16", "PS"), ("BF8", "PS"), ("BF8S", "PS"),
+        ("HF8", "PS"), ("HF8S", "PS"),
+        ("IBS", "DQ"), ("IUBS", "UDQ"),
+    ]
+
+    def _strip_prefix(mnemonic: str) -> str:
+        """Strip decoration prefixes, return bare mnemonic."""
+        m = mnemonic
+        while m.startswith("{"):
+            end = m.find("}")
+            if end == -1:
+                break
+            m = m[end + 1:].lstrip()
+        for prefix in ("LOCK ", "REPE ", "REPNE ", "REP ", "REX64 "):
+            if m.startswith(prefix):
+                m = m[len(prefix):]
+                break
+        return m
+
+    # Data-type suffixes that map individual variants back to PDF group keys.
+    # Ordered longest-first so e.g. "F32X4" is tried before "F32" or "4".
+    _GROUP_SUFFIXES = [
+        # Broadcast/insert/extract format specifiers
+        "F32X8", "F32X4", "F32X2", "F64X4", "F64X2", "F128",
+        "I32X8", "I32X4", "I32X2", "I64X4", "I64X2", "I128",
+        # Mask broadcast
+        "MB2Q", "MW2D",
+        # Sign/zero-extend type pairs
+        "BD", "BW", "BQ", "DQ", "WD", "WQ",
+        # Scalar/packed float types
+        "SD", "SS", "PD", "PS",
+        # Element width single-letter
+        "B", "W", "D", "Q",
+        # Bit widths
+        "64", "32", "16", "8",
+    ]
+    _MIN_GROUP_KEY_LEN = 5
+
+    def _base_candidates(mnemonic: str) -> list[str]:
+        candidates: list[str] = []
+        bare = _strip_prefix(mnemonic)
+        if bare != mnemonic:
+            candidates.append(bare)
+        # V prefix (VADDPD -> ADDPD)
+        if bare.startswith("V") and len(bare) > 1:
+            candidates.append(bare[1:])
+        # Combined: strip prefix + V prefix
+        for c in list(candidates):
+            if c.startswith("V") and len(c) > 1 and c[1:] not in candidates:
+                candidates.append(c[1:])
+        # Element-type suffix substitutions (for newer ISA variants)
+        all_forms = [mnemonic, bare] + candidates
+        for form in list(all_forms):
+            # Trailing S (saturating variant, e.g. VCVTTPD2DQS -> VCVTTPD2DQ)
+            if form.endswith("S") and len(form) > 3:
+                candidates.append(form[:-1])
+            for old_suffix, new_suffix in _TYPE_SUFFIX_MAP:
+                if form.endswith(old_suffix):
+                    candidates.append(form[: -len(old_suffix)] + new_suffix)
+        # Group-key suffix stripping (PMOVSXBD -> PMOVSX, VBROADCASTSD -> VBROADCAST)
+        for form in list(all_forms):
+            for suffix in _GROUP_SUFFIXES:
+                if form.endswith(suffix):
+                    stem = form[: -len(suffix)]
+                    if len(stem) >= _MIN_GROUP_KEY_LEN and stem not in candidates:
+                        candidates.append(stem)
+        return candidates
+
     for record in instructions:
         mnemonic = record.mnemonic.upper()
-        if mnemonic in descriptions:
-            record.description = descriptions[mnemonic]
+        desc = descriptions.get(mnemonic)
+        if desc is None:
+            for candidate in _base_candidates(mnemonic):
+                desc = descriptions.get(candidate)
+                if desc is not None:
+                    break
+        if desc is not None:
+            record.description = dict(desc.get("sections") or {})
+            page_start = desc.get("page_start")
+            page_end = desc.get("page_end")
+            if page_start:
+                record.metadata["intel-sdm-page-start"] = str(page_start)
+                record.metadata["intel-sdm-url"] = f"{INTEL_SDM_URL}#page={page_start}"
+            if page_end:
+                record.metadata["intel-sdm-page-end"] = str(page_end)
 
 
 def _normalize_isa(value: Any) -> list[str]:
@@ -452,6 +544,7 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     header=((node.findtext("./header") or "").strip() or node.attrib.get("header", "")),
                     isa=_normalize_isa(cpuid or node.attrib.get("isa", "") or node.attrib.get("tech", "")),
                     category=((node.findtext("./category") or "").strip() or node.attrib.get("category", "")),
+                    subcategory=node.attrib.get("tech", "").strip(),
                     instructions=instructions,
                     instruction_refs=instruction_refs,
                     notes=notes,
@@ -510,6 +603,7 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                 header=str(item.get("header") or item.get("include") or "").strip(),
                 isa=_normalize_isa(item.get("isa") or item.get("tech") or item.get("instructionSet") or []),
                 category=str(item.get("category") or "").strip(),
+                subcategory=str(item.get("tech") or item.get("subcategory") or "").strip(),
                 instructions=[str(value).strip() for value in instructions if str(value).strip()],
                 instruction_refs=[{"name": str(value).strip(), "form": "", "xed": ""} for value in instructions if str(value).strip()],
                 notes=[str(value).strip() for value in notes if str(value).strip()],
@@ -641,15 +735,15 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
         intrinsic.instructions = sorted(set(linked))
 
 
-def build_catalog(offline: bool = False) -> Catalog:
+def build_catalog(offline: bool = False, include_sdm: bool = False) -> Catalog:
     intel_text, intel_source = fetch_intel_data(offline=offline)
     uops_text, uops_source = fetch_uops_xml(offline=offline)
     intrinsics = parse_intel_payload(intel_text)
     instructions = parse_uops_xml(uops_text)
     link_records(intrinsics, instructions)
 
-    # Parse Intel SDM PDF for rich descriptions
-    sdm_path = _find_intel_sdm_pdf(offline=offline)
+    # Parse Intel SDM PDF for rich descriptions only when explicitly requested.
+    sdm_path = _find_intel_sdm_pdf(offline=offline) if include_sdm else None
     if sdm_path is not None:
         try:
             descriptions = parse_intel_sdm(sdm_path)
