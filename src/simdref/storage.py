@@ -54,7 +54,7 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "8"
+SQLITE_SCHEMA_VERSION = "9"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 SQLITE_INSERT_BATCH_SIZE = 512
 
@@ -106,11 +106,11 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None or row[0] != SQLITE_SCHEMA_VERSION:
             return False
-        expected_columns = {"id", "name", "signature", "description", "header", "isa", "category", "subcategory", "payload"}
+        expected_columns = {"id", "name", "architecture", "signature", "description", "header", "isa", "category", "subcategory", "payload"}
         actual_columns = {item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()}
         if expected_columns != actual_columns:
             return False
-        expected_instruction_columns = {"key", "mnemonic", "form", "summary", "isa", "payload"}
+        expected_instruction_columns = {"db_key", "key", "architecture", "mnemonic", "form", "summary", "isa", "payload"}
         actual_instruction_columns = {item[1] for item in conn.execute("PRAGMA table_info(instructions_data)").fetchall()}
         return expected_instruction_columns == actual_instruction_columns
     except sqlite3.Error:
@@ -160,6 +160,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         CREATE TABLE intrinsics_data (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL COLLATE NOCASE,
+            architecture TEXT NOT NULL,
             signature TEXT NOT NULL,
             description TEXT NOT NULL,
             header TEXT NOT NULL,
@@ -170,13 +171,16 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         );
         CREATE INDEX idx_intrinsic_name ON intrinsics_data (name);
         CREATE TABLE instructions_data (
-            key TEXT PRIMARY KEY COLLATE NOCASE,
+            db_key TEXT PRIMARY KEY COLLATE NOCASE,
+            key TEXT NOT NULL COLLATE NOCASE,
+            architecture TEXT NOT NULL,
             mnemonic TEXT NOT NULL COLLATE NOCASE,
             form TEXT NOT NULL,
             summary TEXT NOT NULL,
             isa TEXT NOT NULL,
             payload BLOB NOT NULL
         );
+        CREATE INDEX idx_instruction_key ON instructions_data (key);
         CREATE INDEX idx_instruction_mnemonic ON instructions_data (mnemonic);
         CREATE VIRTUAL TABLE intrinsics_fts USING fts5(name, signature, description, header, isa, category, instructions, notes, aliases, summary, name_tokens);
         CREATE VIRTUAL TABLE instructions_fts USING fts5(key, mnemonic, form, summary, isa, linked_intrinsics, aliases, key_tokens);
@@ -206,6 +210,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         payload = msgpack.packb(record.to_dict(), use_bin_type=True)
         intrinsics_data_batch.append((
             record.name,
+            record.architecture,
             record.signature,
             record.description,
             record.header,
@@ -235,7 +240,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         ))
         if len(intrinsics_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
-                "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 intrinsics_data_batch,
             )
             cur.executemany(
@@ -246,7 +251,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             intrinsics_fts_batch.clear()
     if intrinsics_data_batch:
         cur.executemany(
-            "INSERT INTO intrinsics_data (name, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             intrinsics_data_batch,
         )
         cur.executemany(
@@ -260,7 +265,9 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     for record in catalog.instructions:
         payload = msgpack.packb(record.to_dict(), use_bin_type=True)
         instructions_data_batch.append((
+            record.db_key,
             record.key,
+            record.architecture,
             record.mnemonic,
             record.form,
             record.summary,
@@ -279,7 +286,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         ))
         if len(instructions_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
-                "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 instructions_data_batch,
             )
             cur.executemany(
@@ -290,7 +297,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             instructions_fts_batch.clear()
     if instructions_data_batch:
         cur.executemany(
-            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             instructions_data_batch,
         )
         cur.executemany(
@@ -323,14 +330,23 @@ def load_intrinsic_from_db(conn: sqlite3.Connection, name: str) -> IntrinsicReco
 
 
 def load_instruction_from_db(conn: sqlite3.Connection, key: str) -> InstructionRecord | None:
-    row = conn.execute("SELECT payload FROM instructions_data WHERE key = ?", (key,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT payload
+        FROM instructions_data
+        WHERE db_key = ? OR key = ?
+        ORDER BY CASE WHEN db_key = ? THEN 0 ELSE 1 END, architecture, key
+        LIMIT 1
+        """,
+        (key, key, key),
+    ).fetchone()
     if not row:
         return None
     return InstructionRecord(**msgpack.unpackb(row["payload"], raw=False))
 
 
 def load_instructions_by_mnemonic_from_db(conn: sqlite3.Connection, mnemonic: str) -> list[InstructionRecord]:
-    rows = conn.execute("SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY key", (mnemonic,)).fetchall()
+    rows = conn.execute("SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY architecture, key", (mnemonic,)).fetchall()
     return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
@@ -340,7 +356,7 @@ def load_instructions_by_mnemonic_prefix_from_db(conn: sqlite3.Connection, prefi
         SELECT payload
         FROM instructions_data
         WHERE mnemonic LIKE ? || '%'
-        ORDER BY mnemonic, key
+        ORDER BY mnemonic, architecture, key
         LIMIT ?
         """,
         (prefix, limit),

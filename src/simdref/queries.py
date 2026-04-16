@@ -28,9 +28,15 @@ def linked_instruction_records(
     When *conn* is provided, performs fast DB lookups by instruction key.
     Otherwise falls back to scanning ``catalog.instructions``.
     """
+    ref_keys = [
+        ref.get("key", "").strip()
+        for ref in intrinsic.instruction_refs
+        if isinstance(ref, dict) and ref.get("key", "").strip()
+    ]
     if conn is not None:
         linked: list[InstructionRecord] = []
-        for instruction_key in intrinsic.instructions:
+        keys = ref_keys or intrinsic.instructions
+        for instruction_key in keys:
             instruction = load_instruction_from_db(conn, instruction_key)
             if instruction is not None:
                 linked.append(instruction)
@@ -110,7 +116,8 @@ def intrinsic_perf_summary_runtime(
     from simdref.perf import best_numeric
 
     linked: list[InstructionRecord] = []
-    for key in intrinsic.instructions:
+    keys = ref_keys or intrinsic.instructions
+    for key in keys:
         instruction = instruction_map.get(key)
         if instruction is None:
             instruction = load_instruction_from_db(conn, key)

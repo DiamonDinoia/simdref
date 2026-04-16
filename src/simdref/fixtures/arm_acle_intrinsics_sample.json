@@ -1,0 +1,49 @@
+{
+  "format": "acle-neon-csv-v1",
+  "intrinsics_csv": "<HEADER>\tIntrinsic\tArgument preparation\tAArch64 Instruction\tResult\tSupported architectures\n<SECTION>\tBasic intrinsics\tThe intrinsics in this section are guarded by the macro ``__ARM_NEON``.\nuint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b)\ta -> Vn.16B;b -> Vm.16B\tADD Vd.16B,Vn.16B,Vm.16B\tVd.16B -> result\tv7/A32/A64\nfloat32x4_t vaddq_f32(float32x4_t a, float32x4_t b)\ta -> Vn.4S;b -> Vm.4S\tFADD Vd.4S,Vn.4S,Vm.4S\tVd.4S -> result\tv7/A32/A64\n<SECTION>\tBasic intrinsics\tThe intrinsics in this section are guarded by the macro ``__ARM_NEON``.\nuint64x2_t vaddw_high_u32(uint64x2_t a, uint32x4_t b)\ta -> Vn.2D;b -> Vm.4S\tUADDW2 Vd.2D,Vn.2D,Vm.4S\tVd.2D -> result\tA64\n",
+  "classification_csv": "vaddq_u8\tVector arithmetic|Add|Addition\nvaddq_f32\tVector arithmetic|Add|Addition\nvaddw_high_u32\tVector arithmetic|Add|Widening addition\n",
+  "neon_markdown": "#### Add\n##### Addition\n| Intrinsic | Argument preparation | AArch64 Instruction | Result | Supported architectures |\n| --- | --- | --- | --- | --- |\n| <code>uint8x16_t <a href=\"https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8\" target=\"_blank\">vaddq_u8</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp; uint8x16_t a,<br>&nbsp;&nbsp;&nbsp;&nbsp; uint8x16_t b)</code> | `a -> Vn.16B`<br>`b -> Vm.16B` | `ADD Vd.16B,Vn.16B,Vm.16B` | `Vd.16B -> result` | `v7/A32/A64` |\n| <code>float32x4_t <a href=\"https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_f32\" target=\"_blank\">vaddq_f32</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp; float32x4_t a,<br>&nbsp;&nbsp;&nbsp;&nbsp; float32x4_t b)</code> | `a -> Vn.4S`<br>`b -> Vm.4S` | `FADD Vd.4S,Vn.4S,Vm.4S` | `Vd.4S -> result` | `v7/A32/A64` |\n##### Widening addition\n| Intrinsic | Argument preparation | AArch64 Instruction | Result | Supported architectures |\n| --- | --- | --- | --- | --- |\n| <code>uint64x2_t <a href=\"https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddw_high_u32\" target=\"_blank\">vaddw_high_u32</a>(<br>&nbsp;&nbsp;&nbsp;&nbsp; uint64x2_t a,<br>&nbsp;&nbsp;&nbsp;&nbsp; uint32x4_t b)</code> | `a -> Vn.2D`<br>`b -> Vm.4S` | `UADDW2 Vd.2D,Vn.2D,Vm.4S` | `Vd.2D -> result` | `A64` |\n",
+  "acle_markdown": "### Mapping of SVE instructions to intrinsics\n\n| **Instruction**                      | **Intrinsic** |\n| ------------------------------------ | ------------- |\n| ADD (vectors, predicated)            | [`svadd`](https://developer.arm.com/architectures/instruction-sets/intrinsics/#f:@navigationhierarchiesreturnbasetype=[uint,int]&q=svadd[) |\n| SADDLB                               | [`svaddlb`](https://developer.arm.com/architectures/instruction-sets/intrinsics/#f:@navigationhierarchiesreturnbasetype=[int]&q=svaddlb[) |\n| UADDLB                               | [`svaddlb`](https://developer.arm.com/architectures/instruction-sets/intrinsics/#f:@navigationhierarchiesreturnbasetype=[uint]&q=svaddlb[) |\n\n#### ADD, SUB\n\nInteger add and subtract over predicated vectors.\n\n``` c\nsvint32_t svadd[_s32]_z(svbool_t pg, svint32_t op1, svint32_t op2);\nsvint32_t svadd[_s32]_x(svbool_t pg, svint32_t op1, svint32_t op2);\n```\n\n#### SADDLB, UADDLB\n\nWiden the bottom halves of byte vectors and add the widened values.\n\n``` c\nsvint16_t svaddlb[_s16](svint8_t op1, svint8_t op2);\n```\n",
+  "extra_intrinsics": [
+    {
+      "name": "svadd_s32_z",
+      "signature": "svint32_t svadd_s32_z(svbool_t pg, svint32_t op1, svint32_t op2)",
+      "description": "Add 32-bit SVE lanes under predicate control, zeroing inactive elements.",
+      "header": "arm_sve.h",
+      "url": "https://developer.arm.com/architectures/instruction-sets/intrinsics/svadd_s32_z",
+      "isa": ["SVE"],
+      "category": "Arithmetic",
+      "subcategory": "SVE / Add",
+      "instructions": [
+        {
+          "name": "ADD",
+          "form": "Zd.S, Pg/M, Zn.S, Zm.S"
+        }
+      ],
+      "metadata": {
+        "reference_url": "https://arm-software.github.io/acle/main/acle.html#sve-language-extensions-and-intrinsics",
+        "supported_architectures": "A64"
+      }
+    },
+    {
+      "name": "svaddlb_s16",
+      "signature": "svint16_t svaddlb_s16(svint8_t op1, svint8_t op2)",
+      "description": "Add widened bottom halves of signed 8-bit lanes.",
+      "header": "arm_sve.h",
+      "url": "https://developer.arm.com/architectures/instruction-sets/intrinsics/svaddlb_s16",
+      "isa": ["SVE2"],
+      "category": "Widening arithmetic",
+      "subcategory": "SVE2 / Add",
+      "instructions": [
+        {
+          "name": "SADDLB",
+          "form": "Zd.H, Zn.B, Zm.B"
+        }
+      ],
+      "metadata": {
+        "reference_url": "https://arm-software.github.io/acle/main/acle.html#sve-language-extensions-and-intrinsics",
+        "supported_architectures": "A64"
+      }
+    }
+  ]
+}

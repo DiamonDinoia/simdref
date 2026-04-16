@@ -1,0 +1,47 @@
+[
+  {
+    "mnemonic": "ADD",
+    "form": "ADD (Vd.16B, Vn.16B, Vm.16B)",
+    "summary": "Add corresponding vector byte elements.",
+    "isa": ["NEON"],
+    "metadata": {
+      "category": "SIMD arithmetic",
+      "url": "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#addition",
+      "url-ref": "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8"
+    },
+    "description": {
+      "Description": "Adds corresponding 8-bit vector lanes from two source registers and writes the 16-byte result.",
+      "Operation": "Vd.16B = Vn.16B + Vm.16B"
+    }
+  },
+  {
+    "mnemonic": "ADD",
+    "form": "ADD (Zd.S, Pg/M, Zn.S, Zm.S)",
+    "summary": "Add predicated SVE 32-bit vector elements.",
+    "isa": ["SVE"],
+    "metadata": {
+      "category": "SVE arithmetic",
+      "url": "https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions",
+      "url-ref": "https://developer.arm.com/architectures/instruction-sets/intrinsics/svadd_s32_z"
+    },
+    "description": {
+      "Description": "Adds predicated 32-bit SVE lanes from Zn and Zm and merges inactive lanes according to the predicate behavior.",
+      "Operation": "Zd.S = predicated_add(Pg/M, Zn.S, Zm.S)"
+    }
+  },
+  {
+    "mnemonic": "SADDLB",
+    "form": "SADDLB (Zd.H, Zn.B, Zm.B)",
+    "summary": "Add widened bottom halves of signed byte elements.",
+    "isa": ["SVE2"],
+    "metadata": {
+      "category": "SVE2 widening arithmetic",
+      "url": "https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions",
+      "url-ref": "https://developer.arm.com/architectures/instruction-sets/intrinsics/svaddlb_s16"
+    },
+    "description": {
+      "Description": "Widens the bottom byte lanes of Zn and Zm to halfword elements, adds them, and writes the halfword result.",
+      "Operation": "Zd.H = widen_bottom(Zn.B) + widen_bottom(Zm.B)"
+    }
+  }
+]

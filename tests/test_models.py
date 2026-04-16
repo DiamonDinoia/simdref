@@ -9,6 +9,7 @@ def test_instruction_record_has_description_field():
         description={"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."},
     )
     assert record.description == {"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."}
+    assert record.architecture == "x86"
 
 
 def test_instruction_record_description_defaults_empty():
@@ -85,6 +86,18 @@ def test_instruction_record_derives_operands_and_metrics():
         "idx=1 w reg 128 f32 xmm",
     ]
     assert record.metrics == {"SKL": {"TP_loop": "1.0", "uops": "1"}}
+    assert record.db_key == "x86:addps (xmm, xmm)"
+
+
+def test_instruction_record_arm_db_key_is_architecture_aware():
+    record = InstructionRecord(
+        mnemonic="ADD",
+        form="ADD (Zd.S, Pg/M, Zn.S, Zm.S)",
+        summary="Add predicated SVE vector lanes.",
+        architecture="arm",
+    )
+    assert record.key == "ADD (Zd.S, Pg/M, Zn.S, Zm.S)"
+    assert record.db_key == "arm:add (zd.s, pg/m, zn.s, zm.s)"
 
 
 def test_instruction_record_normalizes_legacy_intel_metadata_to_pdf_refs():

@@ -15,7 +15,7 @@ manpages, and a static web app.
 
 ```bash
 pip install simdref
-simdref update          # download pre-built data; falls back to fixtures if needed
+simdref update          # download pre-built GitHub release data; falls back to local rebuild/fixtures if needed
 simdref doctor          # verify installation
 ```
 
@@ -52,8 +52,8 @@ simdref VADDPS 2             # pick variant #2 from the list
 
 | Command | Description |
 |---------|-------------|
-| `simdref update` | Download pre-built compatible data, with fixture fallback |
-| `simdref update --build-local` | Rebuild catalog locally from upstream sources |
+| `simdref update` | Download pre-built compatible data from GitHub Releases, with local fallback |
+| `simdref update --build-local` | Refresh local Arm JSON cache and rebuild catalog from upstream sources |
 | `simdref update --offline` | Build the bundled fixture dataset locally |
 | `simdref llm <query>` | Structured JSON output for LLM consumption |
 | `simdref shell-init bash` | Print bash completion setup |
@@ -103,8 +103,10 @@ Publishable directly to GitHub Pages.
 
 The default `update` path downloads pre-built data from GitHub Releases using
 schema/version-compatible tags when available, with bundled fixtures as the
-safe fallback. Use `simdref update --build-local` for a full local rebuild.
-Vendor archives can also be placed in `vendor/`.
+safe fallback. `simdref update --build-local` refreshes the vendored Arm
+intrinsics JSON cache and then performs a full local rebuild, falling back to
+the cached local vendor files if the refresh fails. Vendor archives can also be
+placed in `vendor/`.
 
 ## Architecture
 

@@ -49,6 +49,9 @@ def intrinsic_page(record: IntrinsicRecord, catalog: Catalog) -> str:
     parts.append(_section("SYNOPSIS", f".nf\n{_roff_escape(record.signature)}\n.fi"))
     parts.append(_section("DESCRIPTION", _roff_escape(record.description or "No description available.")))
     parts.append(_section("HEADER", _roff_escape(record.header or "Unknown")))
+    if record.url:
+        parts.append(_section("SOURCE", _roff_escape(record.url)))
+    parts.append(_section("ARCHITECTURE", _roff_escape(record.architecture or "Unknown")))
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("CATEGORY", _roff_escape(record.category or "Unknown")))
     parts.append(_section("INSTRUCTIONS", _roff_escape(", ".join(record.instructions) or "None linked")))
@@ -68,6 +71,7 @@ def instruction_page(record: InstructionRecord) -> str:
         parts.append(_section("DESCRIPTION", _roff_escape(record.summary)))
     if record.description.get("Operation"):
         parts.append(_section("OPERATION", f".nf\n{_roff_escape(record.description['Operation'])}\n.fi"))
+    parts.append(_section("ARCHITECTURE", _roff_escape(record.architecture or "Unknown")))
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("OPERANDS", _roff_escape("\n".join(record.operands) or "No operand details available.")))
     parts.append(_section("INTRINSICS", _roff_escape(", ".join(record.linked_intrinsics) or "None linked")))
@@ -86,9 +90,11 @@ def write_manpages(catalog: Catalog, man_dir: Path) -> None:
     for intrinsic in catalog.intrinsics:
         (section_dir / f"{intrinsic.name}.7").write_text(intrinsic_page(intrinsic, catalog))
     for instruction in catalog.instructions:
-        filename = f"instruction-{record_slug(instruction.key)}.7"
+        filename = f"instruction-{record_slug(instruction.architecture)}-{record_slug(instruction.key)}.7"
         (section_dir / filename).write_text(instruction_page(instruction))
-        (section_dir / f"{instruction.mnemonic}.7").write_text(instruction_page(instruction))
+        if instruction.architecture == "x86":
+            (section_dir / f"{instruction.mnemonic}.7").write_text(instruction_page(instruction))
+        (section_dir / f"{record_slug(instruction.architecture)}-{instruction.mnemonic}.7").write_text(instruction_page(instruction))
 
 
 def record_slug(value: str) -> str:

@@ -82,6 +82,8 @@ def _hover_markdown(conn, word: str) -> str | None:
             meta.append(f"ISA {', '.join(intrinsic.isa)}")
         if intrinsic.category:
             meta.append(f"category {intrinsic.category}")
+        if intrinsic.url:
+            meta.append(f"[source]({intrinsic.url})")
         if meta:
             lines.append(" | ".join(meta))
         if intrinsic.instructions:

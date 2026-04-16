@@ -84,7 +84,7 @@ ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
     "SSE4A": (2, 4), "SSE4.1": (2, 5), "SSE4.2": (2, 6),
     "AES": (2, 7), "PCLMULQDQ": (2, 8),
     "F16C": (3, 0), "FMA": (3, 1),
-    "AVX": (4, 0), "AVX2": (5, 0),
+    "AVX": (4, 0), "NEON": (4, 1), "AVX2": (5, 0),
     "AVX512F": (6, 0), "AVX512DQ": (6, 1), "AVX512IFMA": (6, 2),
     "AVX512PF": (6, 3), "AVX512ER": (6, 4), "AVX512CD": (6, 5),
     "AVX512BW": (6, 6), "AVX512VL": (6, 7), "AVX512VBMI": (6, 8),
@@ -92,14 +92,14 @@ ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
     "AVX512VPOPCNTDQ": (6, 12), "AVX5124VNNIW": (6, 13),
     "AVX5124FMAPS": (6, 14), "AVX512VP2INTERSECT": (6, 15),
     "AVX512BF16": (6, 16), "AVX512FP16": (6, 99),
-    "AVX10": (7, 0), "AMX": (7, 0), "APX": (9, 0),
+    "AVX10": (7, 0), "AMX": (7, 0), "SVE": (8, 0), "SVE2": (8, 1), "APX": (9, 0),
 }
 
 _ISA_PREFIXES_BY_LEN = sorted(ISA_CHRONOLOGY.items(), key=lambda kv: len(kv[0]), reverse=True)
 
 ISA_FAMILY_ORDER: dict[str, int] = {
     "x86": 0, "MMX": 1, "SSE": 2, "AVX": 3,
-    "AVX-512": 4, "AVX10": 5, "AMX": 6, "APX": 7, "SVML": 8, "Other": 9,
+    "AVX-512": 4, "AVX10": 5, "AMX": 6, "APX": 7, "Arm": 8, "SVML": 9, "Other": 10,
 }
 
 DEFAULT_ENABLED_ISAS: tuple[str, ...] = ("SSE", "AVX", "AVX-512")
@@ -114,6 +114,7 @@ FAMILY_SUB_ORDER: dict[str, list[str]] = {
         "VAES", "VPCLMULQDQ", "GFNI",
     ],
     "AMX": ["AMX-TILE", "AMX-INT8", "AMX-BF16", "AMX-FP16", "AMX-COMPLEX"],
+    "Arm": ["NEON", "SVE", "SVE2"],
 }
 
 DEFAULT_SUBS: dict[str, set[str]] = {
@@ -121,6 +122,7 @@ DEFAULT_SUBS: dict[str, set[str]] = {
     "AVX": {"AVX", "AVX2", "FMA", "F16C"},
     "AVX-512": {"AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"},
     "AMX": {"AMX-TILE", "AMX-INT8", "AMX-BF16"},
+    "Arm": {"NEON", "SVE", "SVE2"},
 }
 
 X86_BASE_ISAS: frozenset[str] = frozenset({
@@ -271,6 +273,14 @@ def display_isa(values: list[str]) -> str:
             if base.endswith(suffix):
                 base = base[: -len(suffix)]
         upper = base.upper()
+        if upper in {"ADV_SIMD", "ADVSIMD", "NEON"}:
+            return "NEON"
+        if upper.startswith("SVE2"):
+            return "SVE2"
+        if upper.startswith("SVE"):
+            return "SVE"
+        if upper == "AARCH64":
+            return "AArch64"
         if upper.startswith("AVX10_"):
             parts = base.split("_")
             if len(parts) >= 2:
@@ -296,6 +306,13 @@ def display_isa(values: list[str]) -> str:
     return ", ".join(rendered) or "-"
 
 
+def display_architecture(architecture: str) -> str:
+    return {
+        "x86": "x86",
+        "arm": "Arm",
+    }.get((architecture or "").lower(), architecture or "-")
+
+
 def normalize_isa_token(isa: str) -> str:
     """Normalize ISA tokens for family and sub-ISA matching."""
     return isa.upper().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
@@ -310,6 +327,8 @@ def isa_family(isa: str) -> str:
         return "x86"
     if d == "SVML":
         return "SVML"
+    if d in {"AARCH64", "NEON"} or d.startswith("SVE"):
+        return "Arm"
     if d.startswith("APX"):
         return "APX"
     if d.startswith("AMX"):
@@ -598,10 +617,11 @@ def print_instruction_mapping(catalog, intrinsic, conn=None) -> None:
         return
     table = Table(header_style="bold cyan")
     table.add_column("instruction", style="cyan")
+    table.add_column("arch", width=6)
     table.add_column("summary")
     table.add_column("isa", width=12)
     for instr in linked:
-        table.add_row(instr.key, instr.summary or "-", ", ".join(instr.isa) or "-")
+        table.add_row(instr.key, display_architecture(instr.architecture), instr.summary or "-", ", ".join(instr.isa) or "-")
     console.print(table)
 
 
@@ -615,15 +635,17 @@ def print_intrinsic_mapping(catalog, item, conn=None, find_intrinsic_fn=None) ->
     find_fn = find_intrinsic_fn or _find_intrinsic
     table = Table(header_style="bold cyan")
     table.add_column("intrinsic", style="cyan")
+    table.add_column("arch", width=6)
     table.add_column("summary")
     table.add_column("isa", width=12)
     for intrinsic_name in item.linked_intrinsics:
         intrinsic = load_intrinsic_from_db(conn, intrinsic_name) if conn is not None else find_fn(catalog, intrinsic_name)
         if intrinsic is None:
-            table.add_row(intrinsic_name, "-", "-")
+            table.add_row(intrinsic_name, "-", "-", "-")
             continue
         table.add_row(
             intrinsic.signature or intrinsic.name,
+            display_architecture(intrinsic.architecture),
             intrinsic.description or "-",
             ", ".join(intrinsic.isa) or "-",
         )
@@ -684,6 +706,7 @@ _EXPANDED_SECTIONS = {"Description", "Flags Affected"}
 # Syntax language per code section.
 _CODE_SECTION_LANG = {
     "Operation": "asm",
+    "ACLE Operation": "asm",
     "Intrinsic Equivalents": "c",
 }
 
@@ -740,8 +763,14 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
     table = Table(show_header=False, box=None)
     table.add_row("signature", item.signature or "-")
     table.add_row("header", item.header or "-")
+    if item.url:
+        table.add_row("source", item.url)
+    table.add_row("architecture", display_architecture(item.architecture))
     table.add_row("isa", ", ".join(item.isa) or "-")
     table.add_row("category", item.category or "-")
+    for key in ("reference_url", "argument_preparation", "result", "supported_architectures", "classification_path"):
+        if item.metadata.get(key):
+            table.add_row(key, item.metadata[key])
     table.add_row("notes", "; ".join(item.notes) or "-")
     linked = linked_instruction_records(catalog, item, conn=conn)
     primary = linked[0] if linked else None
@@ -751,6 +780,8 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
                 continue
             table.add_row(key, value)
     console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
+    if not short and item.doc_sections:
+        print_description_sections(item.doc_sections, full=full)
     if not short and primary and primary.description:
         print_description_sections(primary.description, full=full)
     if linked:
@@ -774,6 +805,7 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
         table = Table(show_header=False, box=None)
         table.add_row("mnemonic", item.mnemonic)
         table.add_row("form", display_instruction_form(item.form))
+        table.add_row("architecture", display_architecture(item.architecture))
         table.add_row("isa", display_isa(item.isa))
         for key, value in instruction_metadata_rows(item):
             table.add_row(key, value)
@@ -808,6 +840,7 @@ def render_instruction_variants(query: str, items, show_fp16: bool = False) -> N
     table = Table(header_style="bold cyan")
     table.add_column("#", width=3, style="cyan")
     table.add_column("query", style="cyan")
+    table.add_column("arch", width=6)
     table.add_column("isa", width=14)
     table.add_column("lat", width=5)
     table.add_column("cpi", width=5)
@@ -817,6 +850,7 @@ def render_instruction_variants(query: str, items, show_fp16: bool = False) -> N
         table.add_row(
             str(index),
             instruction_query_text(item),
+            display_architecture(item.architecture),
             display_isa(item.isa),
             lat,
             cpi,
@@ -837,15 +871,16 @@ def render_search_results(
 ) -> None:
     """Render search results table from pre-computed rows.
 
-    Each element in *results* is ``(SearchResult, isa_str, lat, cpi)``.
+    Each element in *results* is ``(SearchResult, arch_str, isa_str, lat, cpi)``.
     """
     table = Table(show_header=True, header_style="bold cyan", expand=True)
     table.add_column("#", width=3, style="cyan")
     table.add_column("query", width=30, no_wrap=True, overflow="ellipsis")
+    table.add_column("Arch", width=6)
     table.add_column("ISA", width=14)
     table.add_column("lat", width=5)
     table.add_column("cpi", width=5)
     table.add_column("summary", min_width=18, overflow="fold")
-    for index, (result, isa, lat, cpi) in enumerate(results, start=1):
-        table.add_row(str(index), result.title, isa, lat, cpi, result.subtitle)
+    for index, (result, arch, isa, lat, cpi) in enumerate(results, start=1):
+        table.add_row(str(index), result.title, arch, isa, lat, cpi, result.subtitle)
     console.print(table)

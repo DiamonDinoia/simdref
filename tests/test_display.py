@@ -4,8 +4,11 @@ import unittest
 from types import SimpleNamespace
 
 from simdref.display import (
+    _CODE_SECTION_LANG,
     canonical_url,
+    display_architecture,
     display_isa,
+    isa_family,
     display_instruction_form,
     instruction_query_text,
     instruction_variant_items,
@@ -37,6 +40,9 @@ class DisplayISATests(unittest.TestCase):
     def test_display_isa_empty(self):
         self.assertEqual(display_isa([]), "-")
 
+    def test_display_isa_arm_tokens(self):
+        self.assertEqual(display_isa(["advsimd", "SVE2p1"]), "NEON, SVE2")
+
     def test_display_isa_deduplicates(self):
         result = display_isa(["SSE", "SSE"])
         self.assertEqual(result, "SSE")
@@ -54,6 +60,17 @@ class DisplayISATests(unittest.TestCase):
     def test_isa_visible_hides_fp16_by_default(self):
         self.assertFalse(isa_visible(["AVX512FP16"]))
         self.assertTrue(isa_visible(["AVX512FP16"], show_fp16=True))
+
+    def test_isa_family_arm(self):
+        self.assertEqual(isa_family("SVE2"), "Arm")
+        self.assertEqual(isa_family("NEON"), "Arm")
+
+    def test_display_architecture(self):
+        self.assertEqual(display_architecture("arm"), "Arm")
+        self.assertEqual(display_architecture("x86"), "x86")
+
+    def test_acle_operation_uses_code_highlighting(self):
+        self.assertEqual(_CODE_SECTION_LANG["ACLE Operation"], "asm")
 
 
 class DisplayInstructionTests(unittest.TestCase):

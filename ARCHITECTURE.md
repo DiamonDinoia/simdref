@@ -6,7 +6,7 @@
 src/simdref/
   models.py      Data classes: IntrinsicRecord, InstructionRecord, Catalog
   ingest.py      Stable public ingest entrypoints / compatibility wrappers
-  ingest_sources.py  Source acquisition for Intel intrinsics + uops.info
+  ingest_sources.py  Source acquisition for Intel and Arm source bundles
   ingest_catalog.py  Parse, link, and assemble Catalog records
   ingest_pdf.py      PDF enrichment cache/load/merge dispatch
   storage.py     JSON and SQLite persistence, FTS5 search
@@ -28,7 +28,7 @@ src/simdref/
 ## Data flow
 
 ```
-Intel CDN / uops.info / vendor archives / fixtures
+Intel CDN / uops.info / Arm ACLE / Arm A64 docs / vendor archives / fixtures
                     |
                     v
           ingest_sources.py
@@ -85,7 +85,34 @@ The search pipeline in `search.py` scores candidates through multiple factors:
 For runtime search, FTS5 provides the candidate set (up to 12x the limit) and
 the scoring pipeline re-ranks them.
 
+## Multi-architecture ingest
+
+- The catalog is now assembled from architecture-specific bundles instead of one implicit x86 path.
+- The current x86 bundle remains Intel intrinsics + uops.info.
+- The Arm bundle is scoped to the `arm` family with `AArch64` documentation coverage in v1:
+  - Arm ACLE intrinsics sources
+  - Arm A64 instruction documentation sources
+- `IntrinsicRecord.architecture` and `InstructionRecord.architecture` are explicit and currently use `x86` or `arm`.
+- Instruction storage keys are architecture-aware even when display mnemonics/forms collide across families.
+
+## Source notes
+
+- Intel intrinsics: Intel Intrinsics Guide data.
+- Intel instructions/perf: uops.info plus optional Intel SDM PDF enrichment.
+- Arm intrinsics: official ACLE repository and published docs:
+  - https://github.com/ARM-software/acle
+  - https://arm-software.github.io/acle/main/
+  - https://arm-software.github.io/acle/neon_intrinsics/advsimd.html
+- Arm instructions: official Arm A64/AArch64 instruction docs:
+  - https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions
+
 ## ISA filtering
 
-Instruction variants are sorted chronologically by ISA generation. APX and
-FP16/BF16 variants are hidden by default (pass `--fp16` to show them).
+Instruction variants are sorted chronologically by ISA generation within a
+shared cross-architecture taxonomy. APX and FP16/BF16 variants are hidden by
+default (pass `--fp16` to show them).
+
+- Top-level families include x86 groupings plus `Arm`.
+- Arm sub-ISAs currently exposed in CLI/TUI/web are `NEON`, `SVE`, and `SVE2`.
+- `AArch64` is treated as execution-state scope and source context, not as the
+  primary UI filter label.

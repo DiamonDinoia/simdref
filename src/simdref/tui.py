@@ -226,18 +226,25 @@ def _fts_search(
 
         try:
             irows = conn.execute(
-                "SELECT key, summary, isa FROM instructions_fts WHERE instructions_fts MATCH ? ORDER BY rank LIMIT ?",
+                """
+                SELECT instructions_data.db_key, instructions_fts.key, instructions_fts.summary, instructions_fts.isa
+                FROM instructions_fts
+                JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
+                WHERE instructions_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
                 (expr, fetch_limit),
             ).fetchall()
         except sqlite3.OperationalError:
             continue
         for row in irows:
-            if row["key"] in seen or not _isa_visible(row["isa"] or ""):
+            if row["db_key"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
-            seen.add(row["key"])
+            seen.add(row["db_key"])
             result = SearchResult(
                 kind="instruction",
-                key=row["key"],
+                key=row["db_key"],
                 title=strip_instruction_decorators(row["key"]),
                 subtitle=row["summary"] or "",
                 score=90,
@@ -855,6 +862,8 @@ class SimdrefApp(App):
             self._mount_perf_table(container, linked)
 
         # Collapsible description sections
+        if intrinsic.doc_sections:
+            self._mount_description_sections(container, intrinsic.doc_sections)
         if linked and linked.description:
             self._mount_description_sections(container, linked.description)
 

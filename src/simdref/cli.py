@@ -26,6 +26,7 @@ from typer.core import TyperGroup
 
 from simdref.display import (
     console,
+    display_architecture,
     display_isa,
     instruction_query_text,
     instruction_variant_items,
@@ -39,6 +40,7 @@ from simdref.display import (
 )
 from simdref import __version__
 from simdref.ingest import build_catalog
+from simdref.ingest_sources import refresh_local_arm_intrinsics_bundle
 from simdref.manpages import open_manpage, write_manpages
 from simdref.perf import variant_perf_summary
 from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
@@ -80,7 +82,15 @@ class SimdrefGroup(TyperGroup):
 
 app = typer.Typer(
     cls=SimdrefGroup,
-    help="Local SIMD reference across Intel intrinsics, instruction data, performance measurements, and SDM-derived descriptions.\n\nRun without arguments to open the TUI. Pass a bare query to search or open matching results directly.",
+    help=(
+        "Local SIMD reference across Intel intrinsics, instruction data, performance measurements, and SDM-derived descriptions.\n\n"
+        "Run without arguments to open the TUI. Pass a bare query to search or open matching results directly.\n\n"
+        "Common rebuild commands:\n"
+        "  simdref update --build-local    Full local rebuild from upstream sources.\n"
+        "  simdref update --offline        Local rebuild from bundled fixtures only.\n"
+        "  simdref update --build-local --with-sdm\n"
+        "                                  Heaviest local rebuild, including Intel SDM parsing."
+    ),
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 SHOW_FP16_ISAS = False
@@ -172,6 +182,13 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         def _status(msg: str) -> None:
             console.print(msg, style="dim")
 
+        if not offline:
+            _status("Refreshing local Arm intrinsics cache")
+            try:
+                written = refresh_local_arm_intrinsics_bundle()
+                _status(f"Refreshed {len(written)} Arm JSON files in {written[0].parent}")
+            except Exception as exc:
+                _status(f"Arm JSON refresh failed, using cached local files: {exc}")
         _status("Building local catalog")
         catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
         _status("Saving catalog snapshot")
@@ -202,6 +219,12 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         def _status(msg: str) -> None:
             progress.update(task, description=msg)
 
+        if not offline:
+            progress.update(task, description="Refreshing local Arm intrinsics cache")
+            try:
+                refresh_local_arm_intrinsics_bundle()
+            except Exception as exc:
+                progress.update(task, description=f"Arm JSON refresh failed, using cached files: {exc}")
         catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
         progress.advance(task, 1)
 
@@ -324,7 +347,7 @@ def _search_runtime(conn, query: str, limit: int = 20) -> tuple[list[SearchResul
     instructions = search_instruction_candidates_from_db(conn, query, limit=candidate_limit)
     results = search_records(intrinsics, instructions, query, limit=limit)
     intrinsic_map = {item.name: item for item in intrinsics}
-    instruction_map = {item.key: item for item in instructions}
+    instruction_map = {item.db_key: item for item in instructions}
     return results, intrinsic_map, instruction_map
 
 
@@ -472,6 +495,7 @@ def _llm_intrinsic_payload(conn, intrinsic) -> dict:
         "query": intrinsic.name,
         "intrinsic": intrinsic.name,
         "signature": intrinsic.signature,
+        "url": intrinsic.url,
         "instructions": intrinsic.instructions,
         "instruction_refs": intrinsic.instruction_refs,
         "isa": intrinsic.isa,
@@ -502,6 +526,7 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
     results, intrinsic_map, instruction_map = _search_runtime(conn, query, limit=limit)
     prepared_rows = []
     for result in results:
+        arch = "-"
         isa = "-"
         lat = "-"
         cpi = "-"
@@ -511,6 +536,7 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
             if item is not None:
                 if not isa_visible(item.isa, show_fp16=SHOW_FP16_ISAS):
                     continue
+                arch = display_architecture(item.architecture)
                 isa = display_isa(item.isa)
                 isa_sort = isa_sort_key(item.isa)
                 lat, cpi = variant_perf_summary(item.arch_details)
@@ -519,12 +545,13 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
             if item is not None:
                 if not isa_visible(item.isa, show_fp16=SHOW_FP16_ISAS):
                     continue
+                arch = display_architecture(item.architecture)
                 isa = display_isa(item.isa)
                 isa_sort = isa_sort_key(item.isa)
                 lat, cpi = intrinsic_perf_summary_runtime(conn, item, instruction_map)
-        prepared_rows.append((result, isa, lat, cpi, isa_sort))
-    prepared_rows.sort(key=lambda row: (row[0].kind != "instruction", row[4], row[0].title.casefold(), row[0].key.casefold()))
-    render_search_results([(r, isa, lat, cpi) for r, isa, lat, cpi, _ in prepared_rows])
+        prepared_rows.append((result, arch, isa, lat, cpi, isa_sort))
+    prepared_rows.sort(key=lambda row: (row[0].kind != "instruction", row[5], row[0].title.casefold(), row[0].key.casefold()))
+    render_search_results([(r, arch, isa, lat, cpi) for r, arch, isa, lat, cpi, _ in prepared_rows])
 
 
 # ---------------------------------------------------------------------------

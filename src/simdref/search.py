@@ -193,7 +193,7 @@ def search_records(intrinsics: list, instructions: list, query: str, limit: int 
             results.append(
                 SearchResult(
                     kind="instruction",
-                    key=item.key,
+                    key=item.db_key,
                     title=item.key,
                     subtitle=item.summary,
                     score=score,

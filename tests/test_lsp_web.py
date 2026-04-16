@@ -62,10 +62,14 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("instructions", search)
             self.assertTrue(len(search["intrinsics"]) > 0)
             self.assertTrue(len(search["instructions"]) > 0)
+            arm_intr = next(item for item in search["intrinsics"] if item["name"] == "vaddq_u8")
+            self.assertEqual(arm_intr["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
+            self.assertIn("argument_preparation", arm_intr["metadata"])
             # Search index instructions have key but no measurements
             instr = search["instructions"][0]
             self.assertIn("key", instr)
             self.assertIn("display_key", instr)
+            self.assertIn("architecture", instr)
             self.assertIn("search_fields", instr)
             self.assertNotIn("measurements", instr)
 
@@ -83,6 +87,7 @@ class LspWebTests(unittest.TestCase):
                 for detail in chunk.values():
                     self.assertIn("measurements", detail)
                     self.assertIn("operand_details", detail)
+                    self.assertIn("architecture", detail)
                     metadata = detail.get("metadata", {})
                     pdf_refs = detail.get("pdf_refs", [])
                     if pdf_refs:
@@ -101,6 +106,8 @@ class LspWebTests(unittest.TestCase):
             )
             self.assertIsInstance(intr_details, dict)
             self.assertTrue(len(intr_details) > 0)
+            self.assertIn("doc_sections", intr_details["vaddq_u8"])
+            self.assertIn("ACLE Documentation", intr_details["vaddq_u8"]["doc_sections"])
 
 
 if __name__ == "__main__":

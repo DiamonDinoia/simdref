@@ -143,6 +143,7 @@ function resultMarkup(entries, offset = 0) {
     <article class="result ${e.kind}-kind ${e.key === activeKey ? "active" : ""} ${offset + i === focusedIndex ? "focused" : ""}" data-key="${esc(e.key)}" data-index="${offset + i}">
       <div class="result-top">
         <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
+        <span class="result-isa">${esc(e.item.display_architecture || e.item.architecture || "-")}</span>
         <span class="result-isa">${esc(e.item.display_isa || displayIsa(e.item.isa))}</span>
       </div>
       <div class="result-title">${esc(e.title)}</div>
@@ -203,10 +204,10 @@ const chronology = {
   "I86": [0,0], "MMX": [1,0],
   "SSE": [2,0], "SSE2": [2,1], "SSE3": [2,2], "SSSE3": [2,3], "SSE4A": [2,4], "SSE4.1": [2,5], "SSE4.2": [2,6], "AES": [2,7], "PCLMULQDQ": [2,8],
   "F16C": [3,0], "FMA": [3,1],
-  "AVX": [4,0], "AVX2": [5,0],
+  "AVX": [4,0], "NEON": [4,1], "AVX2": [5,0],
   "AVX512F": [6,0], "AVX512DQ": [6,1], "AVX512IFMA": [6,2], "AVX512PF": [6,3], "AVX512ER": [6,4], "AVX512CD": [6,5], "AVX512BW": [6,6], "AVX512VL": [6,7],
   "AVX512VBMI": [6,8], "AVX512VBMI2": [6,9], "AVX512VNNI": [6,10], "AVX512BITALG": [6,11], "AVX512VPOPCNTDQ": [6,12],
-  "AVX512FP16": [6,99], "AVX10": [7,0], "AMX": [7,0], "APX": [9,0],
+  "AVX512FP16": [6,99], "AVX10": [7,0], "AMX": [7,0], "SVE": [8,0], "SVE2": [8,1], "APX": [9,0],
 };
 const chronologyEntries = Object.entries(chronology).sort((a, b) => b[0].length - a[0].length);
 
@@ -471,12 +472,17 @@ const operandHeaders = [
 ];
 
 function renderIntrinsicDetail(item, detail) {
-  const linked = (item.instructions || [])
-    .map(k => catalog.instrByKey[k] || catalog.instrByMnem[k])
+  const linkedRefs = detail ? (detail.instruction_refs || item.instruction_refs || []) : (item.instruction_refs || []);
+  const linked = (linkedRefs.length
+    ? linkedRefs.map(ref => catalog.instrByKey[ref.key] || catalog.instrByDisplayKey[ref.display_key] || catalog.instrByMnem[ref.name])
+    : (item.instructions || []).map(k => catalog.instrByDisplayKey[k] || catalog.instrByKey[k] || catalog.instrByMnem[k]))
     .filter(Boolean).filter(r => isaVisible(r.isa));
 
   const hasMeasurements = detail && detail._measurements && detail._measurements.length;
   const hasOperands = detail && detail._operands && detail._operands.length;
+  const meta = detail ? (detail.metadata || {}) : (item.metadata || {});
+  const instrMeta = detail ? (detail._instructionMeta || {}) : {};
+  const instrPdfRefs = detail ? (detail._pdfRefs || []) : [];
 
   return `
     <div class="detail-head">
@@ -492,6 +498,10 @@ function renderIntrinsicDetail(item, detail) {
       <h3>Description</h3>
       <div>${esc(detail ? detail.description : item.description)}</div>
     </section>
+    ${detail && detail.doc_sections && Object.keys(detail.doc_sections).length ? `<section class="section">
+      <h3>ACLE Documentation</h3>
+      ${renderDescriptionSections(detail.doc_sections)}
+    </section>` : ""}
     ${detail && detail._instrDescription && Object.keys(detail._instrDescription).length ? `<section class="section">
       <h3>Instruction Semantics</h3>
       ${renderDescriptionSections(detail._instrDescription)}
@@ -500,11 +510,22 @@ function renderIntrinsicDetail(item, detail) {
       <h3>Metadata</h3>
       <dl class="kv">
         <dt>Header</dt><dd>${esc(item.header || "-")}</dd>
+        <dt>Architecture</dt><dd>${esc(item.display_architecture || item.architecture || "-")}</dd>
         <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
+        ${item.category ? `<dt>Category</dt><dd>${esc(item.subcategory ? `${item.subcategory} / ${item.category}` : item.category)}</dd>` : ""}
+        ${detail && detail.url ? `<dt>Source</dt><dd><a href="${esc(detail.url)}" target="_blank" rel="noreferrer">${esc(detail.url)}</a></dd>` : ""}
+        ${meta.reference_url ? `<dt>Reference</dt><dd><a href="${esc(meta.reference_url)}" target="_blank" rel="noreferrer">${esc(meta.reference_url)}</a></dd>` : ""}
+        ${meta.argument_preparation ? `<dt>Argument Prep</dt><dd>${esc(meta.argument_preparation)}</dd>` : ""}
+        ${meta.result ? `<dt>Result</dt><dd>${esc(meta.result)}</dd>` : ""}
+        ${meta.supported_architectures ? `<dt>Supported</dt><dd>${esc(meta.supported_architectures)}</dd>` : ""}
+        ${meta.classification_path ? `<dt>Section</dt><dd>${esc(meta.classification_path)}</dd>` : ""}
         ${detail && detail.notes && detail.notes.length ? `<dt>Notes</dt><dd>${esc(detail.notes.join("; "))}</dd>` : ""}
-        ${detail && detail._url ? `<dt>uops.info</dt><dd><a href="${esc(detail._url)}" target="_blank" rel="noreferrer">${esc(detail._url)}</a></dd>` : ""}
-        ${detail && detail._urlRef ? `<dt>Reference</dt><dd><a href="${esc(detail._urlRef)}" target="_blank" rel="noreferrer">${esc(detail._urlRef)}</a></dd>` : ""}
-        ${detail && Array.isArray(detail._pdfRefs) ? detail._pdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("") : ""}
+        ${detail && detail._linkedInstruction ? `<dt>Instruction</dt><dd>${esc(detail._linkedInstruction)}</dd>` : ""}
+        ${instrMeta.category ? `<dt>Instruction Category</dt><dd>${esc(instrMeta.category)}</dd>` : ""}
+        ${instrMeta.cpl ? `<dt>CPL</dt><dd>${esc(instrMeta.cpl)}</dd>` : ""}
+        ${instrMeta.url ? `<dt>Instruction Source</dt><dd><a href="${esc(canonUrl(instrMeta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(instrMeta.url))}</a></dd>` : ""}
+        ${instrMeta["url-ref"] ? `<dt>Instruction Reference</dt><dd><a href="${esc(canonUrl(instrMeta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(instrMeta["url-ref"]))}</a></dd>` : ""}
+        ${instrPdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("")}
       </dl>
     </section>
     <section class="section">
@@ -569,6 +590,7 @@ function renderInstructionDetail(item, detail) {
       <dl class="kv">
         <dt>Mnemonic</dt><dd class="mono">${esc(item.display_mnemonic || item.mnemonic)}</dd>
         <dt>Form</dt><dd class="mono">${esc(d.display_form || item.display_form || d.form || item.form || "-")}</dd>
+        <dt>Architecture</dt><dd>${esc(item.display_architecture || item.architecture || "-")}</dd>
         <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
         ${meta.url ? `<dt>uops.info</dt><dd><a href="${esc(canonUrl(meta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta.url))}</a></dd>` : ""}
         ${meta["url-ref"] ? `<dt>Reference</dt><dd><a href="${esc(canonUrl(meta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta["url-ref"]))}</a></dd>` : ""}
@@ -610,22 +632,22 @@ async function renderDetail(entry) {
 
   if (entry.kind === "intrinsic") {
     // Load primary instruction detail for operands/measurements
-    const primaryKey = (entry.item.instructions || [])[0];
+    const primaryKey = (entry.item.instruction_refs || [])[0]?.key || (entry.item.instructions || [])[0];
     let detail = null;
     if (primaryKey) {
-      const instr = catalog.instrByKey[primaryKey] || catalog.instrByMnem[primaryKey];
+      const instr = catalog.instrByDisplayKey[primaryKey] || catalog.instrByKey[primaryKey] || catalog.instrByMnem[primaryKey];
       if (instr) {
         const prefix = chunkPrefix(instr.mnemonic);
         const chunk = await loadChunk(prefix);
-        const instrDetail = chunk[instr.key] || {};
+        const instrDetail = chunk[instr.key] || chunk[instr.display_key] || chunk[primaryKey] || {};
         // Also load full intrinsic details
         const intrDetails = await loadIntrinsicDetails();
         detail = intrDetails[entry.item.name] || entry.item;
         detail._measurements = instrDetail.measurements || [];
         detail._operands = instrDetail.operand_details || [];
         detail._instrDescription = instrDetail.description || {};
-        detail._url = instrDetail.metadata ? canonUrl(instrDetail.metadata.url) : "";
-        detail._urlRef = instrDetail.metadata ? canonUrl(instrDetail.metadata["url-ref"]) : "";
+        detail._instructionMeta = instrDetail.metadata || {};
+        detail._linkedInstruction = instrDetail.display_form || instr.display_key || instr.key || "";
         detail._pdfRefs = instrDetail.pdf_refs || [];
       }
     }
@@ -1160,6 +1182,7 @@ fetch("search-index.json")
     isaFamilyOrder = config.family_order || {};
     catalog.intrByName = Object.fromEntries(data.intrinsics.map(i => [i.name, i]));
     catalog.instrByKey = Object.fromEntries(data.instructions.map(i => [i.key, i]));
+    catalog.instrByDisplayKey = Object.fromEntries(data.instructions.map(i => [i.display_key || i.key, i]));
     catalog.instrByMnem = Object.fromEntries(data.instructions.map(i => [i.mnemonic, i]));
 
     searchEntries = [

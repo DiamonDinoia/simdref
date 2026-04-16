@@ -27,6 +27,7 @@ from simdref.display import (
     DEFAULT_SUBS,
     FAMILY_SUB_ORDER,
     ISA_FAMILY_ORDER,
+    display_architecture,
     display_isa,
     display_instruction_form,
     isa_families,
@@ -100,6 +101,8 @@ def _intrinsic_search_fields(item) -> list[str]:
         item.signature or "",
         item.description or "",
         item.header or "",
+        item.url or "",
+        " ".join(str(value) for value in (item.metadata or {}).values()),
         display_isa(item.isa),
         " ".join(item.instructions or []),
     ]
@@ -131,17 +134,16 @@ def _search_payload(catalog: Catalog) -> dict:
     """Compact search-only payload for fast initial load."""
     # Pre-compute perf summaries for instructions (keyed by instruction key).
     instr_perf: dict[str, tuple[str, str]] = {}
-    instr_by_key: dict[str, object] = {}
     for item in catalog.instructions:
         lat, cpi = variant_perf_summary(item.arch_details)
-        instr_perf[item.key] = (lat, cpi)
-        instr_by_key[item.key] = item
+        instr_perf[item.db_key] = (lat, cpi)
 
     def _intrinsic_perf(item) -> tuple[str, str]:
         """Best lat/cpi from the primary linked instruction."""
-        for ref in item.instructions:
-            if ref in instr_perf:
-                return instr_perf[ref]
+        for inst_ref in item.instruction_refs:
+            key = inst_ref.get("key", "")
+            if key in instr_perf:
+                return instr_perf[key]
         return ("-", "-")
 
     return {
@@ -154,11 +156,16 @@ def _search_payload(catalog: Catalog) -> dict:
                 "signature": _truncate(item.signature),
                 "description": _truncate(item.description),
                 "header": item.header,
+                "url": item.url,
+                "architecture": item.architecture,
                 "isa": item.isa,
                 "instructions": item.instructions,
+                "instruction_refs": item.instruction_refs,
+                "metadata": item.metadata,
                 "notes": item.notes,
                 "lat": _intrinsic_perf(item)[0],
                 "cpi": _intrinsic_perf(item)[1],
+                "display_architecture": display_architecture(item.architecture),
                 "display_isa": display_isa(item.isa),
                 "display_isa_tokens": [display_isa([value]) for value in item.isa],
                 "isa_families": isa_families(item.isa),
@@ -169,14 +176,16 @@ def _search_payload(catalog: Catalog) -> dict:
         ],
         "instructions": [
             {
-                "key": item.key,
+                "key": item.db_key,
                 "mnemonic": item.mnemonic,
                 "form": item.form,
+                "architecture": item.architecture,
                 "summary": _truncate(item.summary),
                 "isa": item.isa,
                 "linked_intrinsics": item.linked_intrinsics,
-                "lat": instr_perf[item.key][0],
-                "cpi": instr_perf[item.key][1],
+                "lat": instr_perf[item.db_key][0],
+                "cpi": instr_perf[item.db_key][1],
+                "display_architecture": display_architecture(item.architecture),
                 "display_key": display_instruction_form(item.key),
                 "display_form": display_instruction_form(item.form),
                 "display_mnemonic": strip_instruction_decorators(item.mnemonic),
@@ -200,9 +209,11 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
     chunks: dict[str, dict] = defaultdict(dict)
     for item in catalog.instructions:
         prefix = _chunk_prefix(item.mnemonic)
-        chunks[prefix][item.key] = {
+        chunks[prefix][item.db_key] = {
             "mnemonic": item.mnemonic,
             "form": item.form,
+            "architecture": item.architecture,
+            "display_architecture": display_architecture(item.architecture),
             "display_form": display_instruction_form(item.form),
             "display_mnemonic": strip_instruction_decorators(item.mnemonic),
             "summary": item.summary,
@@ -240,10 +251,16 @@ def _intrinsic_details(catalog: Catalog) -> dict[str, dict]:
             "signature": item.signature,
             "description": item.description,
             "header": item.header,
+            "url": item.url,
+            "architecture": item.architecture,
+            "display_architecture": display_architecture(item.architecture),
             "isa": item.isa,
             "display_isa": display_isa(item.isa),
             "display_isa_tokens": [display_isa([value]) for value in item.isa],
             "instructions": item.instructions,
+            "instruction_refs": item.instruction_refs,
+            "metadata": item.metadata,
+            "doc_sections": item.doc_sections,
             "notes": item.notes,
         }
         for item in catalog.intrinsics

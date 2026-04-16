@@ -38,11 +38,15 @@ class IntrinsicRecord:
     signature: str
     description: str
     header: str
+    url: str = ""
+    architecture: str = "x86"
     isa: list[str] = field(default_factory=list)
     category: str = ""
     subcategory: str = ""
     instructions: list[str] = field(default_factory=list)
     instruction_refs: list[dict[str, str]] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
+    doc_sections: dict[str, str] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
     source: str = "intel"
@@ -50,9 +54,10 @@ class IntrinsicRecord:
 
     def __post_init__(self) -> None:
         fields = [
-            self.name, self.signature, self.description, self.header,
+            self.name, self.signature, self.description, self.header, self.url,
+            self.architecture,
             self.category, " ".join(self.isa), " ".join(self.instructions),
-            " ".join(self.aliases),
+            " ".join(self.aliases), " ".join(self.metadata.values()), " ".join(self.doc_sections.values()),
         ]
         self._search_blob = " ".join(x for x in fields if x)
 
@@ -66,11 +71,15 @@ class IntrinsicRecord:
             "signature": self.signature,
             "description": self.description,
             "header": self.header,
+            "url": self.url,
+            "architecture": self.architecture,
             "isa": self.isa,
             "category": self.category,
             "subcategory": self.subcategory,
             "instructions": self.instructions,
             "instruction_refs": self.instruction_refs,
+            "metadata": self.metadata,
+            "doc_sections": self.doc_sections,
             "notes": self.notes,
             "aliases": self.aliases,
             "source": self.source,
@@ -82,6 +91,7 @@ class InstructionRecord:
     mnemonic: str
     form: str
     summary: str
+    architecture: str = "x86"
     isa: list[str] = field(default_factory=list)
     operand_details: list[dict[str, str]] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
@@ -93,6 +103,7 @@ class InstructionRecord:
     source: str = "uops.info"
     _search_blob: str = field(default="", repr=False)
     _key: str = field(default="", init=False, repr=False)
+    _db_key: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.pdf_refs = normalize_pdf_refs(self.pdf_refs, self.metadata)
@@ -102,8 +113,9 @@ class InstructionRecord:
             self._key = self.mnemonic
         elif not self._key.casefold().startswith(self.mnemonic.casefold()):
             self._key = f"{self.mnemonic} {self._key}".strip()
+        self._db_key = f"{self.architecture}:{self._key.casefold()}"
         fields = [
-            self.mnemonic, self.form, self.summary,
+            self.mnemonic, self.form, self.summary, self.architecture,
             " ".join(self.isa), " ".join(self.operands),
             " ".join(self.linked_intrinsics), " ".join(self.aliases),
         ]
@@ -112,6 +124,10 @@ class InstructionRecord:
     @property
     def key(self) -> str:
         return self._key
+
+    @property
+    def db_key(self) -> str:
+        return self._db_key
 
     @property
     def operands(self) -> list[str]:
@@ -150,6 +166,7 @@ class InstructionRecord:
             "mnemonic": self.mnemonic,
             "form": self.form,
             "summary": self.summary,
+            "architecture": self.architecture,
             "isa": self.isa,
             "operand_details": self.operand_details,
             "metadata": metadata,
@@ -166,6 +183,7 @@ class InstructionRecord:
         data = dict(payload)
         data.pop("metrics", None)
         data.pop("operands", None)
+        data.setdefault("architecture", "x86")
         data.setdefault("description", {})
         metadata = dict(data.get("metadata") or {})
         data["metadata"] = metadata
@@ -191,7 +209,10 @@ class Catalog:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Catalog":
         return cls(
-            intrinsics=[IntrinsicRecord(**item) for item in payload.get("intrinsics", [])],
+            intrinsics=[
+                IntrinsicRecord(architecture="x86", **item) if "architecture" not in item else IntrinsicRecord(**item)
+                for item in payload.get("intrinsics", [])
+            ],
             instructions=[InstructionRecord.from_dict(item) for item in payload.get("instructions", [])],
             sources=[SourceVersion(**item) for item in payload.get("sources", [])],
             generated_at=payload["generated_at"],
