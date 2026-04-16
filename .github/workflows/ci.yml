@@ -41,9 +41,21 @@ jobs:
       - name: Check web syntax
         run: node --check src/simdref/templates/app.js
 
-  smoke-update:
+  runtime-build:
     needs: tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release-assets
+            build_command: simdref update --man-dir "$RUNNER_TEMP/man"
+            intrinsics_min: 1000
+            instructions_min: 1000
+          - name: local-sdm
+            build_command: simdref update --build-local --with-sdm --man-dir "$RUNNER_TEMP/man"
+            intrinsics_min: 7000
+            instructions_min: 20000
     steps:
       - uses: actions/checkout@v6
 
@@ -60,25 +72,28 @@ jobs:
       - name: Install package
         run: uv pip install -e .
 
-      - name: Refresh runtime from release assets
-        run: simdref update --man-dir "$RUNNER_TEMP/man"
+      - name: Build runtime (${{ matrix.name }})
+        run: ${{ matrix.build_command }}
 
-      - name: Inspect runtime
+      - name: Inspect runtime (${{ matrix.name }})
         run: simdref doctor
 
-      - name: Validate runtime artifacts
+      - name: Validate runtime artifacts (${{ matrix.name }})
+        env:
+          EXPECTED_INTRINSICS_MIN: ${{ matrix.intrinsics_min }}
+          EXPECTED_INSTRUCTIONS_MIN: ${{ matrix.instructions_min }}
         run: |
           python - <<'PY'
+          import os
           import json
-          from pathlib import Path
           from simdref.storage import SQLITE_PATH, WEB_DIR, open_db, sqlite_schema_is_current
 
           assert sqlite_schema_is_current(), "SQLite schema is not current after update"
           with open_db(SQLITE_PATH) as conn:
               intrinsics = conn.execute("select count(*) from intrinsics_data").fetchone()[0]
               instructions = conn.execute("select count(*) from instructions_data").fetchone()[0]
-          assert intrinsics > 1000, f"unexpected intrinsic count: {intrinsics}"
-          assert instructions > 1000, f"unexpected instruction count: {instructions}"
+          assert intrinsics > int(os.environ["EXPECTED_INTRINSICS_MIN"]), f"unexpected intrinsic count: {intrinsics}"
+          assert instructions > int(os.environ["EXPECTED_INSTRUCTIONS_MIN"]), f"unexpected instruction count: {instructions}"
 
           search_index = WEB_DIR / "search-index.json"
           intrinsic_details = WEB_DIR / "intrinsic-details.json"
