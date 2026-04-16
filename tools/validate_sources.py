@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import msgpack
 import re
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from simdref.arm_instructions import parse_arm_instruction_payload
+from simdref.ingest import load_or_parse_intel_sdm
 from simdref.ingest_catalog import (
     _arm_live_instruction_refs,
     _canonical_instruction_key,
@@ -26,6 +28,8 @@ from simdref.ingest_catalog import (
     parse_uops_xml,
 )
 from simdref.ingest_sources import fetch_arm_a64_data, fetch_arm_acle_data, fetch_intel_data, fetch_uops_xml
+from simdref.ingest_pdf import find_pdf_source_path
+from simdref.pdfparse.intel import INTEL_SDM_CACHE_PATH
 
 
 def _fail(message: str) -> None:
@@ -42,6 +46,58 @@ def _normalize_isa_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [part.strip() for part in re.split(r"[,/|]\s*|\s{2,}", value) if part.strip()]
     return []
+
+
+_X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = {
+    "ADDPS": {
+        "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
+        "contains": {
+            "Description": "packed single precision floating-point",
+            "Operation": "DEST",
+            "Intrinsic Equivalents": "_mm_add_ps",
+        },
+    },
+    "VPDPBUSD": {
+        "sections": ("Description", "Operation", "Intrinsic Equivalents"),
+        "contains": {
+            "Description": "unsigned bytes",
+            "Operation": "FOR i := 0 TO KL-1",
+            "Intrinsic Equivalents": "_mm_dpbusd",
+        },
+    },
+    "VPMADD52LUQ": {
+        "sections": ("Description", "Operation", "Intrinsic Equivalents", "Flags Affected"),
+        "contains": {
+            "Description": "52-bit integers",
+            "Operation": "srcdest.qword",
+            "Flags Affected": "None",
+        },
+    },
+    "RDPID": {
+        "sections": ("Description", "Operation", "Flags Affected"),
+        "contains": {
+            "Description": "IA32_TSC_AUX",
+            "Operation": "DEST := IA32_TSC_AUX",
+            "Flags Affected": "None",
+        },
+    },
+    "TZCNT": {
+        "sections": ("Description", "Operation", "Flags Affected", "Intrinsic Equivalents"),
+        "contains": {
+            "Description": "trailing least significant zero bits",
+            "Operation": "CF := 1",
+            "Flags Affected": "ZF is set to 1",
+        },
+    },
+    "VCVTNEPS2BF16": {
+        "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
+        "contains": {
+            "Description": "converts the elements to BF16",
+            "Operation": "convert_fp32_to_bfloat16",
+            "Intrinsic Equivalents": "_mm_cvtneps_pbh",
+        },
+    },
+}
 
 
 def _unwrap_intel_source_text(text: str) -> str:
@@ -394,6 +450,51 @@ def validate_arm_instructions(offline: bool, require_authoritative: bool) -> tup
     return checked, failures
 
 
+def _load_sdm_descriptions() -> dict[str, dict[str, Any]] | None:
+    pdf_path = find_pdf_source_path("intel-sdm", offline=False)
+    if pdf_path is not None and pdf_path.exists():
+        return load_or_parse_intel_sdm(pdf_path)
+    if INTEL_SDM_CACHE_PATH.exists():
+        payload = msgpack.unpackb(INTEL_SDM_CACHE_PATH.read_bytes(), raw=False)
+        if "descriptions" in payload and isinstance(payload["descriptions"], dict):
+            return payload["descriptions"]
+        result = payload.get("result")
+        if isinstance(result, dict) and isinstance(result.get("descriptions"), dict):
+            return result["descriptions"]
+    return None
+
+
+def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
+    descriptions = _load_sdm_descriptions()
+    if descriptions is None:
+        if require_sdm:
+            _fail("Intel SDM PDF or cache is required for x86 semantic validation")
+        print("validated Intel SDM semantics: skipped (no PDF/cache available)")
+        return 0, 0
+
+    checked = 0
+    failures = 0
+    for mnemonic, expectation in _X86_SDM_EXPECTATIONS.items():
+        checked += 1
+        payload = descriptions.get(mnemonic)
+        if not payload:
+            print(f"FAIL intel sdm: missing description payload for {mnemonic}")
+            failures += 1
+            continue
+        sections = dict(payload.get("sections") or {})
+        for section_name in expectation["sections"]:
+            if section_name not in sections or not str(sections[section_name]).strip():
+                print(f"FAIL intel sdm: missing section {section_name} for {mnemonic}")
+                failures += 1
+        for section_name, needle in expectation["contains"].items():
+            body = str(sections.get(section_name) or "")
+            if needle not in body:
+                print(f"FAIL intel sdm: section {section_name} for {mnemonic} missing expected text {needle!r}")
+                failures += 1
+    print(f"validated Intel SDM semantics: checked={checked} failures={failures}")
+    return checked, failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Developer-only source validation for simdref")
     parser.add_argument("--offline", action="store_true", help="Validate bundled fixture sources only.")
@@ -401,6 +502,11 @@ def main() -> int:
         "--require-authoritative-arm-instructions",
         action="store_true",
         help="Fail if the Arm instruction source falls back to the bundled fixture.",
+    )
+    parser.add_argument(
+        "--require-sdm",
+        action="store_true",
+        help="Fail if Intel SDM semantic validation cannot run because no PDF/cache is available.",
     )
     args = parser.parse_args()
 
@@ -412,6 +518,7 @@ def main() -> int:
         validate_uops_instructions(args.offline),
         validate_arm_intrinsics(args.offline),
         validate_arm_instructions(args.offline, args.require_authoritative_arm_instructions),
+        validate_x86_sdm_semantics(require_sdm=args.require_sdm and not args.offline),
     ):
         totals_checked += checked
         totals_failed += failed

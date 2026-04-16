@@ -1,6 +1,11 @@
 import subprocess
 import sys
 import unittest
+from pathlib import Path
+
+
+def _has_local_sdm_material() -> bool:
+    return Path("vendor/intel/intel-sdm.pdf").exists() or Path("data/derived/intel-sdm-descriptions.msgpack").exists()
 
 
 class SourceValidationTests(unittest.TestCase):
@@ -22,6 +27,18 @@ class SourceValidationTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+        self.assertIn("source validation passed", result.stdout)
+
+    @unittest.skipUnless(_has_local_sdm_material(), "Intel SDM source/cache not available locally")
+    def test_live_source_validation_with_required_sdm_passes(self):
+        result = subprocess.run(
+            [sys.executable, "tools/validate_sources.py", "--require-sdm"],
+            cwd=".",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("validated Intel SDM semantics", result.stdout)
         self.assertIn("source validation passed", result.stdout)
 
 

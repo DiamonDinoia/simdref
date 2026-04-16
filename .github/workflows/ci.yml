@@ -83,7 +83,7 @@ jobs:
 
       - name: Validate upstream source ingestion (${{ matrix.label }})
         if: matrix.id == 'local-sdm'
-        run: python tools/validate_sources.py
+        run: python tools/validate_sources.py --require-sdm
 
       - name: Inspect runtime (${{ matrix.label }})
         run: simdref doctor

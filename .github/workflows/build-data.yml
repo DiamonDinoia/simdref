@@ -87,7 +87,7 @@ jobs:
         run: python -u -m simdref update --build-local --with-sdm
 
       - name: Validate upstream source ingestion
-        run: python tools/validate_sources.py
+        run: python tools/validate_sources.py --require-sdm
 
       - name: Upload versioned catalog release assets
         if: steps.meta.outputs.publish_versioned == 'true'
