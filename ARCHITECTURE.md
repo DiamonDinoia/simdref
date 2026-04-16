@@ -5,17 +5,22 @@
 ```
 src/simdref/
   models.py      Data classes: IntrinsicRecord, InstructionRecord, Catalog
-  ingest.py      Fetch, parse, and link data from Intel + uops.info
+  ingest.py      Stable public ingest entrypoints / compatibility wrappers
+  ingest_sources.py  Source acquisition for Intel intrinsics + uops.info
+  ingest_catalog.py  Parse, link, and assemble Catalog records
+  ingest_pdf.py      PDF enrichment cache/load/merge dispatch
   storage.py     JSON and SQLite persistence, FTS5 search
   search.py      Fuzzy ranking with intent detection
   perf.py        Shared latency/throughput extraction helpers
   queries.py     Shared record-linking and lookup helpers
   display.py     Rich terminal formatting and rendering
+  pdfrefs.py     Normalized PDF reference helpers shared by CLI/TUI/web
   cli.py         Typer commands and smart lookup dispatch
   lsp.py         JSON-RPC language server (hover + completion)
   tui.py         Curses-based interactive search
   manpages.py    Roff manpage generation
   web.py         Static web app export
+  pdfparse/      Source-pluggable PDF enrichment implementations + registry
   templates/     HTML template for the web SPA
   fixtures/      Sample data for offline bootstrapping and tests
 ```
@@ -26,27 +31,36 @@ src/simdref/
 Intel CDN / uops.info / vendor archives / fixtures
                     |
                     v
-              ingest.py
-         fetch + parse + link
+          ingest_sources.py
+         fetch + source versioning
                     |
-        +-----------+-----------+
-        v                       v
-  IntrinsicRecord[]      InstructionRecord[]
-        |                       |
-        +--- link_records() ----+
-        |  (bidirectional refs) |
-        v                       v
+                    v
+          ingest_catalog.py
+          parse + link + assemble
+                    |
+          optional ingest_pdf.py
+      cache + dispatch to pdfparse registry
+                    |
+                    v
               Catalog
                     |
         +-----------+-----------+
         v                       v
-  catalog.json            catalog.db
-  (JSON backup)        (SQLite + FTS5)
+  catalog.msgpack          catalog.db
+  (portable snapshot)   (SQLite + FTS5)
         |                       |
         v                       v
     web.py               cli.py / lsp.py
   (static export)     (runtime queries)
 ```
+
+## PDF enrichment
+
+- `pdfparse.types.PdfSourceSpec` defines one source entry: id, display name, source URL, local candidates, cache metadata, and parser callback.
+- `pdfparse.registry` is the only registration point. Adding a new PDF source should be limited to implementing one parser module and registering its `PdfSourceSpec`.
+- `ingest_pdf.load_or_parse_pdf_source()` owns cache invalidation. Cache keys include source id, parser signature, source URL, and PDF SHA-256.
+- `InstructionRecord.pdf_refs` is the normalized public shape consumed by CLI/TUI/web export. Each ref includes `source_id`, `label`, `url`, `page_start`, and `page_end`.
+- Legacy Intel metadata keys remain readable and are still written for compatibility during the migration window.
 
 ## Storage strategy
 

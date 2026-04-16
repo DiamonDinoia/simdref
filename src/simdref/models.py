@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from simdref.pdfrefs import apply_legacy_pdf_metadata, normalize_pdf_refs
+
 
 @dataclass(slots=True)
 class SourceVersion:
@@ -87,11 +89,14 @@ class InstructionRecord:
     linked_intrinsics: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
     description: dict[str, str] = field(default_factory=dict)
+    pdf_refs: list[dict[str, str]] = field(default_factory=list)
     source: str = "uops.info"
     _search_blob: str = field(default="", repr=False)
     _key: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.pdf_refs = normalize_pdf_refs(self.pdf_refs, self.metadata)
+        self.metadata = apply_legacy_pdf_metadata(dict(self.metadata), self.pdf_refs)
         self._key = self.form.strip()
         if not self._key:
             self._key = self.mnemonic
@@ -140,17 +145,19 @@ class InstructionRecord:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        metadata = apply_legacy_pdf_metadata(dict(self.metadata), self.pdf_refs)
         return {
             "mnemonic": self.mnemonic,
             "form": self.form,
             "summary": self.summary,
             "isa": self.isa,
             "operand_details": self.operand_details,
-            "metadata": self.metadata,
+            "metadata": metadata,
             "arch_details": self.arch_details,
             "linked_intrinsics": self.linked_intrinsics,
             "aliases": self.aliases,
             "description": self.description,
+            "pdf_refs": self.pdf_refs,
             "source": self.source,
         }
 
@@ -160,6 +167,9 @@ class InstructionRecord:
         data.pop("metrics", None)
         data.pop("operands", None)
         data.setdefault("description", {})
+        metadata = dict(data.get("metadata") or {})
+        data["metadata"] = metadata
+        data["pdf_refs"] = normalize_pdf_refs(data.get("pdf_refs"), metadata)
         return cls(**data)
 
 

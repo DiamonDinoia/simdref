@@ -17,6 +17,7 @@ from rich.rule import Rule
 from rich.table import Table
 
 from simdref.perf import latency_cycle_values, variant_perf_summary
+from simdref.pdfrefs import normalize_pdf_refs, pdf_ref_label
 from simdref.queries import linked_instruction_records
 
 if TYPE_CHECKING:
@@ -635,23 +636,33 @@ _MEASUREMENT_EXCLUDE_KEYS = {"uops_retire_slots", "uops_MITE", "uops_MS", "macro
 
 def print_instruction_metadata(item) -> None:
     table = Table(show_header=False, box=None)
-    table.add_row("summary", item.summary or "-")
+    for key, value in instruction_metadata_rows(item):
+        table.add_row(key, value)
+    console.print(Panel(table, title="instruction metadata", border_style="magenta"))
+
+
+def instruction_metadata_rows(item) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = [("summary", item.summary or "-")]
     url = item.metadata.get("url", "")
     if url:
-        table.add_row("url", canonical_url(url))
+        rows.append(("url", canonical_url(url)))
     if item.metadata.get("url-ref"):
-        table.add_row("reference", canonical_url(item.metadata["url-ref"]))
-    if item.metadata.get("intel-sdm-url"):
-        page = item.metadata.get("intel-sdm-page-start", "")
-        url = item.metadata["intel-sdm-url"]
-        table.add_row("intel sdm", f"{url} (page {page})" if page else url)
+        rows.append(("reference", canonical_url(item.metadata["url-ref"])))
+    for ref in normalize_pdf_refs(getattr(item, "pdf_refs", []), item.metadata):
+        url = ref.get("url", "")
+        label = ref.get("label", "pdf").lower()
+        page_label = pdf_ref_label(ref)
+        if page_label.casefold() != (ref.get("label", "") or "").casefold():
+            rows.append((label, f"{url} [{page_label}]"))
+        else:
+            rows.append((label, url))
     if item.metadata.get("extension"):
-        table.add_row("isa", item.metadata["extension"])
+        rows.append(("isa", item.metadata["extension"]))
     if item.metadata.get("category"):
-        table.add_row("category", item.metadata["category"])
+        rows.append(("category", item.metadata["category"]))
     if item.metadata.get("cpl"):
-        table.add_row("cpl", item.metadata["cpl"])
-    console.print(Panel(table, title="instruction metadata", border_style="magenta"))
+        rows.append(("cpl", item.metadata["cpl"]))
+    return rows
 
 
 _DESCRIPTION_ORDER = [
@@ -735,14 +746,10 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
     linked = linked_instruction_records(catalog, item, conn=conn)
     primary = linked[0] if linked else None
     if primary:
-        if primary.metadata.get("url"):
-            table.add_row("url", canonical_url(primary.metadata["url"]))
-        if primary.metadata.get("url-ref"):
-            table.add_row("reference", canonical_url(primary.metadata["url-ref"]))
-        if primary.metadata.get("intel-sdm-url"):
-            page = primary.metadata.get("intel-sdm-page-start", "")
-            url = primary.metadata["intel-sdm-url"]
-            table.add_row("intel sdm", f"{url} (page {page})" if page else url)
+        for key, value in instruction_metadata_rows(primary):
+            if key == "summary":
+                continue
+            table.add_row(key, value)
     console.print(Panel(table, title=f"intrinsic: {item.name}", border_style="cyan"))
     if not short and primary and primary.description:
         print_description_sections(primary.description, full=full)
@@ -768,20 +775,8 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
         table.add_row("mnemonic", item.mnemonic)
         table.add_row("form", display_instruction_form(item.form))
         table.add_row("isa", display_isa(item.isa))
-        table.add_row("summary", item.summary or "-")
-        url = item.metadata.get("url", "")
-        if url:
-            table.add_row("url", canonical_url(url))
-        if item.metadata.get("url-ref"):
-            table.add_row("reference", canonical_url(item.metadata["url-ref"]))
-        if item.metadata.get("intel-sdm-url"):
-            page = item.metadata.get("intel-sdm-page-start", "")
-            url = item.metadata["intel-sdm-url"]
-            table.add_row("intel sdm", f"{url} (page {page})" if page else url)
-        if item.metadata.get("category"):
-            table.add_row("category", item.metadata["category"])
-        if item.metadata.get("cpl"):
-            table.add_row("cpl", item.metadata["cpl"])
+        for key, value in instruction_metadata_rows(item):
+            table.add_row(key, value)
         console.print(Panel(table, title=f"instruction: {display_instruction_title(item)}", border_style="magenta"))
     else:
         print_instruction_metadata(item)

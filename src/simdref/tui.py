@@ -16,21 +16,61 @@ from typing import TYPE_CHECKING
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
-from textual import events, on, work
-from textual.app import App, ComposeResult
-from textual.message import Message
-from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import (
-    Collapsible,
-    Footer,
-    Header,
-    Input,
-    Label,
-    ListItem,
-    ListView,
-    Static,
-)
+try:
+    from textual import events, on, work
+    from textual.app import App, ComposeResult
+    from textual.message import Message
+    from textual.binding import Binding
+    from textual.containers import Horizontal, VerticalScroll
+    from textual.widgets import (
+        Collapsible,
+        Footer,
+        Header,
+        Input,
+        Label,
+        ListItem,
+        ListView,
+        Static,
+    )
+except ImportError:  # pragma: no cover - allows non-TUI test environments
+    class _TextualStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _EventStub:
+        pass
+
+    def on(*args, **kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+    def work(*args, **kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+    class App:  # type: ignore[override]
+        pass
+
+    ComposeResult = object
+    Message = _TextualStub
+    Binding = _TextualStub
+    Horizontal = _TextualStub
+    VerticalScroll = _TextualStub
+    Collapsible = _TextualStub
+    Footer = _TextualStub
+    Header = _TextualStub
+    Input = _TextualStub
+    Input.Changed = _EventStub
+    Input.Submitted = _EventStub
+    Label = _TextualStub
+    ListItem = _TextualStub
+    ListView = _TextualStub
+    ListView.Selected = _EventStub
+    ListView.Highlighted = _EventStub
+    Static = _TextualStub
+    events = _TextualStub()
 
 from simdref.display import (
     _CODE_SECTION_LANG,
@@ -46,6 +86,7 @@ from simdref.display import (
     display_uarch,
     isa_family,
     isa_to_sub_isa,
+    instruction_metadata_rows,
     normalize_isa_token,
     strip_instruction_decorators,
     measurement_rows,
@@ -799,16 +840,10 @@ class SimdrefApp(App):
             meta.add_row("notes", "; ".join(intrinsic.notes))
         linked = self._find_linked_instruction(intrinsic)
         if linked:
-            url = linked.metadata.get("url", "")
-            if url:
-                meta.add_row("url", canonical_url(url))
-            url_ref = linked.metadata.get("url-ref", "")
-            if url_ref:
-                meta.add_row("reference", canonical_url(url_ref))
-            sdm_url = linked.metadata.get("intel-sdm-url", "")
-            if sdm_url:
-                page = linked.metadata.get("intel-sdm-page-start", "")
-                meta.add_row("intel sdm", f"{sdm_url} (page {page})" if page else sdm_url)
+            for key, value in instruction_metadata_rows(linked):
+                if key == "summary":
+                    continue
+                meta.add_row(key, value)
         container.mount(Static(Panel(meta, title=f"intrinsic: {intrinsic.name}", border_style="cyan")))
 
         # Operand table (always visible)
@@ -830,20 +865,10 @@ class SimdrefApp(App):
         meta.add_row("form", display_instruction_form(item.form))
         meta.add_row("isa", display_isa(item.isa))
         meta.add_row("summary", item.summary or "-")
-        url = item.metadata.get("url", "")
-        if url:
-            meta.add_row("url", canonical_url(url))
-        url_ref = item.metadata.get("url-ref", "")
-        if url_ref:
-            meta.add_row("reference", canonical_url(url_ref))
-        sdm_url = item.metadata.get("intel-sdm-url", "")
-        if sdm_url:
-            page = item.metadata.get("intel-sdm-page-start", "")
-            meta.add_row("intel sdm", f"{sdm_url} (page {page})" if page else sdm_url)
-        if item.metadata.get("category"):
-            meta.add_row("category", item.metadata["category"])
-        if item.metadata.get("cpl"):
-            meta.add_row("cpl", item.metadata["cpl"])
+        for key, value in instruction_metadata_rows(item):
+            if key in {"isa"}:
+                continue
+            meta.add_row(key, value)
         container.mount(Static(Panel(meta, title=f"instruction: {display_instruction_form(item.form) or item.mnemonic}", border_style="magenta")))
 
         # Operand table (always visible)

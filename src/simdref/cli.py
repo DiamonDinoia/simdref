@@ -62,8 +62,13 @@ from simdref.storage import (
     search_intrinsic_candidates_from_db,
     sqlite_schema_is_current,
 )
-from simdref.tui import run_tui
 from simdref.web import export_web
+
+
+def _run_tui(*, initial_query: str = ""):
+    from simdref.tui import run_tui
+
+    return run_tui(initial_query=initial_query)
 
 
 class SimdrefGroup(TyperGroup):
@@ -530,7 +535,7 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
 def _smart_lookup(query: str) -> int:
     """Open the TUI pre-filled with the given query."""
     ensure_runtime()
-    return run_tui(initial_query=query)
+    return _run_tui(initial_query=query)
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +671,6 @@ def main() -> int:
         return _smart_lookup(" ".join(argv))
     if not argv:
         ensure_runtime()
-        return run_tui()
+        return _run_tui()
     app()
     return 0

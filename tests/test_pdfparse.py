@@ -80,6 +80,7 @@ def test_extract_sections_from_lines_matches_chars():
 from simdref.pdfparse.intel import (
     INTEL_SDM_URL,
     KNOWN_SECTIONS,
+    INTEL_PDF_SOURCE,
     _instruction_page_ranges,
     _page_might_have_tables,
     _prepare_page_from_pymupdf_dict,
@@ -88,6 +89,7 @@ from simdref.pdfparse.intel import (
     normalize_section_name,
     parse_instruction_title,
 )
+from simdref.pdfparse.registry import get_pdf_source
 from simdref.ingest import _merge_descriptions
 from simdref import ingest
 from simdref.models import InstructionRecord
@@ -267,6 +269,12 @@ def test_load_or_parse_intel_sdm_uses_cache(tmp_path, monkeypatch):
 
     assert first == second
     assert calls == [pdf_path]
+
+
+def test_intel_pdf_source_registered():
+    spec = get_pdf_source("intel-sdm")
+    assert spec.source_id == INTEL_PDF_SOURCE.source_id
+    assert spec.display_name == "Intel SDM"
 
 
 class _FakeTable:

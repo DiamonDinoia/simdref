@@ -19,13 +19,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from pdfminer.pdftypes import resolve1
+import httpx
+
+try:
+    from pdfminer.pdftypes import resolve1
+except ImportError:  # pragma: no cover - exercised in minimal test envs
+    def resolve1(value):
+        return value
 
 from simdref.pdfparse.base import chars_to_lines, extract_sections_from_lines
+from simdref.pdfparse.registry import register_pdf_source
+from simdref.pdfparse.types import PdfDescriptionPayload, PdfEnrichmentResult, PdfSourceSpec
+from simdref.storage import DATA_DIR
 
 log = logging.getLogger(__name__)
 
 INTEL_SDM_URL = "https://cdrdv2.intel.com/v1/dl/getContent/671200"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+LOCAL_INTEL_SDM_PDFS = [
+    _REPO_ROOT / "vendor" / "intel" / "intel-sdm.pdf",
+]
+INTEL_SDM_CACHE_PATH = DATA_DIR / "intel-sdm-descriptions.msgpack"
+INTEL_SDM_CACHE_VERSION = 1
+INTEL_SDM_SIGNATURE_PATHS = (
+    Path(__file__).resolve(),
+    Path(__file__).resolve().parent / "base.py",
+)
 
 # Title pattern: ALL-CAPS mnemonic (with optional / separators) before em-dash.
 _TITLE_RE = re.compile(r"^([A-Z][A-Z0-9/_\s]{0,80})\s*\u2014\s*(.+)")
@@ -367,7 +386,7 @@ def parse_intel_sdm(
     pdf_path: Path,
     *,
     status: Callable[[str], None] | None = None,
-) -> dict[str, dict[str, object]]:
+) -> PdfEnrichmentResult:
     """Parse the Intel SDM PDF and return per-mnemonic description payloads.
 
     Returns a dict mapping uppercase mnemonic to a payload with:
@@ -447,7 +466,7 @@ def parse_intel_sdm(
 
     # Phase 2: assemble sections from cached per-page lines.
     extract_task = progress.add_task("Extracting descriptions", total=len(title_pages)) if interactive_progress else None
-    result: dict[str, dict[str, object]] = {}
+    result: dict[str, PdfDescriptionPayload] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
         page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
 
@@ -520,11 +539,12 @@ def parse_intel_sdm(
             if cleaned:
                 sections[canonical] = cleaned
 
-        payload = {
-            "sections": sections,
-            "page_start": page_start + 1,
-            "page_end": page_end,
-        }
+        payload = PdfDescriptionPayload(
+            sections=sections,
+            source_url=INTEL_SDM_URL,
+            page_start=page_start + 1,
+            page_end=page_end,
+        )
         for part in mnemonic.split("/"):
             part = part.strip()
             if part:
@@ -542,4 +562,55 @@ def parse_intel_sdm(
     log.info("extracted descriptions for %d mnemonics", len(result))
     if status is not None:
         status(f"Extracted SDM descriptions for {len(result)} mnemonic variants")
-    return result
+    return PdfEnrichmentResult(
+        descriptions=result,
+        fallback_page_count=fallback_pages,
+        stats={"mnemonic_variants": len(result)},
+    )
+
+
+def find_intel_sdm_pdf(*, offline: bool = False) -> Path | None:
+    """Locate or download the Intel SDM PDF."""
+    if offline:
+        return None
+    for pdf_path in LOCAL_INTEL_SDM_PDFS:
+        if pdf_path.exists():
+            return pdf_path
+    try:
+        from rich.progress import BarColumn, DownloadColumn, Progress, TransferSpeedColumn
+
+        dest = LOCAL_INTEL_SDM_PDFS[0]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with httpx.Client(follow_redirects=True, timeout=120.0) as client:
+            with client.stream("GET", INTEL_SDM_URL) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0))
+                with Progress(
+                    "[progress.description]{task.description}",
+                    BarColumn(),
+                    DownloadColumn(),
+                    TransferSpeedColumn(),
+                ) as progress:
+                    task = progress.add_task("Downloading Intel SDM PDF", total=total or None)
+                    with open(dest, "wb") as fh:
+                        for chunk in resp.iter_bytes(65536):
+                            fh.write(chunk)
+                            progress.advance(task, len(chunk))
+        return dest
+    except Exception:
+        return None
+
+
+INTEL_PDF_SOURCE = PdfSourceSpec(
+    source_id="intel-sdm",
+    display_name="Intel SDM",
+    source_url=INTEL_SDM_URL,
+    local_candidates=tuple(LOCAL_INTEL_SDM_PDFS),
+    cache_path=INTEL_SDM_CACHE_PATH,
+    cache_version=INTEL_SDM_CACHE_VERSION,
+    signature_paths=INTEL_SDM_SIGNATURE_PATHS,
+    parser=parse_intel_sdm,
+    find_source=find_intel_sdm_pdf,
+)
+
+register_pdf_source(INTEL_PDF_SOURCE)

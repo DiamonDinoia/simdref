@@ -4,149 +4,89 @@
 
 ## Goal
 
-Add rich instruction descriptions (Description, Operation pseudocode, Exceptions, Intrinsic Equivalents) parsed from the Intel SDM PDF to simdref. Display them in an expandable/scrollable pager view in the CLI and as collapsible sections in the web UI. Support a `--short`/`-s` flag to skip descriptions.
+Add rich instruction descriptions parsed from architecture PDFs to simdref without baking any one vendor into the generic ingest flow. Intel SDM remains the first implementation, but new sources should only need one parser module plus a registry entry.
 
 ## Architecture
 
-Parse the Intel SDM PDF with pdfplumber during `simdref update`. Extract per-instruction sections by detecting font-size-based headings. Store extracted sections as a `dict[str, str]` on `InstructionRecord.description`. The raw PDF is never redistributed; only the post-processed catalog ships via GitHub Releases.
+`simdref.pdfparse` now exposes a source-neutral registry:
 
-The parsing module (`src/simdref/pdfparse/`) is designed to be ISA-agnostic at the base layer, with ISA-specific subclasses (starting with Intel, extensible to ARM/RISC-V).
+- `PdfSourceSpec`: source id, display name, canonical URL, local candidates, cache metadata, parser callback, source locator
+- `PdfDescriptionPayload`: section text plus source URL and page range
+- `PdfEnrichmentResult`: mnemonic payload map plus parser stats
 
-## Data Model Change
+The Intel implementation lives behind this interface. Generic ingest code calls `ingest_pdf.load_or_parse_pdf_source()` and never reaches into Intel-specific parsing logic directly.
 
-`InstructionRecord` gains a `description` field:
+## Data Model
+
+`InstructionRecord` keeps merged section text in `description` and now also carries normalized PDF references in `pdf_refs`:
 
 ```python
 @dataclass(slots=True)
 class InstructionRecord:
-    # ... existing fields ...
     description: dict[str, str] = field(default_factory=dict)
-    # Keys: "Description", "Operation", "Flags Affected",
-    #        "Exceptions", "Intrinsic Equivalents"
+    pdf_refs: list[dict[str, str]] = field(default_factory=list)
 ```
 
-The existing `summary` field (one-liner) is unchanged and used for search results / `--short` mode.
+Each `pdf_refs` entry includes:
 
-## PDF Parsing Pipeline
+- `source_id`
+- `label`
+- `url`
+- `page_start`
+- `page_end`
 
-### Intel SDM Structure (verified via pdfplumber analysis)
+Legacy `intel-sdm-*` metadata keys remain readable and are still emitted for compatibility during migration.
 
-- **5342 pages total**, instruction reference in chapters 3-6 of Volume 2 (~pages 700-2900)
-- Each instruction starts on a new page with a **size-12 font title** containing `—` (em-dash)
-  - Example: `ADDPS—Add Packed Single Precision Floating-Point Values`
-- **Section headers** are **size-10 font** (`NeoSansIntelMedium`):
-  `Description`, `Operation`, `Intel C/C++ Compiler Intrinsic Equivalent`, `Exceptions`, `Numeric Exceptions`, `Other Exceptions`
-- **Body text** is `Verdana:9.0`
-- Instructions span 1-6 pages; next instruction's title marks the boundary
-- Footer line matches pattern: `MNEMONIC—Summary Vol. 2X N-NN`
+## Intel Parsing Pipeline
 
-### Parsing Strategy
+The Intel source keeps the current behavior but encapsulates it inside `pdfparse/intel.py`:
 
-1. **Single pass** over instruction reference pages (~686-2900): detect title pages by font size >= 12 + regex `^[A-Z][A-Z0-9/\s]{1,60}—.+` (all-caps mnemonic before em-dash). Filter out chapter/section headings.
-2. **Group pages** into instruction ranges: `[title_page_i, title_page_i+1)`
-3. **Extract sections** within each range by detecting size-10 headings
-4. **Accumulate body text** (Verdana:9.0) under each heading, stripping footer lines
-5. **Map mnemonic** from title (text before `—`) to existing `InstructionRecord` by mnemonic
+1. Use PDF outlines to narrow parsing to instruction-reference ranges when possible.
+2. Run a PyMuPDF fast path to extract title/body lines.
+3. Fall back to pdfplumber on pages where the fast path yields no useful headings or no body text.
+4. Normalize section headings and preserve indentation for pseudocode sections.
+5. Return `PdfEnrichmentResult` for generic merge into instruction records.
 
-### Mnemonic Matching
+## Cache Invalidation
 
-The PDF title mnemonic (e.g., `ADDPS`, `VADDPS`) maps to potentially many `InstructionRecord`s that share the same base mnemonic. All variants of that mnemonic share the same description sections. Matching is case-insensitive on the mnemonic prefix.
+`ingest_pdf.load_or_parse_pdf_source()` invalidates cached parse results when any of these change:
 
-## Download & Caching
+- cache version
+- parser signature derived from source files
+- canonical source URL
+- source PDF SHA-256
 
-- **Stable URL:** `https://cdrdv2.intel.com/v1/dl/getContent/671200` (no auth, ~25MB)
-- **Local cache:** `vendor/intel/intel-sdm.pdf` (gitignored, never committed)
-- **Fallback order:** local vendor PDF -> download from Intel CDN -> skip (descriptions empty)
-- The PDF download is optional; if it fails, `update` still succeeds with empty descriptions
+This keeps source-specific cache behavior out of generic catalog assembly.
 
-## CLI Changes
+## Rendering / Export
 
-### Pager Output
-
-Rich's `console.pager()` context manager pipes output through the system pager (`less -R` on Linux/macOS, `more` on Windows). Applied when rendering detailed views (intrinsic or instruction).
-
-Cross-platform: Rich handles pager detection automatically.
-
-### `--short` / `-s` Flag
-
-Global flag that suppresses description sections in detail views. Only shows the one-line summary + performance tables.
-
-```
-simdref ADDPS           # full view with pager (description + operation + perf)
-simdref -s ADDPS        # short: summary + perf tables only, no pager
-simdref --short ADDPS   # same as -s
-```
-
-### Display Changes
-
-`render_instruction_sections()` and `render_intrinsic()` gain a `short: bool` parameter. When `short=False` (default), description sections render as Rich Panels below the metadata, each with a section title.
-
-## Web UI Changes
-
-### Expandable Description Sections
-
-In `renderInstructionDetail()` and `renderIntrinsicDetail()` in `app.js`, add collapsible `<details>` elements for each description section, matching the existing `meas-group` pattern used for performance data:
-
-```html
-<details class="desc-section" open>
-  <summary>Description</summary>
-  <div class="desc-body">...</div>
-</details>
-<details class="desc-section">
-  <summary>Operation</summary>
-  <pre class="desc-code">...</pre>
-</details>
-```
-
-The Description section defaults to open; Operation and others default to closed.
-
-### Data Flow
-
-- `description` dict included in detail-chunks JSON (instruction details)
-- `description` dict included in intrinsic-details JSON  
-- Search index unchanged (uses `summary` one-liner)
-
-## Storage Changes
-
-### SQLite Schema
-
-Bump `SQLITE_SCHEMA_VERSION` to `"4"`. The `description` field is stored inside the JSON `payload` column (no new columns needed). The schema version bump triggers automatic rebuild.
-
-### Backward Compatibility
-
-`InstructionRecord.from_dict()` (via `Catalog.from_dict()`) already uses `**item`, so old catalogs without `description` will default to `{}` via `field(default_factory=dict)`.
+- CLI, TUI, and web export consume normalized `pdf_refs`
+- shared helpers format PDF references instead of rebuilding Intel-specific strings inline
+- search behavior stays unchanged; PDF-derived text is still kept out of ranking
 
 ## File Map
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/simdref/pdfparse/__init__.py` | Create | Package init, public API |
-| `src/simdref/pdfparse/base.py` | Create | Base PDF section extractor (font-based heading detection) |
-| `src/simdref/pdfparse/intel.py` | Create | Intel SDM-specific: title pattern, section names, page range |
-| `src/simdref/models.py` | Modify | Add `description: dict[str, str]` to `InstructionRecord` |
-| `src/simdref/ingest.py` | Modify | Add Intel SDM PDF fetch + parse + merge descriptions |
-| `src/simdref/storage.py` | Modify | Bump schema version to 4 |
-| `src/simdref/display.py` | Modify | Render description sections, pager support |
-| `src/simdref/cli.py` | Modify | Add `--short`/`-s` flag, pager wrapping |
-| `src/simdref/web.py` | Modify | Include `description` in detail chunks |
-| `src/simdref/manpages.py` | Modify | Use description sections in man pages |
-| `src/simdref/templates/app.js` | Modify | Render expandable description sections |
-| `src/simdref/templates/style.css` | Modify | Style for `.desc-section`, `.desc-body`, `.desc-code` |
-| `pyproject.toml` | Modify | Add `pdfplumber` dependency |
-| `.gitignore` | Modify | Add `vendor/intel/*.pdf` pattern |
-| `tests/test_pdfparse.py` | Create | Tests for PDF parsing |
-| `tests/test_description_display.py` | Create | Tests for description rendering |
+| File | Purpose |
+|------|---------|
+| `src/simdref/pdfparse/types.py` | Source-neutral PDF enrichment dataclasses |
+| `src/simdref/pdfparse/registry.py` | PDF source registration and lookup |
+| `src/simdref/pdfparse/intel.py` | Intel SDM parser implementation + registration |
+| `src/simdref/ingest_pdf.py` | Generic PDF cache/load/merge dispatch |
+| `src/simdref/ingest_sources.py` | Upstream/local/fixture acquisition |
+| `src/simdref/ingest_catalog.py` | Parse/link/assemble catalog records |
+| `src/simdref/pdfrefs.py` | Shared normalized PDF ref helpers |
+| `src/simdref/ingest.py` | Stable public entrypoints and compatibility wrappers |
 
 ## Testing Strategy
 
-- **Unit tests for PDF parsing:** Use a fixture PDF (a few pages extracted from the Intel SDM, or a synthetic PDF created with reportlab) to test section extraction
-- **Integration test:** Verify that `build_catalog()` produces `InstructionRecord`s with populated `description` when PDF is available
-- **Display tests:** Verify `render_instruction_sections(short=True)` omits description, `short=False` includes it
-- **Web export tests:** Verify description appears in detail chunks JSON
+- registry lookup and cache dispatch tests
+- Intel parser tests covering fast path and page-local fallback routing
+- metadata normalization tests for `pdf_refs` plus legacy Intel metadata loading
+- CLI/TUI/web export tests verifying normalized PDF ref rendering
+- integration coverage for full local builds with Intel SDM enabled
 
-## Out of Scope (Future)
+## Out of Scope
 
-- ARM Architecture Reference Manual parsing
-- RISC-V ISA manual parsing
-- Table extraction from opcode encoding tables (kept as-is from uops.info)
-- SVG figure extraction from PDF
+- ARM or RISC-V parser implementations
+- search/ranking changes based on PDF text
+- figure or table extraction beyond current plain-text handling

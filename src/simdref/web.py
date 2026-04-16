@@ -35,6 +35,7 @@ from simdref.display import (
     strip_instruction_decorators,
 )
 from simdref.perf import best_numeric, latency_cycle_values, variant_perf_summary
+from simdref.pdfrefs import normalize_pdf_refs
 
 
 def _load_template() -> str:
@@ -224,6 +225,7 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
                 k: v for k, v in item.metadata.items()
                 if k in {"url", "url-ref", "category", "cpl", "intel-sdm-url", "intel-sdm-page-start", "intel-sdm-page-end"}
             },
+            "pdf_refs": normalize_pdf_refs(item.pdf_refs, item.metadata),
             "linked_intrinsics": item.linked_intrinsics,
             "measurements": _web_measurements(item),
         }

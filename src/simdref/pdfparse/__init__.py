@@ -1,6 +1,13 @@
-"""PDF parsing pipeline for extracting instruction descriptions.
+"""PDF parsing pipeline for extracting instruction descriptions."""
 
-Provides font-based section extraction from architecture reference PDFs.
-ISA-specific modules (e.g., intel.py) define title patterns and section
-names for each vendor's manual format.
-"""
+from simdref.pdfparse.registry import get_pdf_source, iter_pdf_sources, register_pdf_source
+from simdref.pdfparse.types import PdfDescriptionPayload, PdfEnrichmentResult, PdfSourceSpec
+
+__all__ = [
+    "PdfDescriptionPayload",
+    "PdfEnrichmentResult",
+    "PdfSourceSpec",
+    "get_pdf_source",
+    "iter_pdf_sources",
+    "register_pdf_source",
+]

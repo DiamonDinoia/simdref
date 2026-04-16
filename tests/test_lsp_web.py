@@ -37,6 +37,13 @@ class LspWebTests(unittest.TestCase):
 
     def test_export_web_produces_expected_files(self):
         catalog = build_catalog(offline=True)
+        catalog.instructions[0].pdf_refs = [{
+            "source_id": "intel-sdm",
+            "label": "Intel SDM",
+            "url": "https://example.com/intel-sdm.pdf#page=42",
+            "page_start": "42",
+            "page_end": "43",
+        }]
         catalog.instructions[0].metadata["intel-sdm-url"] = "https://example.com/intel-sdm.pdf#page=42"
         catalog.instructions[0].metadata["intel-sdm-page-start"] = "42"
         catalog.instructions[0].metadata["intel-sdm-page-end"] = "43"
@@ -77,6 +84,10 @@ class LspWebTests(unittest.TestCase):
                     self.assertIn("measurements", detail)
                     self.assertIn("operand_details", detail)
                     metadata = detail.get("metadata", {})
+                    pdf_refs = detail.get("pdf_refs", [])
+                    if pdf_refs:
+                        self.assertEqual(pdf_refs[0]["source_id"], "intel-sdm")
+                        self.assertEqual(pdf_refs[0]["page_start"], "42")
                     if metadata.get("intel-sdm-url"):
                         saw_sdm = True
                         self.assertEqual(metadata["intel-sdm-url"], "https://example.com/intel-sdm.pdf#page=42")

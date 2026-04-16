@@ -504,7 +504,7 @@ function renderIntrinsicDetail(item, detail) {
         ${detail && detail.notes && detail.notes.length ? `<dt>Notes</dt><dd>${esc(detail.notes.join("; "))}</dd>` : ""}
         ${detail && detail._url ? `<dt>uops.info</dt><dd><a href="${esc(detail._url)}" target="_blank" rel="noreferrer">${esc(detail._url)}</a></dd>` : ""}
         ${detail && detail._urlRef ? `<dt>Reference</dt><dd><a href="${esc(detail._urlRef)}" target="_blank" rel="noreferrer">${esc(detail._urlRef)}</a></dd>` : ""}
-        ${detail && detail._sdmUrl ? `<dt>Intel SDM</dt><dd><a href="${esc(detail._sdmUrl)}" target="_blank" rel="noreferrer">Open PDF${detail._sdmPageStart ? ` (page ${esc(detail._sdmPageStart)})` : ""}</a></dd>` : ""}
+        ${detail && Array.isArray(detail._pdfRefs) ? detail._pdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("") : ""}
       </dl>
     </section>
     <section class="section">
@@ -538,6 +538,13 @@ function renderInstructionDetail(item, detail) {
   const measurements = d.measurements || [];
   const operands = d.operand_details || [];
   const meta = d.metadata || {};
+  const pdfRefs = Array.isArray(d.pdf_refs) ? d.pdf_refs : (meta["intel-sdm-url"] ? [{
+    source_id: "intel-sdm",
+    label: "Intel SDM",
+    url: meta["intel-sdm-url"],
+    page_start: meta["intel-sdm-page-start"] || "",
+    page_end: meta["intel-sdm-page-end"] || "",
+  }] : []);
 
   return `
     <div class="detail-head">
@@ -565,7 +572,7 @@ function renderInstructionDetail(item, detail) {
         <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
         ${meta.url ? `<dt>uops.info</dt><dd><a href="${esc(canonUrl(meta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta.url))}</a></dd>` : ""}
         ${meta["url-ref"] ? `<dt>Reference</dt><dd><a href="${esc(canonUrl(meta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta["url-ref"]))}</a></dd>` : ""}
-        ${meta["intel-sdm-url"] ? `<dt>Intel SDM</dt><dd><a href="${esc(meta["intel-sdm-url"])}" target="_blank" rel="noreferrer">Open PDF${meta["intel-sdm-page-start"] ? ` (page ${esc(meta["intel-sdm-page-start"])})` : ""}</a></dd>` : ""}
+        ${pdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("")}
       </dl>
     </section>
     <section class="section">
@@ -619,8 +626,7 @@ async function renderDetail(entry) {
         detail._instrDescription = instrDetail.description || {};
         detail._url = instrDetail.metadata ? canonUrl(instrDetail.metadata.url) : "";
         detail._urlRef = instrDetail.metadata ? canonUrl(instrDetail.metadata["url-ref"]) : "";
-        detail._sdmUrl = instrDetail.metadata ? instrDetail.metadata["intel-sdm-url"] || "" : "";
-        detail._sdmPageStart = instrDetail.metadata ? instrDetail.metadata["intel-sdm-page-start"] || "" : "";
+        detail._pdfRefs = instrDetail.pdf_refs || [];
       }
     }
     if (!detail) {
@@ -628,8 +634,7 @@ async function renderDetail(entry) {
       detail = intrDetails[entry.item.name] || entry.item;
       detail._measurements = [];
       detail._operands = [];
-      detail._sdmUrl = "";
-      detail._sdmPageStart = "";
+      detail._pdfRefs = [];
     }
     detailNode.innerHTML = renderIntrinsicDetail(entry.item, detail);
   } else {
