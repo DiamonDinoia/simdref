@@ -105,6 +105,8 @@ the scoring pipeline re-ranks them.
   - https://arm-software.github.io/acle/neon_intrinsics/advsimd.html
 - Arm instructions: official Arm A64/AArch64 instruction docs:
   - https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions
+  - vendored local instruction imports can also consume the Arm A-profile
+    machine-readable BSD archive when placed in `vendor/arm/`
 
 ## ISA filtering
 

@@ -105,8 +105,10 @@ The default `update` path downloads pre-built data from GitHub Releases using
 schema/version-compatible tags when available, with bundled fixtures as the
 safe fallback. `simdref update --build-local` refreshes the vendored Arm
 intrinsics JSON cache and then performs a full local rebuild, falling back to
-the cached local vendor files if the refresh fails. Vendor archives can also be
-placed in `vendor/`.
+the cached local vendor files if the refresh fails. Arm instruction imports can
+also read a vendored `vendor/arm/a64_instructions.json` or an
+`AARCHMRS_BSD*.tar.gz` archive placed under `vendor/arm/`. Bundled fixtures
+remain the offline fallback.
 
 ## Architecture
 

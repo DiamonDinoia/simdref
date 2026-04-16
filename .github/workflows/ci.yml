@@ -35,6 +35,9 @@ jobs:
       - name: Run Python test suite
         run: python -m pytest tests
 
+      - name: Run offline source validation
+        run: python tools/validate_sources.py --offline
+
       - name: Check Python syntax
         run: python -m py_compile src/simdref/cli.py src/simdref/display.py src/simdref/ingest.py src/simdref/pdfparse/base.py src/simdref/pdfparse/intel.py src/simdref/tui.py src/simdref/web.py
 
@@ -77,6 +80,10 @@ jobs:
 
       - name: Build runtime (${{ matrix.label }})
         run: ${{ matrix.build_command }}
+
+      - name: Validate upstream source ingestion (${{ matrix.label }})
+        if: matrix.id == 'local-sdm'
+        run: python tools/validate_sources.py
 
       - name: Inspect runtime (${{ matrix.label }})
         run: simdref doctor

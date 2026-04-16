@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import io
 import re
+import tarfile
 import zipfile
 from datetime import UTC, datetime
 from importlib import resources
@@ -59,6 +60,11 @@ LOCAL_ARM_ACLE_ARCHIVES = [
 ]
 LOCAL_ARM_A64_JSONS = [
     _REPO_ROOT / "vendor" / "arm" / "a64_instructions.json",
+]
+LOCAL_ARM_A64_ARCHIVES = [
+    _REPO_ROOT / "vendor" / "arm" / "AARCHMRS_BSD.tar.gz",
+    _REPO_ROOT / "vendor" / "arm" / "aarchmrs_bsd.tar.gz",
+    _REPO_ROOT / "vendor" / "arm" / "aarchmrs-bsd.tar.gz",
 ]
 
 
@@ -232,6 +238,24 @@ def _extract_zip_text(zf: zipfile.ZipFile, suffix: str) -> str:
     raise KeyError(suffix)
 
 
+def _extract_zip_text_by_match(zf: zipfile.ZipFile, predicate) -> tuple[str, str]:
+    for name in zf.namelist():
+        if predicate(name):
+            return zf.read(name).decode("utf-8", "replace"), name
+    raise KeyError("zip member")
+
+
+def _extract_tar_text_by_match(tf: tarfile.TarFile, predicate) -> tuple[str, str]:
+    for member in tf.getmembers():
+        if not member.isfile() or not predicate(member.name):
+            continue
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            continue
+        return extracted.read().decode("utf-8", "replace"), member.name
+    raise KeyError("tar member")
+
+
 def _read_local_arm_acle_archive() -> tuple[str, SourceVersion] | None:
     for archive_path in LOCAL_ARM_ACLE_ARCHIVES:
         if not archive_path.exists():
@@ -268,6 +292,46 @@ def _read_local_arm_intrinsics_bundle() -> tuple[str, SourceVersion] | None:
         fetched_at=now_iso(),
         url=str(LOCAL_ARM_INTRINSICS_JSONS[0].parent),
     )
+
+
+def _looks_like_arm_instruction_json(path: str) -> bool:
+    lowered = path.casefold()
+    if not lowered.endswith(".json"):
+        return False
+    return (
+        "instruction" in lowered
+        and "a64" in lowered
+        and "register" not in lowered
+        and "system" not in lowered
+    )
+
+
+def _arm_instruction_bundle_payload(instructions_json: str) -> str:
+    return json.dumps(
+        {
+            "format": "arm-aarchmrs-instructions-v1",
+            "instructions_json": instructions_json,
+        }
+    )
+
+
+def _read_local_arm_instruction_archive() -> tuple[str, SourceVersion] | None:
+    for archive_path in LOCAL_ARM_A64_ARCHIVES:
+        if not archive_path.exists():
+            continue
+        if archive_path.suffix == ".zip":
+            with zipfile.ZipFile(archive_path) as zf:
+                payload, member_name = _extract_zip_text_by_match(zf, _looks_like_arm_instruction_json)
+        else:
+            with tarfile.open(archive_path, "r:*") as tf:
+                payload, member_name = _extract_tar_text_by_match(tf, _looks_like_arm_instruction_json)
+        return _arm_instruction_bundle_payload(payload), SourceVersion(
+            source="arm-a64",
+            version=f"archive:{archive_path.name}:{member_name}",
+            fetched_at=now_iso(),
+            url=str(archive_path),
+        )
+    return None
 
 
 def refresh_local_arm_intrinsics_bundle() -> list[Path]:
@@ -354,4 +418,7 @@ def fetch_arm_a64_data(offline: bool = False) -> tuple[str, SourceVersion]:
     local = _read_local_text(LOCAL_ARM_A64_JSONS, "arm-a64", "local-json")
     if local is not None:
         return local
+    archive = _read_local_arm_instruction_archive()
+    if archive is not None:
+        return archive
     return fetch_arm_a64_data(offline=True)

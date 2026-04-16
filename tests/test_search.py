@@ -13,6 +13,7 @@ from simdref.display import (
 )
 from simdref.queries import instruction_rows_for_intrinsic
 from simdref.ingest import _instruction_summary, _normalize_operand_xtype, build_catalog
+from simdref.arm_instructions import parse_arm_instruction_payload
 from simdref.ingest_catalog import parse_arm_intrinsics_payload
 from simdref.search import find_instruction, find_intrinsic, search_catalog
 from simdref.storage import build_sqlite, open_db, save_catalog
@@ -257,6 +258,50 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(sve.header, "arm_sve.h")
         self.assertIn("Required streaming features", sve.doc_sections)
         self.assertEqual(sve.metadata["supported_architectures"], "A64")
+
+    def test_parse_arm_aarchmrs_instruction_bundle(self):
+        payload = {
+            "format": "arm-aarchmrs-instructions-v1",
+            "instructions_json": """{
+              "instructions": [
+                {
+                  "name": "ADD",
+                  "operands": "Zd.S, Pg/M, Zn.S, Zm.S",
+                  "brief": "Add predicated vectors",
+                  "category": "SVE arithmetic",
+                  "section": "SVE Instructions",
+                  "url": "https://developer.arm.com/documentation/ddi0602/latest/SVE-Instructions/ADD--vectors--predicated---Add-vectors--predicated--",
+                  "descriptions": {
+                    "Description": "Adds predicated SVE lanes.",
+                    "Operation": "Zd = predicated_add(Zn, Zm)"
+                  },
+                  "aliases": ["ADD (vectors, predicated)"]
+                },
+                {
+                  "base_instruction": "LDP",
+                  "operands": "Xt1, Xt2, [Xn|SP{, #imm}]",
+                  "summary": "Load pair of registers",
+                  "section": "Base Instructions",
+                  "url": "https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions/LDP--Load-pair-of-registers-"
+                }
+              ]
+            }""",
+        }
+
+        records = parse_arm_instruction_payload(json.dumps(payload))
+        sve_add = next(item for item in records if item.mnemonic == "ADD")
+        ldp = next(item for item in records if item.mnemonic == "LDP")
+
+        self.assertEqual(sve_add.form, "ADD (ZD.S, PG/M, ZN.S, ZM.S)")
+        self.assertEqual(sve_add.isa, ["SVE"])
+        self.assertIn("Description", sve_add.description)
+        self.assertIn("predicated SVE lanes", sve_add.description["Description"])
+        self.assertEqual(sve_add.metadata["section"], "SVE Instructions")
+        self.assertIn("ADD (vectors, predicated)", sve_add.aliases)
+
+        self.assertEqual(ldp.isa, ["A64"])
+        self.assertEqual(ldp.metadata["section"], "Base Instructions")
+        self.assertEqual(ldp.summary, "Load pair of registers.")
 
 
 class TuiSearchFilterTests(unittest.TestCase):

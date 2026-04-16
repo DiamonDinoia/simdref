@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urljoin
 
+from simdref.arm_instructions import parse_arm_instruction_payload
 from simdref.ingest_pdf import find_pdf_source_path, load_or_parse_pdf_source, merge_pdf_enrichment
 from simdref.ingest_sources import (
     fetch_arm_a64_data,
@@ -879,47 +880,6 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
                 operand_details=operand_details,
                 metadata=metadata,
                 arch_details=arch_details,
-            )
-        )
-    return records
-
-
-def parse_arm_instruction_payload(text: str) -> list[InstructionRecord]:
-    payload = json.loads(text)
-    candidates = payload.get("instructions") if isinstance(payload, dict) else payload
-    records: list[InstructionRecord] = []
-    for item in candidates or []:
-        mnemonic = _intern_small(str(item.get("mnemonic") or "").strip().upper())
-        if not mnemonic:
-            continue
-        form = str(item.get("form") or "").strip()
-        summary = str(item.get("summary") or "").strip()
-        metadata = {
-            key: str(value).strip()
-            for key, value in (item.get("metadata") or {}).items()
-            if str(value).strip()
-        }
-        if url := str(item.get("url") or "").strip():
-            metadata.setdefault("url", url)
-        records.append(
-            InstructionRecord(
-                mnemonic=mnemonic,
-                form=form,
-                summary=summary or _instruction_summary(mnemonic, "", [], architecture="arm"),
-                architecture="arm",
-                isa=_normalize_isa(item.get("isa") or []),
-                operand_details=[
-                    {key: str(value).strip() for key, value in operand.items() if str(value).strip()}
-                    for operand in item.get("operand_details") or []
-                ],
-                metadata=metadata,
-                aliases=[str(value).strip() for value in item.get("aliases") or [] if str(value).strip()],
-                description={
-                    str(key): str(value).strip()
-                    for key, value in (item.get("description") or {}).items()
-                    if str(value).strip()
-                },
-                source="arm-a64",
             )
         )
     return records
