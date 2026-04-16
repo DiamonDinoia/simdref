@@ -109,6 +109,26 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("doc_sections", intr_details["vaddq_u8"])
             self.assertIn("ACLE Documentation", intr_details["vaddq_u8"]["doc_sections"])
 
+    def test_export_web_preserves_x86_detail_sections_for_rendering(self):
+        catalog = build_catalog(offline=True)
+        x86_instruction = next(item for item in catalog.instructions if item.architecture == "x86" and item.mnemonic == "VPEXPANDD")
+        x86_instruction.description = {
+            "Description": "Expand packed integers under writemask control.",
+            "Operation": "FOR j := 0 TO KL-1",
+            "Exceptions": "Type 11 class exceptions.",
+            "Intrinsic Equivalents": "_mm512_maskz_expandloadu_epi32",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            export_web(catalog, Path(tmpdir))
+            chunk = json.loads((Path(tmpdir) / "detail-chunks" / "VPE.json").read_text())
+            detail = chunk[x86_instruction.db_key]
+            self.assertIn("description", detail)
+            self.assertIn("Description", detail["description"])
+            self.assertIn("Operation", detail["description"])
+            self.assertIn("Exceptions", detail["description"])
+            self.assertIn("Intrinsic Equivalents", detail["description"])
+            self.assertTrue(detail["measurements"])
+
 
 if __name__ == "__main__":
     unittest.main()

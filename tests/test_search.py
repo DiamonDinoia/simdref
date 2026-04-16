@@ -15,7 +15,8 @@ from simdref.queries import instruction_rows_for_intrinsic
 from simdref.ingest import _instruction_summary, _normalize_operand_xtype, build_catalog
 from simdref.arm_instructions import parse_arm_instruction_payload
 from simdref.ingest_catalog import parse_arm_intrinsics_payload
-from simdref.search import find_instruction, find_intrinsic, search_catalog
+from simdref.models import InstructionRecord, IntrinsicRecord
+from simdref.search import find_instruction, find_intrinsic, search_catalog, search_records
 from simdref.storage import build_sqlite, open_db, save_catalog
 from simdref.tui import _fts_search
 
@@ -152,6 +153,93 @@ class SearchTests(unittest.TestCase):
         )
         self.assertEqual(summary, "Masked Add Packed Single Precision Floating-Point Values.")
 
+    def test_maskz_query_prefers_maskz_intrinsic(self):
+        catalog = build_catalog(offline=True)
+        results = search_catalog(catalog, "_mm512_maskz_expandloadu_epi32")
+        self.assertEqual(results[0].kind, "intrinsic")
+        self.assertEqual(results[0].title, "_mm512_maskz_expandloadu_epi32")
+
+    def test_masked_query_prefers_masked_family_variant(self):
+        intrinsics = [
+            IntrinsicRecord(
+                name="_mm512_mask_add_ps",
+                signature="__m512 _mm512_mask_add_ps(__m512 src, __mmask16 k, __m512 a, __m512 b)",
+                description="Masked add.",
+                header="immintrin.h",
+                isa=["AVX512F"],
+                instructions=["VADDPS (ZMM{k}, ZMM, ZMM)"],
+            ),
+            IntrinsicRecord(
+                name="_mm512_maskz_add_ps",
+                signature="__m512 _mm512_maskz_add_ps(__mmask16 k, __m512 a, __m512 b)",
+                description="Mask-zero add.",
+                header="immintrin.h",
+                isa=["AVX512F"],
+                instructions=["VADDPS (ZMM{k}{z}, ZMM, ZMM)"],
+            ),
+        ]
+        instructions = [
+            InstructionRecord(
+                mnemonic="VADDPS",
+                form="VADDPS (ZMM{k}, ZMM, ZMM)",
+                summary="Masked add packed single precision floating-point values.",
+                isa=["AVX512F"],
+            ),
+            InstructionRecord(
+                mnemonic="VADDPS",
+                form="VADDPS (ZMM{k}{z}, ZMM, ZMM)",
+                summary="Mask-zero add packed single precision floating-point values.",
+                isa=["AVX512F"],
+            ),
+        ]
+        results = search_records(intrinsics, instructions, "_mm512_maskz_add_ps", limit=3)
+        self.assertEqual(results[0].kind, "intrinsic")
+        self.assertEqual(results[0].title, "_mm512_maskz_add_ps")
+
+    def test_mnemonic_query_prefers_instruction_over_intrinsic_collisions(self):
+        intrinsics = [
+            IntrinsicRecord(
+                name="_addcarryx_u64",
+                signature="unsigned char _addcarryx_u64(...)",
+                description="Carry add helper.",
+                header="immintrin.h",
+                isa=["ADX"],
+                instructions=["ADCX (R64, R64)"],
+            ),
+        ]
+        instructions = [
+            InstructionRecord(
+                mnemonic="ADCX",
+                form="ADCX (R64, R64)",
+                summary="Unsigned integer add with carry.",
+                isa=["ADX"],
+            ),
+        ]
+        results = search_records(intrinsics, instructions, "adcx", limit=2)
+        self.assertEqual(results[0].kind, "instruction")
+
+    def test_scalar_vector_collision_prefers_requested_width(self):
+        intrinsics = [
+            IntrinsicRecord(
+                name="_mm_add_ps",
+                signature="__m128 _mm_add_ps(__m128 a, __m128 b)",
+                description="128-bit add.",
+                header="xmmintrin.h",
+                isa=["SSE"],
+                instructions=["ADDPS (XMM, XMM)"],
+            ),
+            IntrinsicRecord(
+                name="_mm256_add_ps",
+                signature="__m256 _mm256_add_ps(__m256 a, __m256 b)",
+                description="256-bit add.",
+                header="immintrin.h",
+                isa=["AVX"],
+                instructions=["VADDPS (YMM, YMM, YMM)"],
+            ),
+        ]
+        results = search_records(intrinsics, [], "_mm256_add_ps", limit=2)
+        self.assertEqual(results[0].title, "_mm256_add_ps")
+
     def test_instruction_variants_sort_naturally_within_isa(self):
         items = [
             SimpleNamespace(mnemonic="DIV", form="DIV (M16)", isa=["I86"], key="DIV (M16)"),
@@ -258,6 +346,15 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(sve.header, "arm_sve.h")
         self.assertIn("Required streaming features", sve.doc_sections)
         self.assertEqual(sve.metadata["supported_architectures"], "A64")
+
+    def test_x86_linked_instruction_refs_include_resolution_metadata(self):
+        catalog = build_catalog(offline=True)
+        intrinsic = find_intrinsic(catalog, "_mm_add_ps")
+        self.assertIsNotNone(intrinsic)
+        ref = intrinsic.instruction_refs[0]
+        self.assertEqual(ref["resolution"], "mnemonic")
+        self.assertEqual(ref["match_count"], "1")
+        self.assertTrue(ref["key"].startswith("x86:"))
 
     def test_parse_arm_aarchmrs_instruction_bundle(self):
         payload = {

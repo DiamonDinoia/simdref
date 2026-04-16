@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from simdref.display import (
     _CODE_SECTION_LANG,
     canonical_url,
+    console,
     display_architecture,
     display_isa,
     isa_family,
@@ -16,8 +17,10 @@ from simdref.display import (
     isa_visible,
     normalize_instruction_query,
     natural_query_sort_key,
+    render_instruction,
     uarch_sort_key,
 )
+from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 
 
 class DisplayISATests(unittest.TestCase):
@@ -121,6 +124,52 @@ class DisplayMiscTests(unittest.TestCase):
     def test_uarch_sort_key_unknown(self):
         _, name = uarch_sort_key("UNKNOWN")
         self.assertEqual(name, "UNKNOWN")
+
+    def test_render_instruction_includes_x86_description_sections(self):
+        instruction = InstructionRecord(
+            mnemonic="VPEXPANDD",
+            form="VPEXPANDD (ZMM{k}{z}, M512)",
+            summary="Expand packed 32-bit integers from memory.",
+            isa=["AVX512F"],
+            linked_intrinsics=["_mm512_maskz_expandloadu_epi32"],
+            description={
+                "Description": "Expand packed integers under writemask control.",
+                "Operation": "FOR j := 0 TO KL-1",
+                "SIMD Floating-Point Exceptions": "None.",
+            },
+            arch_details={
+                "SKL": {
+                    "measurement": {"TP_loop": "1.0", "uops": "2"},
+                    "latencies": [{"cycles": "6"}],
+                    "doc": {},
+                    "iaca": [],
+                }
+            },
+        )
+        catalog = Catalog(
+            intrinsics=[
+                IntrinsicRecord(
+                    name="_mm512_maskz_expandloadu_epi32",
+                    signature="__m512i _mm512_maskz_expandloadu_epi32(__mmask16 k, void const* mem_addr)",
+                    description="Mask-zero expand load.",
+                    header="immintrin.h",
+                    isa=["AVX512F"],
+                    instructions=[instruction.key],
+                    instruction_refs=[{"key": instruction.db_key, "display_key": instruction.key, "architecture": "x86"}],
+                )
+            ],
+            instructions=[instruction],
+            sources=[],
+            generated_at="2026-01-01T00:00:00Z",
+        )
+        with console.capture() as capture:
+            render_instruction(catalog, instruction, short=False, full=True)
+        output = capture.get()
+        self.assertIn("Description", output)
+        self.assertIn("Operation", output)
+        self.assertIn("SIMD Floating-Point Exceptions", output)
+        self.assertIn("instruction to intrinsic mapping", output)
+        self.assertIn("Mask-zero expand load.", output)
 
 
 if __name__ == "__main__":

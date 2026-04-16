@@ -23,9 +23,11 @@ from simdref.ingest_catalog import (
     _canonical_instruction_key,
     _iter_xml_elements,
     _normalize_arm_intrinsic_name,
+    _resolve_instruction_ref,
     parse_arm_intrinsics_payload,
     parse_intel_payload,
     parse_uops_xml,
+    link_records,
 )
 from simdref.ingest_sources import fetch_arm_a64_data, fetch_arm_acle_data, fetch_intel_data, fetch_uops_xml
 from simdref.ingest_pdf import find_pdf_source_path
@@ -48,8 +50,9 @@ def _normalize_isa_list(value: Any) -> list[str]:
     return []
 
 
-_X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = {
+_X86_SDM_EXPECTATIONS: dict[str, dict[str, object]] = {
     "ADDPS": {
+        "family": "SSE",
         "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
         "contains": {
             "Description": "packed single precision floating-point",
@@ -57,7 +60,16 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
             "Intrinsic Equivalents": "_mm_add_ps",
         },
     },
+    "VADDPS": {
+        "family": "AVX",
+        "sections": ("Description", "Operation"),
+        "contains": {
+            "Description": "packed single precision floating-point",
+            "Operation": "DEST",
+        },
+    },
     "VPDPBUSD": {
+        "family": "AVX-512 VNNI",
         "sections": ("Description", "Operation", "Intrinsic Equivalents"),
         "contains": {
             "Description": "unsigned bytes",
@@ -65,7 +77,16 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
             "Intrinsic Equivalents": "_mm_dpbusd",
         },
     },
+    "VPEXPANDD": {
+        "family": "AVX-512 maskz",
+        "sections": ("Description", "Operation"),
+        "contains": {
+            "Description": "doubleword integer values",
+            "Operation": "KL",
+        },
+    },
     "VPMADD52LUQ": {
+        "family": "AVX-512 IFMA",
         "sections": ("Description", "Operation", "Intrinsic Equivalents", "Flags Affected"),
         "contains": {
             "Description": "52-bit integers",
@@ -74,6 +95,7 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
         },
     },
     "RDPID": {
+        "family": "system/control",
         "sections": ("Description", "Operation", "Flags Affected"),
         "contains": {
             "Description": "IA32_TSC_AUX",
@@ -82,6 +104,7 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
         },
     },
     "TZCNT": {
+        "family": "BMI1",
         "sections": ("Description", "Operation", "Flags Affected", "Intrinsic Equivalents"),
         "contains": {
             "Description": "trailing least significant zero bits",
@@ -89,7 +112,40 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
             "Flags Affected": "ZF is set to 1",
         },
     },
+    "PDEP": {
+        "family": "BMI2",
+        "sections": ("Description", "Operation", "Flags Affected"),
+        "contains": {
+            "Description": "deposit",
+            "Operation": "TEMP",
+        },
+    },
+    "AESENC": {
+        "family": "AES",
+        "sections": ("Description", "Operation"),
+        "contains": {
+            "Description": "round",
+            "Operation": "ShiftRows",
+        },
+    },
+    "SHA1RNDS4": {
+        "family": "SHA",
+        "sections": ("Description", "Operation"),
+        "contains": {
+            "Description": "SHA1",
+            "Operation": "W",
+        },
+    },
+    "CRC32": {
+        "family": "CRC",
+        "sections": ("Description", "Operation"),
+        "contains": {
+            "Description": "CRC32",
+            "Operation": "TEMP",
+        },
+    },
     "VCVTNEPS2BF16": {
+        "family": "AVX-512 BF16",
         "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
         "contains": {
             "Description": "converts the elements to BF16",
@@ -97,6 +153,22 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, dict[str, str] | tuple[str, ...]]] = 
             "Intrinsic Equivalents": "_mm_cvtneps_pbh",
         },
     },
+    "ADCX": {
+        "family": "ADX",
+        "sections": ("Description", "Operation", "Flags Affected"),
+        "contains": {
+            "Description": "carry",
+            "Operation": "CF",
+        },
+    },
+}
+
+_X86_SDM_MIN_COVERAGE = 0.02
+_X86_SDM_FAMILY_THRESHOLDS: dict[str, float] = {
+    "SSE": 0.01,
+    "AVX": 0.01,
+    "AVX-512": 0.01,
+    "AMX": 0.01,
 }
 
 
@@ -464,6 +536,81 @@ def _load_sdm_descriptions() -> dict[str, dict[str, Any]] | None:
     return None
 
 
+def _sdm_payload_for_mnemonic(
+    descriptions: dict[str, dict[str, Any]],
+    mnemonic: str,
+) -> dict[str, Any] | None:
+    payload = descriptions.get(mnemonic)
+    if payload:
+        return payload
+    if mnemonic.startswith("V") and len(mnemonic) > 1:
+        return descriptions.get(mnemonic[1:])
+    return None
+
+
+def _x86_instruction_indexes(instructions: list[Any]) -> tuple[dict[tuple[str, str], list[Any]], dict[tuple[str, str], list[Any]], dict[tuple[str, str], list[Any]]]:
+    by_mnemonic: dict[tuple[str, str], list[Any]] = {}
+    by_key: dict[tuple[str, str], list[Any]] = {}
+    by_iform: dict[tuple[str, str], list[Any]] = {}
+    for record in instructions:
+        arch = record.architecture
+        by_mnemonic.setdefault((arch, record.mnemonic.casefold()), []).append(record)
+        by_key.setdefault((arch, record.key.casefold()), []).append(record)
+        if record.metadata.get("iform"):
+            by_iform.setdefault((arch, record.metadata["iform"].casefold()), []).append(record)
+    return by_mnemonic, by_key, by_iform
+
+
+def validate_x86_intrinsic_links(offline: bool) -> tuple[int, int]:
+    intel_text, _intel_source = fetch_intel_data(offline=offline)
+    uops_text, _uops_source = fetch_uops_xml(offline=offline)
+    intrinsics = parse_intel_payload(intel_text)
+    instructions = parse_uops_xml(uops_text)
+    by_mnemonic, by_key, by_iform = _x86_instruction_indexes(instructions)
+    failures = 0
+    checked = 0
+    resolved = 0
+    ambiguous = 0
+    unresolved = 0
+
+    for intrinsic in intrinsics:
+        refs = intrinsic.instruction_refs or [{"name": name, "form": "", "xed": "", "architecture": "x86"} for name in intrinsic.instructions]
+        for ref in refs:
+            checked += 1
+            matched, resolution = _resolve_instruction_ref(
+                intrinsic,
+                ref,
+                by_mnemonic=by_mnemonic,
+                by_key=by_key,
+                by_iform=by_iform,
+            )
+            match_count = int(resolution["match_count"])
+            if not matched:
+                unresolved += 1
+                print(f"WARN x86 links: unresolved {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip())
+                continue
+            resolved += 1
+            if ref.get("xed", "").strip() and match_count != 1:
+                ambiguous += 1
+                print(f"WARN x86 links: ambiguous xed mapping for {intrinsic.name} -> {ref.get('xed')}: {match_count} matches")
+
+    link_records(intrinsics, instructions)
+    linked_by_name = {record.name: record for record in intrinsics}
+    for intrinsic in linked_by_name.values():
+        refs = intrinsic.instruction_refs or []
+        for ref in refs:
+            if ref.get("key", "").strip():
+                continue
+            unresolved += 1
+            print(f"WARN x86 links: unresolved after linking for {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip())
+
+    print(
+        "validated x86 intrinsic links: "
+        f"checked={checked} resolved={resolved} ambiguous={ambiguous} unresolved={unresolved} failures={failures}"
+    )
+    return checked, failures
+
+
 def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
     descriptions = _load_sdm_descriptions()
     if descriptions is None:
@@ -476,7 +623,7 @@ def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
     failures = 0
     for mnemonic, expectation in _X86_SDM_EXPECTATIONS.items():
         checked += 1
-        payload = descriptions.get(mnemonic)
+        payload = _sdm_payload_for_mnemonic(descriptions, mnemonic)
         if not payload:
             print(f"FAIL intel sdm: missing description payload for {mnemonic}")
             failures += 1
@@ -492,6 +639,57 @@ def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
                 print(f"FAIL intel sdm: section {section_name} for {mnemonic} missing expected text {needle!r}")
                 failures += 1
     print(f"validated Intel SDM semantics: checked={checked} failures={failures}")
+    return checked, failures
+
+
+def validate_x86_sdm_coverage(offline: bool, *, require_sdm: bool) -> tuple[int, int]:
+    descriptions = _load_sdm_descriptions()
+    if descriptions is None:
+        if require_sdm:
+            _fail("Intel SDM PDF or cache is required for x86 coverage validation")
+        print("validated Intel SDM coverage: skipped (no PDF/cache available)")
+        return 0, 0
+
+    uops_text, _uops_source = fetch_uops_xml(offline=offline)
+    instructions = [record for record in parse_uops_xml(uops_text) if record.architecture == "x86"]
+    if not instructions:
+        _fail("no x86 instructions were parsed for SDM coverage validation")
+
+    described = [record for record in instructions if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)]
+    overall = len(described) / len(instructions)
+    failures = 0
+
+    if overall < _X86_SDM_MIN_COVERAGE:
+        failures += 1
+        print(
+            "FAIL intel sdm coverage: "
+            f"overall {overall:.3f} below threshold {_X86_SDM_MIN_COVERAGE:.3f}"
+        )
+
+    family_groups: dict[str, list[Any]] = {}
+    for record in instructions:
+        family = "AVX-512" if any("AVX512" in value.upper().replace("-", "").replace("_", "") for value in record.isa) else ""
+        if not family:
+            family = next((value for value in ("SSE", "AVX", "AMX") if any(value in isa.upper() for isa in record.isa)), "Other")
+        family_groups.setdefault(family, []).append(record)
+
+    checked = len(instructions)
+    for family, threshold in _X86_SDM_FAMILY_THRESHOLDS.items():
+        records = family_groups.get(family, [])
+        if not records:
+            continue
+        family_coverage = sum(1 for record in records if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)) / len(records)
+        if family_coverage < threshold:
+            failures += 1
+            print(
+                "FAIL intel sdm coverage: "
+                f"{family} {family_coverage:.3f} below threshold {threshold:.3f}"
+            )
+
+    print(
+        "validated Intel SDM coverage: "
+        f"checked={checked} described={len(described)} overall={overall:.3f} failures={failures}"
+    )
     return checked, failures
 
 
@@ -518,7 +716,9 @@ def main() -> int:
         validate_uops_instructions(args.offline),
         validate_arm_intrinsics(args.offline),
         validate_arm_instructions(args.offline, args.require_authoritative_arm_instructions),
+        validate_x86_intrinsic_links(args.offline),
         validate_x86_sdm_semantics(require_sdm=args.require_sdm and not args.offline),
+        validate_x86_sdm_coverage(args.offline, require_sdm=args.require_sdm and not args.offline),
     ):
         totals_checked += checked
         totals_failed += failed

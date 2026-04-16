@@ -108,6 +108,36 @@ the scoring pipeline re-ranks them.
   - vendored local instruction imports can also consume the Arm A-profile
     machine-readable BSD archive when placed in `vendor/arm/`
 
+## x86 support matrix
+
+Status meanings:
+
+- `complete`: covered by the standard pytest path plus the upstream rebuild path, with blocking validation for ingest, linkage, and user-visible regressions.
+- `strong`: good source authority and regression coverage exist, but coverage is still representative rather than exhaustive for some subfamilies.
+- `partial`: supported in ingest or presentation, but validation or semantic coverage is still incomplete.
+
+| Area | Source authority | Status | Validation gate |
+| --- | --- | --- | --- |
+| Ingestion | Intel Intrinsics Guide + uops.info | complete | `tools/validate_sources.py` raw-source checks under `tests/test_source_validation.py` |
+| Linking | Intel Intrinsics Guide refs -> parsed uops.info forms | strong | exhaustive x86 intrinsic-link validation plus targeted ambiguity tests |
+| SDM semantics | Intel SDM PDF/cache | strong | section/anchor validation and coverage thresholds in the same validator path |
+| Perf | uops.info measurements | complete | parse validation plus runtime rendering checks |
+| Search | catalog search + web ranking heuristics | strong | pytest regressions for intrinsic-first and instruction-first behavior |
+| Rendering | CLI/TUI/web/manpage detail surfaces | strong | pytest regression checks for description sections, intrinsic equivalents, and perf tables |
+
+### x86 family status
+
+| Family | Status | Notes |
+| --- | --- | --- |
+| SSE / SSE2 / SSE4 | strong | ingest and linking are solid; SDM semantic checks are representative |
+| AVX / AVX2 | strong | search and width-sensitive ranking are regression-tested |
+| AVX-512 | strong | masked and maskz forms are explicitly covered in linking/search/render tests |
+| AMX | partial | semantic coverage hooks exist, but fixture coverage is still limited |
+| APX / ADX-style new GPR forms | partial | ranking and linkage scaffolding exist; broader source fixtures are still needed |
+| BMI / BMI2 | strong | alias-sensitive semantic checks are present |
+| AES / SHA / CRC | strong | semantic validation includes representative crypto/system families |
+| REP / string / system-control | partial | semantic checks are representative; render/search coverage is lighter |
+
 ## ISA filtering
 
 Instruction variants are sorted chronologically by ISA generation within a

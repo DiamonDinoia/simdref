@@ -885,7 +885,13 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
     return records
 
 
-def link_records(intrinsics: list[IntrinsicRecord], instructions: list[InstructionRecord]) -> None:
+def _instruction_indexes(
+    instructions: list[InstructionRecord],
+) -> tuple[
+    dict[tuple[str, str], list[InstructionRecord]],
+    dict[tuple[str, str], list[InstructionRecord]],
+    dict[tuple[str, str], list[InstructionRecord]],
+]:
     by_mnemonic: dict[tuple[str, str], list[InstructionRecord]] = {}
     by_key: dict[tuple[str, str], list[InstructionRecord]] = {}
     by_iform: dict[tuple[str, str], list[InstructionRecord]] = {}
@@ -897,42 +903,127 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
             by_mnemonic.setdefault((arch, record.key.casefold()), []).append(record)
         if record.metadata.get("iform"):
             by_iform.setdefault((arch, record.metadata["iform"].casefold()), []).append(record)
+    return by_mnemonic, by_key, by_iform
+
+
+def _resolve_instruction_ref(
+    intrinsic: IntrinsicRecord,
+    ref: dict[str, str],
+    *,
+    by_mnemonic: dict[tuple[str, str], list[InstructionRecord]],
+    by_key: dict[tuple[str, str], list[InstructionRecord]],
+    by_iform: dict[tuple[str, str], list[InstructionRecord]],
+) -> tuple[list[InstructionRecord], dict[str, str]]:
+    matched: list[InstructionRecord] = []
+    ref_arch = ref.get("architecture", intrinsic.architecture).strip() or intrinsic.architecture
+    xed = ref.get("xed", "").strip()
+    name = ref.get("name", "").strip()
+    form = ref.get("form", "").strip()
+    resolution = "unresolved"
+    if xed and ref_arch == "x86":
+        matched = by_iform.get((ref_arch, xed.casefold()), [])
+        if matched:
+            resolution = "xed"
+    if not matched and name and form:
+        matched = by_key.get((ref_arch, (_canonical_instruction_key(name, form) or name).casefold()), [])
+        if matched:
+            resolution = "key"
+    if not matched and name:
+        matched = by_mnemonic.get((ref_arch, name.casefold()), [])
+        if matched:
+            resolution = "mnemonic"
+        if ref_arch == "arm" and len(matched) > 1 and intrinsic.isa:
+            intrinsic_isas = {value.casefold() for value in intrinsic.isa}
+            narrowed = [
+                instruction
+                for instruction in matched
+                if intrinsic_isas & {value.casefold() for value in instruction.isa}
+            ]
+            if narrowed:
+                matched = narrowed
+                resolution = "arm-isa"
+    if ref_arch == "x86" and len(matched) > 1:
+        lowered_name = intrinsic.name.casefold()
+        if "_maskz_" in lowered_name:
+            narrowed = [instruction for instruction in matched if instruction.key.startswith(f"{instruction.mnemonic}_Z ")]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-maskz"
+        elif "_mask_" in lowered_name or "_mask2_" in lowered_name:
+            narrowed = [
+                instruction
+                for instruction in matched
+                if ", K," in instruction.key and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
+            ]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-mask"
+        else:
+            narrowed = [
+                instruction
+                for instruction in matched
+                if ", K," not in instruction.key and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
+            ]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-plain"
+    if ref_arch == "x86" and len(matched) > 1:
+        lowered_name = intrinsic.name.casefold()
+        width_markers = (
+            ("64", ("R64", "REX64")),
+            ("32", ("R32", "Rel32")),
+            ("16", ("R16", "Rel16")),
+            ("8", ("R8",)),
+        )
+        for width, markers in width_markers:
+            if width not in lowered_name:
+                continue
+            narrowed = [
+                instruction
+                for instruction in matched
+                if any(marker in instruction.key for marker in markers)
+            ]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-width{width}"
+                break
+    resolved = {
+        "architecture": ref_arch,
+        "name": name,
+        "form": form,
+        "xed": xed,
+        "match_count": str(len(matched)),
+        "resolution": resolution if matched else "unresolved",
+    }
+    return matched, resolved
+
+
+def link_records(intrinsics: list[IntrinsicRecord], instructions: list[InstructionRecord]) -> None:
+    by_mnemonic, by_key, by_iform = _instruction_indexes(instructions)
     for intrinsic in intrinsics:
         linked: list[str] = []
         resolved_refs: list[dict[str, str]] = []
         refs = intrinsic.instruction_refs or [{"name": name, "form": "", "xed": ""} for name in intrinsic.instructions]
         for ref in refs:
-            matched: list[InstructionRecord] = []
-            ref_arch = ref.get("architecture", intrinsic.architecture).strip() or intrinsic.architecture
-            xed = ref.get("xed", "").strip()
-            name = ref.get("name", "").strip()
-            form = ref.get("form", "").strip()
-            if xed and ref_arch == "x86":
-                matched = by_iform.get((ref_arch, xed.casefold()), [])
-            if not matched and name and form:
-                matched = by_key.get((ref_arch, (_canonical_instruction_key(name, form) or name).casefold()), [])
-            if not matched and name:
-                matched = by_mnemonic.get((ref_arch, name.casefold()), [])
-                if ref_arch == "arm" and len(matched) > 1 and intrinsic.isa:
-                    intrinsic_isas = {value.casefold() for value in intrinsic.isa}
-                    narrowed = [
-                        instruction
-                        for instruction in matched
-                        if intrinsic_isas & {value.casefold() for value in instruction.isa}
-                    ]
-                    if narrowed:
-                        matched = narrowed
+            matched, resolved = _resolve_instruction_ref(
+                intrinsic,
+                ref,
+                by_mnemonic=by_mnemonic,
+                by_key=by_key,
+                by_iform=by_iform,
+            )
+            ref_arch = resolved["architecture"]
             if not matched:
-                fallback = _canonical_instruction_key(name, form) or name
+                fallback = _canonical_instruction_key(resolved["name"], resolved["form"]) or resolved["name"]
                 if fallback:
                     linked.append(fallback)
-                    resolved_refs.append(dict(ref) | {"architecture": ref_arch})
+                    resolved_refs.append(dict(ref) | resolved)
                 continue
             for instruction in matched:
                 if intrinsic.name not in instruction.linked_intrinsics:
                     instruction.linked_intrinsics.append(intrinsic.name)
                 linked.append(instruction.key)
-                resolved_refs.append(dict(ref) | {
+                resolved_refs.append(dict(ref) | resolved | {
                     "architecture": instruction.architecture,
                     "key": instruction.db_key,
                     "display_key": instruction.key,

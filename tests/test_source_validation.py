@@ -18,6 +18,7 @@ class SourceValidationTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("source validation passed", result.stdout)
+        self.assertIn("validated x86 intrinsic links", result.stdout)
 
     def test_live_source_validation_script_passes(self):
         result = subprocess.run(
@@ -28,6 +29,7 @@ class SourceValidationTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("source validation passed", result.stdout)
+        self.assertIn("validated x86 intrinsic links", result.stdout)
 
     @unittest.skipUnless(_has_local_sdm_material(), "Intel SDM source/cache not available locally")
     def test_live_source_validation_with_required_sdm_passes(self):
@@ -39,6 +41,7 @@ class SourceValidationTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("validated Intel SDM semantics", result.stdout)
+        self.assertIn("validated Intel SDM coverage", result.stdout)
         self.assertIn("source validation passed", result.stdout)
 
 
