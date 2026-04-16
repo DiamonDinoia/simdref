@@ -42,17 +42,20 @@ jobs:
         run: node --check src/simdref/templates/app.js
 
   runtime-build:
+    name: Runtime Validation (${{ matrix.label }})
     needs: tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: release-assets
+          - id: release-assets
+            label: Release asset refresh
             build_command: simdref update --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 1000
             instructions_min: 1000
-          - name: local-sdm
+          - id: local-sdm
+            label: Full local build with Intel SDM
             build_command: simdref update --build-local --with-sdm --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 7000
             instructions_min: 20000
@@ -72,13 +75,13 @@ jobs:
       - name: Install package
         run: uv pip install -e .
 
-      - name: Build runtime (${{ matrix.name }})
+      - name: Build runtime (${{ matrix.label }})
         run: ${{ matrix.build_command }}
 
-      - name: Inspect runtime (${{ matrix.name }})
+      - name: Inspect runtime (${{ matrix.label }})
         run: simdref doctor
 
-      - name: Validate runtime artifacts (${{ matrix.name }})
+      - name: Validate runtime artifacts (${{ matrix.label }})
         env:
           EXPECTED_INTRINSICS_MIN: ${{ matrix.intrinsics_min }}
           EXPECTED_INSTRUCTIONS_MIN: ${{ matrix.instructions_min }}
