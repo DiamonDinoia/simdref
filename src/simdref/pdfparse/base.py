@@ -7,8 +7,10 @@ patterns.
 
 from __future__ import annotations
 
+LineTuple = tuple[float, float, float, str]
 
-def _chars_to_lines(chars: list[dict]) -> list[tuple[float, float, float, str]]:
+
+def chars_to_lines(chars: list[dict]) -> list[LineTuple]:
     """Group characters into lines by vertical position.
 
     Returns a list of ``(top, size, x0, text)`` tuples sorted by vertical
@@ -32,7 +34,7 @@ def _chars_to_lines(chars: list[dict]) -> list[tuple[float, float, float, str]]:
 
     lines.append((current_top, current_chars))
 
-    result: list[tuple[float, float, float, str]] = []
+    result: list[LineTuple] = []
     for top, line_chars in lines:
         # Build text with gap-based space insertion.  When consecutive
         # characters have a large horizontal gap (>10pt) a space is
@@ -52,6 +54,36 @@ def _chars_to_lines(chars: list[dict]) -> list[tuple[float, float, float, str]]:
         if text:
             result.append((top, max_size, x0, text))
     return result
+
+
+def extract_sections_from_lines(
+    lines: list[LineTuple],
+    heading_min_size: float,
+    body_max_size: float,
+    known_headings: frozenset[str] | set[str] | None = None,
+) -> dict[str, list[tuple[float, str]]]:
+    """Extract named sections from pre-grouped PDF line tuples."""
+    sections: dict[str, list[tuple[float, str]]] = {}
+    current_heading: str | None = None
+    body_parts: list[tuple[float, str]] = []
+
+    for _top, size, line_x0, text in lines:
+        if known_headings is not None:
+            is_heading = text.lower().strip() in known_headings
+        else:
+            is_heading = size >= heading_min_size
+        if is_heading:
+            if current_heading is not None and body_parts:
+                sections[current_heading] = body_parts
+            current_heading = text
+            body_parts = []
+        elif size <= body_max_size and current_heading is not None:
+            body_parts.append((line_x0, text))
+
+    if current_heading is not None and body_parts:
+        sections[current_heading] = body_parts
+
+    return sections
 
 
 def extract_sections_from_chars(
@@ -76,25 +108,9 @@ def extract_sections_from_chars(
     Returns a dict mapping heading text to a list of ``(x0, text)`` tuples
     preserving the left-edge position for indentation reconstruction.
     """
-    lines = _chars_to_lines(chars)
-    sections: dict[str, list[tuple[float, str]]] = {}
-    current_heading: str | None = None
-    body_parts: list[tuple[float, str]] = []
-
-    for _top, size, line_x0, text in lines:
-        if known_headings is not None:
-            is_heading = text.lower().strip() in known_headings
-        else:
-            is_heading = size >= heading_min_size
-        if is_heading:
-            if current_heading is not None and body_parts:
-                sections[current_heading] = body_parts
-            current_heading = text
-            body_parts = []
-        elif size <= body_max_size and current_heading is not None:
-            body_parts.append((line_x0, text))
-
-    if current_heading is not None and body_parts:
-        sections[current_heading] = body_parts
-
-    return sections
+    return extract_sections_from_lines(
+        chars_to_lines(chars),
+        heading_min_size=heading_min_size,
+        body_max_size=body_max_size,
+        known_headings=known_headings,
+    )

@@ -15,10 +15,13 @@ import os
 import re
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from simdref.pdfparse.base import extract_sections_from_chars
+from pdfminer.pdftypes import resolve1
+
+from simdref.pdfparse.base import chars_to_lines, extract_sections_from_lines
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +110,122 @@ _JUNK_LINE_RE = re.compile(
 # Maximum fraction of page area a single table can cover before we
 # consider it a false-positive detection by pdfplumber.
 _TABLE_MAX_PAGE_FRACTION = 0.85
+_TABLE_GRAPHIC_PRIMITIVE_THRESHOLD = 6
+
+
+@dataclass(slots=True)
+class _PreparedPage:
+    title: tuple[str, str] | None
+    body_lines: list[tuple[float, float, float, str]]
+
+
+def _resolve_outline_page_number(pdf, dest) -> int | None:
+    """Resolve a pdfminer outline destination to a 1-based page number."""
+    if dest is None:
+        return None
+    try:
+        resolved = resolve1(pdf.doc.get_dest(dest) if isinstance(dest, bytes) else dest)
+        if isinstance(resolved, dict):
+            resolved = resolve1(resolved.get("D"))
+        if not isinstance(resolved, list) or not resolved:
+            return None
+        objid = getattr(resolved[0], "objid", None)
+        if objid is None:
+            return None
+        if not hasattr(pdf, "_simdref_page_map"):
+            pdf._simdref_page_map = {page.page_obj.pageid: i for i, page in enumerate(pdf.pages, start=1)}
+        return pdf._simdref_page_map.get(objid)
+    except Exception:
+        return None
+
+
+def _outline_starts_instruction_range(level: int, title: str) -> bool:
+    lowered = title.casefold()
+    if title.startswith("Chapter ") and "instruction" in lowered and "reference" in lowered:
+        return True
+    return "seam instruction reference" in lowered
+
+
+def _instruction_page_ranges(pdf) -> list[tuple[int, int]]:
+    """Return likely 0-based [start, end) ranges that contain instruction text."""
+    total = len(pdf.pages)
+    try:
+        outlines: list[tuple[int, int, str]] = []
+        for level, title, dest, _action, _se in pdf.doc.get_outlines():
+            page_number = _resolve_outline_page_number(pdf, dest)
+            if page_number is None:
+                continue
+            outlines.append((page_number, level, title))
+        outlines.sort()
+
+        ranges: list[tuple[int, int]] = []
+        for idx, (page_number, level, title) in enumerate(outlines):
+            if not _outline_starts_instruction_range(level, title):
+                continue
+            next_page = total + 1
+            for later_page, later_level, _later_title in outlines[idx + 1:]:
+                if later_page > page_number and later_level <= level:
+                    next_page = later_page
+                    break
+            start_idx = max(0, page_number - 1)
+            end_idx = max(start_idx + 1, min(total, next_page - 1))
+            ranges.append((start_idx, end_idx))
+
+        if not ranges:
+            return [(0, total)]
+
+        merged: list[tuple[int, int]] = []
+        for start_idx, end_idx in sorted(ranges):
+            if not merged or start_idx > merged[-1][1]:
+                merged.append((start_idx, end_idx))
+            else:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end_idx))
+        return merged
+    except Exception:
+        return [(0, total)]
+
+
+def _page_might_have_tables(page) -> bool:
+    """Cheap precheck before pdfplumber's expensive table finder."""
+    primitive_count = len(page.rects) + len(page.lines) + len(page.curves)
+    return primitive_count >= _TABLE_GRAPHIC_PRIMITIVE_THRESHOLD
+
+
+def _table_bboxes_for_page(page) -> list[tuple[float, float, float, float]]:
+    if not _page_might_have_tables(page):
+        return []
+    tables = page.find_tables()
+    if not tables:
+        return []
+    page_area = page.width * page.height
+    bboxes_list = []
+    for table in tables:
+        bx0, by0, bx1, by1 = table.bbox
+        table_area = (bx1 - bx0) * (by1 - by0)
+        if table_area / page_area < _TABLE_MAX_PAGE_FRACTION:
+            bboxes_list.append((bx0, by0, bx1, by1))
+    return bboxes_list
+
+
+def _prepare_page(page) -> _PreparedPage:
+    page_chars = page.chars
+    title_chars = [c for c in page_chars if c["size"] >= _TITLE_MIN_SIZE]
+    parsed_title = None
+    if title_chars:
+        parsed_title = parse_instruction_title("".join(c["text"] for c in title_chars).strip())
+
+    bboxes = _table_bboxes_for_page(page)
+    body_chars: list[dict] = []
+    for char in page_chars:
+        if char["size"] >= _TITLE_MIN_SIZE or char["size"] < _BODY_MIN_SIZE:
+            continue
+        if bboxes and any(
+            bbox[0] <= char["x0"] <= bbox[2] and bbox[1] <= char["top"] <= bbox[3]
+            for bbox in bboxes
+        ):
+            continue
+        body_chars.append(char)
+    return _PreparedPage(title=parsed_title, body_lines=chars_to_lines(body_chars))
 
 
 def normalize_section_name(raw: str) -> str:
@@ -165,6 +284,10 @@ def parse_intel_sdm(
     pdf = pdfplumber.open(pdf_path)
     total = len(pdf.pages)
     log.info("total pages: %d", total)
+    page_ranges = _instruction_page_ranges(pdf)
+    page_indices = [page_idx for start, end in page_ranges for page_idx in range(start, end)]
+    parse_pages = len(page_indices)
+    log.info("instruction page ranges: %s (%d pages)", page_ranges, parse_pages)
 
     interactive_progress = sys.stderr.isatty() and os.environ.get("GITHUB_ACTIONS") != "true"
     progress = Progress(
@@ -178,67 +301,45 @@ def parse_intel_sdm(
         progress.start()
     if status is not None:
         status(f"Opened Intel SDM PDF with {total} pages")
+        if parse_pages != total:
+            status(
+                f"Restricting SDM parse to {len(page_ranges)} outline-derived instruction ranges "
+                f"covering {parse_pages} of {total} pages"
+            )
 
-    # Phase 1: identify instruction title pages (fast — no table detection).
-    scan_task = progress.add_task("Scanning pages", total=total) if interactive_progress else None
+    # Phase 1: preprocess each page once and collect instruction title pages.
+    scan_task = progress.add_task("Preprocessing pages", total=parse_pages) if interactive_progress else None
+    prepared_pages: dict[int, _PreparedPage] = {}
     title_pages: list[tuple[int, str, str]] = []
-    for i in range(total):
+    for offset, i in enumerate(page_indices):
         page = pdf.pages[i]
-        chars = page.chars
-        title_chars = [c for c in chars if c["size"] >= _TITLE_MIN_SIZE]
-        if title_chars:
-            title_text = "".join(c["text"] for c in title_chars).strip()
-            parsed = parse_instruction_title(title_text)
-            if parsed is not None:
-                title_pages.append((i, parsed[0], parsed[1]))
+        prepared = _prepare_page(page)
+        prepared_pages[i] = prepared
+        if prepared.title is not None:
+            title_pages.append((i, prepared.title[0], prepared.title[1]))
         if interactive_progress and scan_task is not None:
             progress.advance(scan_task)
-        elif status is not None and ((i + 1) % 250 == 0 or i + 1 == total):
-            status(f"Scanning SDM title pages: {i + 1}/{total}")
+        elif status is not None and ((offset + 1) % 250 == 0 or offset + 1 == parse_pages):
+            status(f"Preprocessing SDM pages: {offset + 1}/{parse_pages}")
 
     log.info("found %d instruction title pages", len(title_pages))
     if status is not None:
         status(f"Found {len(title_pages)} instruction title pages in Intel SDM")
 
-    # Phase 2: extract sections for each instruction.
-    # Table bounding boxes are computed on-demand (only instruction pages).
+    # Phase 2: assemble sections from cached per-page lines.
     extract_task = progress.add_task("Extracting descriptions", total=len(title_pages)) if interactive_progress else None
-    page_table_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
     result: dict[str, dict[str, object]] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
         page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
 
-        all_chars: list[dict] = []
+        all_lines: list[tuple[float, float, float, str]] = []
         for page_idx in range(page_start, page_end):
-            page_chars = pdf.pages[page_idx].chars
-            # Lazily compute and cache table bboxes for this page.
-            if page_idx not in page_table_bboxes:
-                tables = pdf.pages[page_idx].find_tables()
-                if tables:
-                    page_area = pdf.pages[page_idx].width * pdf.pages[page_idx].height
-                    bboxes_list = []
-                    for t in tables:
-                        bx0, by0, bx1, by1 = t.bbox
-                        table_area = (bx1 - bx0) * (by1 - by0)
-                        if table_area / page_area < _TABLE_MAX_PAGE_FRACTION:
-                            bboxes_list.append((bx0, by0, bx1, by1))
-                    page_table_bboxes[page_idx] = bboxes_list
-                else:
-                    page_table_bboxes[page_idx] = []
-            bboxes = page_table_bboxes[page_idx]
-            for c in page_chars:
-                if c["size"] >= _TITLE_MIN_SIZE or c["size"] < _BODY_MIN_SIZE:
-                    continue
-                # Exclude characters inside table bounding boxes.
-                if bboxes and any(
-                    bbox[0] <= c["x0"] <= bbox[2] and bbox[1] <= c["top"] <= bbox[3]
-                    for bbox in bboxes
-                ):
-                    continue
-                all_chars.append(c)
+            prepared = prepared_pages.get(page_idx)
+            if prepared is not None:
+                all_lines.extend(prepared.body_lines)
 
-        raw_sections = extract_sections_from_chars(
-            all_chars,
+        raw_sections = extract_sections_from_lines(
+            all_lines,
             heading_min_size=_HEADING_MIN_SIZE,
             body_max_size=_BODY_MAX_SIZE,
             known_headings=_ALL_HEADING_NAMES,

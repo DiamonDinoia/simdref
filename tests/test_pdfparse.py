@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from simdref.pdfparse.base import extract_sections_from_chars
+from simdref.pdfparse.base import chars_to_lines, extract_sections_from_chars, extract_sections_from_lines
 
 
 def _make_char(text, fontname, size, x0=0, top=0):
@@ -62,11 +62,29 @@ def test_extract_sections_empty_chars():
     assert sections == {}
 
 
+def test_extract_sections_from_lines_matches_chars():
+    chars = []
+    y = 100
+    for ch in "Description":
+        chars.append(_make_char(ch, "NeoSansMedium", 10.0, top=y))
+    y += 20
+    for ch in "Body line.":
+        chars.append(_make_char(ch, "Verdana", 9.0, top=y))
+
+    lines = chars_to_lines(chars)
+    assert extract_sections_from_lines(lines, heading_min_size=10.0, body_max_size=9.5) == (
+        extract_sections_from_chars(chars, heading_min_size=10.0, body_max_size=9.5)
+    )
+
+
 from simdref.pdfparse.intel import (
-    parse_instruction_title,
-    KNOWN_SECTIONS,
-    normalize_section_name,
     INTEL_SDM_URL,
+    KNOWN_SECTIONS,
+    _instruction_page_ranges,
+    _page_might_have_tables,
+    _table_bboxes_for_page,
+    normalize_section_name,
+    parse_instruction_title,
 )
 from simdref.ingest import _merge_descriptions
 from simdref import ingest
@@ -247,3 +265,108 @@ def test_load_or_parse_intel_sdm_uses_cache(tmp_path, monkeypatch):
 
     assert first == second
     assert calls == [pdf_path]
+
+
+class _FakeTable:
+    def __init__(self, bbox):
+        self.bbox = bbox
+
+
+class _FakePage:
+    def __init__(self, *, rects=(), lines=(), curves=(), width=100.0, height=100.0, tables=()):
+        self.rects = list(rects)
+        self.lines = list(lines)
+        self.curves = list(curves)
+        self.width = width
+        self.height = height
+        self._tables = list(tables)
+
+    def find_tables(self):
+        return list(self._tables)
+
+
+class _FakeOutlineDoc:
+    def __init__(self, outlines):
+        self._outlines = outlines
+
+    def get_outlines(self):
+        return iter(self._outlines)
+
+    def get_dest(self, dest):
+        return dest
+
+
+class _FakePdfPageRef:
+    def __init__(self, pageid):
+        self.pageid = pageid
+
+
+class _FakeOutlinePdf:
+    def __init__(self, pageids, outlines):
+        self.pages = [_FakePage() for _ in pageids]
+        for page, pageid in zip(self.pages, pageids, strict=True):
+            page.page_obj = _FakePdfPageRef(pageid)
+        self.doc = _FakeOutlineDoc(outlines)
+
+
+def test_page_might_have_tables_uses_graphics_threshold():
+    sparse_page = _FakePage(rects=range(2), lines=range(1), curves=range(1))
+    dense_page = _FakePage(rects=range(6))
+
+    assert _page_might_have_tables(sparse_page) is False
+    assert _page_might_have_tables(dense_page) is True
+
+
+def test_table_bboxes_for_page_skips_find_tables_when_precheck_fails(monkeypatch):
+    page = _FakePage(rects=range(2))
+
+    def _boom():
+        raise AssertionError("find_tables should not run")
+
+    monkeypatch.setattr(page, "find_tables", _boom)
+    assert _table_bboxes_for_page(page) == []
+
+
+def test_table_bboxes_for_page_filters_large_false_positives():
+    page = _FakePage(
+        rects=range(6),
+        width=100.0,
+        height=100.0,
+        tables=[
+            _FakeTable((0.0, 0.0, 20.0, 20.0)),
+            _FakeTable((0.0, 0.0, 100.0, 100.0)),
+        ],
+    )
+
+    assert _table_bboxes_for_page(page) == [(0.0, 0.0, 20.0, 20.0)]
+
+
+def test_instruction_page_ranges_uses_outline_instruction_chapters():
+    pdf = _FakeOutlinePdf(
+        pageids=range(1, 5001),
+        outlines=[
+            (1, "Volume 2 (2A, 2B, 2C, & 2D): Instruction Set Reference, A-Z", {"D": [type("Ref", (), {"objid": 587})(), "XYZ"]}, None, None),
+            (2, "Chapter 3 Instruction Set Reference, A-L", {"D": [type("Ref", (), {"objid": 687})(), "XYZ"]}, None, None),
+            (2, "Chapter 4 Instruction Set Reference, M-U", {"D": [type("Ref", (), {"objid": 1284})(), "XYZ"]}, None, None),
+            (2, "Chapter 33 VMX Instruction Reference", {"D": [type("Ref", (), {"objid": 4327})(), "XYZ"]}, None, None),
+            (3, "35.5 SEAM Instruction Reference", {"D": [type("Ref", (), {"objid": 4395})(), "XYZ"]}, None, None),
+            (2, "Chapter 41 Intel® SGX Instruction References", {"D": [type("Ref", (), {"objid": 4527})(), "XYZ"]}, None, None),
+            (1, "Volume 3 (3A, 3B, 3C, & 3D): System Programming Guide", {"D": [type("Ref", (), {"objid": 3143})(), "XYZ"]}, None, None),
+            (2, "Chapter 34 System Management Mode", {"D": [type("Ref", (), {"objid": 4359})(), "XYZ"]}, None, None),
+            (2, "Chapter 36 Intel® Processor Trace", {"D": [type("Ref", (), {"objid": 4401})(), "XYZ"]}, None, None),
+            (2, "Chapter 42 Intel® SGX Interactions with IA32 and Intel® 64 Architecture", {"D": [type("Ref", (), {"objid": 4655})(), "XYZ"]}, None, None),
+        ],
+    )
+
+    assert _instruction_page_ranges(pdf) == [
+        (686, 3142),
+        (4326, 4358),
+        (4394, 4400),
+        (4526, 4654),
+    ]
+
+
+def test_instruction_page_ranges_falls_back_to_all_pages_without_outline():
+    pdf = _FakeOutlinePdf(pageids=range(1, 101), outlines=[])
+
+    assert _instruction_page_ranges(pdf) == [(0, 100)]
