@@ -17,7 +17,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from pdfminer.pdftypes import resolve1
 
@@ -117,6 +117,18 @@ _TABLE_GRAPHIC_PRIMITIVE_THRESHOLD = 6
 class _PreparedPage:
     title: tuple[str, str] | None
     body_lines: list[tuple[float, float, float, str]]
+    backend: str
+    fallback_reason: str | None = None
+
+
+_FASTPATH_TABULAR_LINE_RE = re.compile(
+    r"^(Opcode|Op/En|64/32-Bit Mode|64-Bit Mode|32-Bit Mode|CPUID Feature Flag)\b",
+    re.IGNORECASE,
+)
+_FASTPATH_TABULAR_CAPTION_RE = re.compile(
+    r"^(Table\s+\d+-\d+\.|Instruction Operand Encoding\b)",
+    re.IGNORECASE,
+)
 
 
 def _resolve_outline_page_number(pdf, dest) -> int | None:
@@ -207,7 +219,29 @@ def _table_bboxes_for_page(page) -> list[tuple[float, float, float, float]]:
     return bboxes_list
 
 
-def _prepare_page(page) -> _PreparedPage:
+def _build_line_text(spans: list[tuple[float, str]]) -> str:
+    parts: list[str] = []
+    prev_right = -1.0
+    for x0, text in spans:
+        if prev_right >= 0 and x0 - prev_right > 10.0:
+            if parts and not parts[-1].endswith(" "):
+                parts.append(" ")
+        parts.append(text)
+        prev_right = x0 + max(len(text), 1) * 5.0
+    return "".join(parts).strip()
+
+
+def _line_is_tabular_noise(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return bool(
+        _FASTPATH_TABULAR_LINE_RE.match(stripped)
+        or _FASTPATH_TABULAR_CAPTION_RE.match(stripped)
+    )
+
+
+def _prepare_page_pdfplumber(page) -> _PreparedPage:
     page_chars = page.chars
     title_chars = [c for c in page_chars if c["size"] >= _TITLE_MIN_SIZE]
     parsed_title = None
@@ -225,7 +259,75 @@ def _prepare_page(page) -> _PreparedPage:
         ):
             continue
         body_chars.append(char)
-    return _PreparedPage(title=parsed_title, body_lines=chars_to_lines(body_chars))
+    return _PreparedPage(title=parsed_title, body_lines=chars_to_lines(body_chars), backend="pdfplumber")
+
+
+def _prepare_page_from_pymupdf_dict(text_dict: dict[str, Any]) -> _PreparedPage:
+    title_lines: list[str] = []
+    body_lines: list[tuple[float, float, float, str]] = []
+
+    for block_idx, block in enumerate(text_dict.get("blocks", [])):
+        if block.get("type") != 0:
+            continue
+        for line_idx, line in enumerate(block.get("lines", [])):
+            spans: list[tuple[float, str]] = []
+            sizes: list[float] = []
+            tops: list[float] = []
+            left_edges: list[float] = []
+            for span in line.get("spans", []):
+                text = span.get("text", "")
+                if not text.strip():
+                    continue
+                bbox = span.get("bbox", (0.0, 0.0, 0.0, 0.0))
+                x0 = float(bbox[0])
+                top = float(bbox[1])
+                size = float(span.get("size", 0.0))
+                spans.append((x0, text))
+                sizes.append(size)
+                tops.append(top)
+                left_edges.append(x0)
+            if not spans:
+                continue
+
+            spans.sort(key=lambda item: item[0])
+            text = _build_line_text(spans)
+            if not text:
+                continue
+            top = min(tops)
+            dominant_size = max(sizes)
+            x0 = min(left_edges)
+
+            if dominant_size >= _TITLE_MIN_SIZE:
+                title_lines.append(text)
+                continue
+            if dominant_size < _BODY_MIN_SIZE:
+                continue
+            if _line_is_tabular_noise(text):
+                continue
+            body_lines.append((top, dominant_size, x0, text))
+
+    title_text = " ".join(title_lines).strip()
+    parsed_title = parse_instruction_title(title_text) if title_text else None
+    body_lines.sort(key=lambda item: (item[0], item[2], item[1]))
+    return _PreparedPage(title=parsed_title, body_lines=body_lines, backend="pymupdf")
+
+
+def _prepare_page_pymupdf(page) -> _PreparedPage:
+    return _prepare_page_from_pymupdf_dict(page.get_text("dict"))
+
+
+def _prepared_page_needs_fallback(prepared: _PreparedPage) -> str | None:
+    if prepared.title is None:
+        return None
+    if not prepared.body_lines:
+        return "empty-fast-path"
+    heading_lines = [
+        text for _top, _size, _x0, text in prepared.body_lines
+        if text.strip().lower() in _ALL_HEADING_NAMES
+    ]
+    if not heading_lines:
+        return "missing-heading"
+    return None
 
 
 def normalize_section_name(raw: str) -> str:
@@ -281,7 +383,13 @@ def parse_intel_sdm(
     from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
     log.info("parsing Intel SDM: %s", pdf_path)
+    try:
+        import fitz
+    except ImportError:
+        fitz = None
+
     pdf = pdfplumber.open(pdf_path)
+    fitz_doc = fitz.open(pdf_path) if fitz is not None else None
     total = len(pdf.pages)
     log.info("total pages: %d", total)
     page_ranges = _instruction_page_ranges(pdf)
@@ -301,6 +409,10 @@ def parse_intel_sdm(
         progress.start()
     if status is not None:
         status(f"Opened Intel SDM PDF with {total} pages")
+        if fitz_doc is not None:
+            status("Using PyMuPDF fast path for page extraction with pdfplumber fallback")
+        else:
+            status("PyMuPDF unavailable; using pdfplumber page extraction")
         if parse_pages != total:
             status(
                 f"Restricting SDM parse to {len(page_ranges)} outline-derived instruction ranges "
@@ -311,9 +423,14 @@ def parse_intel_sdm(
     scan_task = progress.add_task("Preprocessing pages", total=parse_pages) if interactive_progress else None
     prepared_pages: dict[int, _PreparedPage] = {}
     title_pages: list[tuple[int, str, str]] = []
+    fallback_pages = 0
     for offset, i in enumerate(page_indices):
-        page = pdf.pages[i]
-        prepared = _prepare_page(page)
+        prepared = _prepare_page_pymupdf(fitz_doc[i]) if fitz_doc is not None else _prepare_page_pdfplumber(pdf.pages[i])
+        fallback_reason = _prepared_page_needs_fallback(prepared)
+        if fallback_reason is not None:
+            fallback_pages += 1
+            prepared = _prepare_page_pdfplumber(pdf.pages[i])
+            prepared.fallback_reason = fallback_reason
         prepared_pages[i] = prepared
         if prepared.title is not None:
             title_pages.append((i, prepared.title[0], prepared.title[1]))
@@ -325,6 +442,8 @@ def parse_intel_sdm(
     log.info("found %d instruction title pages", len(title_pages))
     if status is not None:
         status(f"Found {len(title_pages)} instruction title pages in Intel SDM")
+        if fitz_doc is not None:
+            status(f"Fell back to pdfplumber on {fallback_pages} pages")
 
     # Phase 2: assemble sections from cached per-page lines.
     extract_task = progress.add_task("Extracting descriptions", total=len(title_pages)) if interactive_progress else None
@@ -417,6 +536,8 @@ def parse_intel_sdm(
 
     if interactive_progress:
         progress.stop()
+    if fitz_doc is not None:
+        fitz_doc.close()
     pdf.close()
     log.info("extracted descriptions for %d mnemonics", len(result))
     if status is not None:

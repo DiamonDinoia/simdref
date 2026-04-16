@@ -82,6 +82,8 @@ from simdref.pdfparse.intel import (
     KNOWN_SECTIONS,
     _instruction_page_ranges,
     _page_might_have_tables,
+    _prepare_page_from_pymupdf_dict,
+    _prepared_page_needs_fallback,
     _table_bboxes_for_page,
     normalize_section_name,
     parse_instruction_title,
@@ -339,6 +341,176 @@ def test_table_bboxes_for_page_filters_large_false_positives():
     )
 
     assert _table_bboxes_for_page(page) == [(0.0, 0.0, 20.0, 20.0)]
+
+
+def test_prepare_page_from_pymupdf_dict_extracts_title_and_body_lines():
+    prepared = _prepare_page_from_pymupdf_dict(
+        {
+            "blocks": [
+                {
+                    "type": 0,
+                    "lines": [
+                        {
+                            "spans": [
+                                {
+                                    "text": "ADDPS",
+                                    "size": 12.0,
+                                    "bbox": (72.0, 50.0, 110.0, 62.0),
+                                },
+                                {
+                                    "text": "—",
+                                    "size": 12.0,
+                                    "bbox": (114.0, 50.0, 118.0, 62.0),
+                                },
+                                {
+                                    "text": "Add Packed Single Precision Floating-Point Values",
+                                    "size": 12.0,
+                                    "bbox": (122.0, 50.0, 360.0, 62.0),
+                                },
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {
+                                    "text": "Description",
+                                    "size": 10.0,
+                                    "bbox": (72.0, 80.0, 130.0, 90.0),
+                                }
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {
+                                    "text": "Adds packed values.",
+                                    "size": 9.0,
+                                    "bbox": (72.0, 96.0, 170.0, 106.0),
+                                }
+                            ]
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert prepared.backend == "pymupdf"
+    assert prepared.title == ("ADDPS", "Add Packed Single Precision Floating-Point Values")
+    assert prepared.body_lines == [
+        (80.0, 10.0, 72.0, "Description"),
+        (96.0, 9.0, 72.0, "Adds packed values."),
+    ]
+
+
+def test_prepare_page_from_pymupdf_dict_filters_tabular_noise():
+    prepared = _prepare_page_from_pymupdf_dict(
+        {
+            "blocks": [
+                {
+                    "type": 0,
+                    "lines": [
+                        {
+                            "spans": [
+                                {
+                                    "text": "Opcode",
+                                    "size": 9.0,
+                                    "bbox": (72.0, 80.0, 100.0, 90.0),
+                                }
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {
+                                    "text": "Instruction Operand Encoding",
+                                    "size": 9.0,
+                                    "bbox": (72.0, 94.0, 210.0, 104.0),
+                                }
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {
+                                    "text": "Description",
+                                    "size": 10.0,
+                                    "bbox": (72.0, 110.0, 130.0, 120.0),
+                                }
+                            ]
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert prepared.body_lines == [(110.0, 10.0, 72.0, "Description")]
+
+
+def test_prepared_page_needs_fallback_when_title_page_has_no_headings():
+    prepared = _prepare_page_from_pymupdf_dict(
+        {
+            "blocks": [
+                {
+                    "type": 0,
+                    "lines": [
+                        {
+                            "spans": [
+                                {
+                                    "text": "ADDPS",
+                                    "size": 12.0,
+                                    "bbox": (72.0, 50.0, 110.0, 62.0),
+                                },
+                                {
+                                    "text": "—",
+                                    "size": 12.0,
+                                    "bbox": (114.0, 50.0, 118.0, 62.0),
+                                },
+                                {
+                                    "text": "Add Packed Single Precision Floating-Point Values",
+                                    "size": 12.0,
+                                    "bbox": (122.0, 50.0, 360.0, 62.0),
+                                },
+                            ]
+                        },
+                        {
+                            "spans": [
+                                {
+                                    "text": "Unclassified body line",
+                                    "size": 9.0,
+                                    "bbox": (72.0, 90.0, 170.0, 100.0),
+                                }
+                            ]
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert _prepared_page_needs_fallback(prepared) == "missing-heading"
+
+
+def test_prepared_page_does_not_need_fallback_without_title():
+    prepared = _prepare_page_from_pymupdf_dict(
+        {
+            "blocks": [
+                {
+                    "type": 0,
+                    "lines": [
+                        {
+                            "spans": [
+                                {
+                                    "text": "Continuation paragraph.",
+                                    "size": 9.0,
+                                    "bbox": (72.0, 90.0, 170.0, 100.0),
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert _prepared_page_needs_fallback(prepared) is None
 
 
 def test_instruction_page_ranges_uses_outline_instruction_chapters():
