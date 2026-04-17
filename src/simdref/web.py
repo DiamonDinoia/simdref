@@ -191,6 +191,7 @@ def _search_payload(catalog: Catalog) -> dict:
                 "display_isa": display_isa(item.isa),
                 "display_isa_tokens": [display_isa([value]) for value in item.isa],
                 "isa_families": isa_families(item.isa),
+                "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
                 "search_fields": _intrinsic_search_fields(item),
                 "search_tokens": _search_tokens(*_intrinsic_search_fields(item)),
             }

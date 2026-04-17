@@ -109,8 +109,24 @@ def test_web_export_includes_category_and_kind_panels(catalog: Catalog, tmp_path
     assert 'id="kind-bar"' in html
     # Architecture presets next to Default/None/All.
     assert 'id="isa-intel"' in html
-    assert 'id="isa-arm"' in html
+    assert 'id="isa-arm32"' in html
+    assert 'id="isa-arm64"' in html
     assert 'id="isa-riscv"' in html
+
+
+def test_filter_spec_json_exposes_presets(catalog: Catalog, tmp_path: Path):
+    export_web(catalog, tmp_path)
+    spec = json.loads((tmp_path / "filter_spec.json").read_text())
+    presets = spec.get("presets") or {}
+    assert {"default", "intel", "arm32", "arm64", "riscv", "none", "all"} <= set(presets)
+    # Arm32/Arm64 must carry arm_arch facet; Intel must not.
+    assert presets["arm32"]["arm_arch"] == ["A32", "BOTH"]
+    assert presets["arm64"]["arm_arch"] == ["A64", "BOTH"]
+    assert presets["intel"]["arm_arch"] is None
+    # Named presets (non-All) force kind=intrinsic only.
+    for name in ("default", "intel", "arm32", "arm64", "riscv"):
+        assert presets[name]["kind"] == ["intrinsic"], f"{name} must force intrinsic-only"
+    assert set(presets["all"]["kind"]) == {"intrinsic", "instruction"}
 
 
 def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path: Path):

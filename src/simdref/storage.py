@@ -18,6 +18,34 @@ import msgpack
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 
 
+def derive_arm_arch(isa: list[str] | None, metadata: dict[str, str] | None) -> str | None:
+    """Classify an Arm intrinsic as A32/A64/BOTH from its supported_architectures.
+
+    Rules (matching the Part A preset design):
+    * contains A64 and (A32 or v7 or MVE) -> "BOTH"
+    * contains A64 only -> "A64"
+    * contains A32 or v7 or MVE only -> "A32"
+    * non-Arm rows or missing metadata -> None
+    """
+    supported = str((metadata or {}).get("supported_architectures") or "").strip()
+    if not supported:
+        # MVE-only Arm intrinsics may not carry supported_architectures;
+        # infer A32 from the ISA list in that case.
+        if isa and any(tok.upper() == "MVE" for tok in isa):
+            return "A32"
+        return None
+    upper = supported.upper()
+    has_a64 = "A64" in upper
+    has_a32 = ("A32" in upper) or ("V7" in upper) or ("MVE" in upper)
+    if has_a64 and has_a32:
+        return "BOTH"
+    if has_a64:
+        return "A64"
+    if has_a32:
+        return "A32"
+    return None
+
+
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parents[1]
 
@@ -54,7 +82,7 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "10"
+SQLITE_SCHEMA_VERSION = "11"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 SQLITE_INSERT_BATCH_SIZE = 512
 
@@ -106,7 +134,7 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None or row[0] != SQLITE_SCHEMA_VERSION:
             return False
-        expected_columns = {"id", "name", "architecture", "signature", "description", "header", "isa", "category", "subcategory", "payload"}
+        expected_columns = {"id", "name", "architecture", "signature", "description", "header", "isa", "category", "subcategory", "arm_arch", "payload"}
         actual_columns = {item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()}
         if expected_columns != actual_columns:
             return False
@@ -114,8 +142,11 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         actual_instruction_columns = {item[1] for item in conn.execute("PRAGMA table_info(instructions_data)").fetchall()}
         if expected_instruction_columns != actual_instruction_columns:
             return False
-        indexes = {item[1] for item in conn.execute("PRAGMA index_list(instructions_data)").fetchall()}
-        return "idx_instruction_category" in indexes
+        instr_indexes = {item[1] for item in conn.execute("PRAGMA index_list(instructions_data)").fetchall()}
+        if "idx_instruction_category" not in instr_indexes:
+            return False
+        intr_indexes = {item[1] for item in conn.execute("PRAGMA index_list(intrinsics_data)").fetchall()}
+        return "idx_intrinsic_arm_arch" in intr_indexes
     except sqlite3.Error:
         return False
     finally:
@@ -170,9 +201,11 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             isa TEXT NOT NULL,
             category TEXT NOT NULL,
             subcategory TEXT NOT NULL DEFAULT '',
+            arm_arch TEXT,
             payload BLOB NOT NULL
         );
         CREATE INDEX idx_intrinsic_name ON intrinsics_data (name);
+        CREATE INDEX idx_intrinsic_arm_arch ON intrinsics_data (arm_arch);
         CREATE TABLE instructions_data (
             db_key TEXT PRIMARY KEY COLLATE NOCASE,
             key TEXT NOT NULL COLLATE NOCASE,
@@ -222,6 +255,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             " ".join(record.isa),
             record.category,
             record.subcategory,
+            derive_arm_arch(record.isa, record.metadata),
             payload,
         ))
         instr_summary = ""
@@ -245,7 +279,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         ))
         if len(intrinsics_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
-                "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, arm_arch, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 intrinsics_data_batch,
             )
             cur.executemany(
@@ -256,7 +290,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             intrinsics_fts_batch.clear()
     if intrinsics_data_batch:
         cur.executemany(
-            "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, arm_arch, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             intrinsics_data_batch,
         )
         cur.executemany(
@@ -383,6 +417,7 @@ def _append_filter_clause(
     enabled_categories,
     binds: list,
     match_marker: str,
+    enabled_arm_arch=None,
 ) -> str:
     """Splice a FilterSpec WHERE fragment into the SQL query after the
     FTS MATCH placeholder, so bind ordering stays correct.
@@ -397,6 +432,7 @@ def _append_filter_clause(
         table,
         enabled_families=enabled_families,
         enabled_categories=enabled_categories,
+        enabled_arm_arch=enabled_arm_arch,
     )
     if not clause:
         return base_sql
@@ -414,6 +450,7 @@ def search_intrinsic_candidates_from_db(
     filter_spec=None,
     enabled_families=None,
     enabled_categories=None,
+    enabled_arm_arch=None,
 ) -> list[IntrinsicRecord]:
     match_query = _fts_match_query(query)
     if not match_query:
@@ -430,6 +467,7 @@ def search_intrinsic_candidates_from_db(
     sql = _append_filter_clause(
         sql, "intrinsics_data", filter_spec, enabled_families, enabled_categories, binds,
         match_marker="intrinsics_fts MATCH ?",
+        enabled_arm_arch=enabled_arm_arch,
     )
     binds.append(limit)
     rows = conn.execute(sql, binds).fetchall()

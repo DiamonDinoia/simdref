@@ -47,6 +47,95 @@ DEFAULT_SUBS: dict[str, set[str]] = {
 }
 
 
+# Strict x86-64-v4 sub-ISAs — what ships on every psABI-v4 target.
+# Explicitly excludes: AVX-512 _VNNI/_FP16/_BF16/_VBMI*/_VPOPCNTDQ/_BITALG/
+# _IFMA/_VP2INTERSECT, VAES, VPCLMULQDQ, GFNI, AMX, APX, AVX10, SVML.
+X86_64_V4_SUBS: set[str] = {
+    "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2",
+    "AVX", "AVX2", "F16C", "FMA",
+    "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
+}
+
+ARM_ALL_SUBS: set[str] = {"NEON", "SVE", "SVE2", "SME", "MVE"}
+ARM32_SUBS: set[str] = {"NEON", "MVE"}
+ARM64_SUBS: set[str] = {"NEON", "SVE", "SVE2", "SME"}
+RVV_SUBS: set[str] = {"V", "ZVE", "ZV"}
+
+# Default preset mirrors DEFAULT_ENABLED_ISAS but uses strict-v4 on x86.
+DEFAULT_PRESET_SUBS: set[str] = X86_64_V4_SUBS | ARM_ALL_SUBS | RVV_SUBS
+
+# arm_arch facet values (NULL excluded; filter logic handles missing values).
+ARM_ARCH_VALUES: tuple[str, ...] = ("A32", "A64", "BOTH")
+
+
+@dataclass(frozen=True)
+class PresetSpec:
+    """Declarative preset: families + subs + arm_arch + kind applied atomically."""
+
+    families: frozenset[str]
+    subs: frozenset[str]
+    arm_arch: frozenset[str] | None  # None = no arm_arch filter
+    kind: frozenset[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "families": sorted(self.families),
+            "subs": sorted(self.subs),
+            "arm_arch": sorted(self.arm_arch) if self.arm_arch is not None else None,
+            "kind": sorted(self.kind),
+        }
+
+    @classmethod
+    def empty(cls) -> "PresetSpec":
+        return cls(frozenset(), frozenset(), None, frozenset())
+
+    @classmethod
+    def all(cls) -> "PresetSpec":
+        return cls(
+            families=frozenset(ISA_FAMILY_ORDER.keys()),
+            subs=frozenset(sub for subs in FAMILY_SUB_ORDER.values() for sub in subs)
+            | ARM_ALL_SUBS,
+            arm_arch=None,
+            kind=frozenset({"intrinsic", "instruction"}),
+        )
+
+
+ARCH_PRESETS: dict[str, PresetSpec] = {
+    "default": PresetSpec(
+        families=frozenset({"SSE", "AVX", "AVX-512", "Arm", "RISC-V"}),
+        subs=frozenset(DEFAULT_PRESET_SUBS),
+        arm_arch=None,
+        kind=frozenset({"intrinsic"}),
+    ),
+    "intel": PresetSpec(
+        families=frozenset({"SSE", "AVX", "AVX-512"}),
+        subs=frozenset(X86_64_V4_SUBS),
+        arm_arch=None,
+        kind=frozenset({"intrinsic"}),
+    ),
+    "arm32": PresetSpec(
+        families=frozenset({"Arm"}),
+        subs=frozenset(ARM32_SUBS),
+        arm_arch=frozenset({"A32", "BOTH"}),
+        kind=frozenset({"intrinsic"}),
+    ),
+    "arm64": PresetSpec(
+        families=frozenset({"Arm"}),
+        subs=frozenset(ARM64_SUBS),
+        arm_arch=frozenset({"A64", "BOTH"}),
+        kind=frozenset({"intrinsic"}),
+    ),
+    "riscv": PresetSpec(
+        families=frozenset({"RISC-V"}),
+        subs=frozenset(RVV_SUBS),
+        arm_arch=None,
+        kind=frozenset({"intrinsic"}),
+    ),
+    "none": PresetSpec.empty(),
+    "all": PresetSpec.all(),
+}
+
+
 @dataclass(frozen=True)
 class CategorySpec:
     """A category facet derived from the catalog database."""
@@ -78,6 +167,10 @@ class FilterSpec:
         default_factory=lambda: {k: set(v) for k, v in DEFAULT_SUBS.items()}
     )
     categories: list[CategorySpec] = field(default_factory=list)
+    presets: dict[str, PresetSpec] = field(
+        default_factory=lambda: dict(ARCH_PRESETS)
+    )
+    arm_arch_values: tuple[str, ...] = ARM_ARCH_VALUES
 
     def to_json(self) -> dict[str, Any]:
         """JSON-friendly projection used by the web SPA."""
@@ -87,6 +180,8 @@ class FilterSpec:
             "default_enabled": list(self.default_enabled),
             "default_subs": {k: sorted(v) for k, v in self.default_subs.items()},
             "categories": [c.to_dict() for c in self.categories],
+            "presets": {name: spec.to_dict() for name, spec in self.presets.items()},
+            "arm_arch_values": list(self.arm_arch_values),
         }
 
     # --- in-memory predicate --------------------------------------------------
@@ -123,6 +218,7 @@ class FilterSpec:
         table: str,
         enabled_families: Iterable[str] | None = None,
         enabled_categories: Iterable[str] | None = None,
+        enabled_arm_arch: Iterable[str] | None = None,
     ) -> tuple[str, list[Any]]:
         """Return a SQL ``WHERE`` fragment and bind values for *table*.
 
@@ -148,6 +244,12 @@ class FilterSpec:
                 placeholders = ",".join("?" for _ in categories_list)
                 clauses.append(f"{table}.category IN ({placeholders})")
                 binds.extend(categories_list)
+        if enabled_arm_arch and table == "intrinsics_data":
+            arch_list = list(enabled_arm_arch)
+            if arch_list:
+                placeholders = ",".join("?" for _ in arch_list)
+                clauses.append(f"{table}.arm_arch IN ({placeholders})")
+                binds.extend(arch_list)
         return (" AND ".join(clauses), binds)
 
 

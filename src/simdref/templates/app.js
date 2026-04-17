@@ -61,6 +61,8 @@ const enabledKinds = new Set(["intrinsic", "instruction"]);
 let FAMILY_SUB_ORDER = {};
 let DEFAULT_SUBS = {};
 let isaFamilyOrder = {};
+let ARCH_PRESETS = {};
+let enabledArmArch = null; // null = no filter; Set of "A32"|"A64"|"BOTH" when active
 
 /* ── Theme ────────────────────────────────────────────────────────── */
 function getEffectiveTheme() {
@@ -147,12 +149,32 @@ function categoryVisible(item) {
   return enabledCategories.has(cat);
 }
 
+function armArchVisible(item) {
+  if (!enabledArmArch) return true;
+  // Only intrinsics carry arm_arch metadata; instructions are not filtered.
+  const families = item.isa_families || [];
+  if (!families.includes("Arm")) return true;
+  const supported = String((item.metadata && item.metadata.supported_architectures) || "").toUpperCase();
+  let bucket = null;
+  if (!supported) {
+    // Infer A32 when MVE is present; otherwise unknown.
+    if ((item.isa || []).some(t => String(t).toUpperCase() === "MVE")) bucket = "A32";
+  } else {
+    const hasA64 = supported.includes("A64");
+    const hasA32 = supported.includes("A32") || supported.includes("V7") || supported.includes("MVE");
+    if (hasA64 && hasA32) bucket = "BOTH";
+    else if (hasA64) bucket = "A64";
+    else if (hasA32) bucket = "A32";
+  }
+  return bucket !== null && enabledArmArch.has(bucket);
+}
+
 function rebuildVisibleSet() {
   visibleSet = new Set();
   for (let i = 0; i < searchEntries.length; i++) {
     const e = searchEntries[i];
     if (!enabledKinds.has(e.kind)) continue;
-    if (isaVisible(e.item) && categoryVisible(e.item)) visibleSet.add(i);
+    if (isaVisible(e.item) && categoryVisible(e.item) && armArchVisible(e.item)) visibleSet.add(i);
   }
 }
 
@@ -831,32 +853,41 @@ function renderIsaFilters() {
   updateIsaSummary();
 }
 
-const ARCH_PRESETS = {
-  intel: ["x86", "MMX", "SSE", "AVX", "AVX-512", "AVX10", "AMX", "APX", "SVML"],
-  arm:   ["Arm"],
-  riscv: ["RISC-V"],
-};
-
 function applyIsaPreset(mode) {
-  const archFamilies = ARCH_PRESETS[mode];
+  const preset = ARCH_PRESETS[mode];
+  if (!preset) return;
+
   if (mode === "all") {
     enableAllIsas = true;
-  } else if (archFamilies) {
-    enableAllIsas = false;
-    enabledIsas = new Set(archFamilies.filter(v => availableIsas.includes(v)));
+    enabledIsas = new Set(availableIsas);
     initEnabledSubIsas();
   } else {
     enableAllIsas = false;
-    enabledIsas = mode === "default"
-      ? new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)))
-      : new Set();
-    initEnabledSubIsas();
-    if (mode === "none") {
-      for (const family of availableIsas) {
-        if (FAMILY_SUB_ORDER[family]) enabledSubIsas.set(family, new Set());
-      }
+    enabledIsas = new Set((preset.families || []).filter(v => availableIsas.includes(v)));
+    // Apply preset subs per family (intersect with FAMILY_SUB_ORDER).
+    enabledSubIsas = new Map();
+    const presetSubs = new Set(preset.subs || []);
+    for (const family of availableIsas) {
+      const subs = FAMILY_SUB_ORDER[family];
+      if (!subs) continue;
+      const keep = new Set(subs.filter(s => presetSubs.has(s)));
+      enabledSubIsas.set(family, keep);
     }
   }
+
+  // arm_arch facet
+  enabledArmArch = preset.arm_arch ? new Set(preset.arm_arch) : null;
+
+  // kind facet
+  enabledKinds.clear();
+  for (const k of (preset.kind || ["intrinsic", "instruction"])) enabledKinds.add(k);
+  // Reflect kind state in the checkboxes.
+  for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
+    cb.checked = enabledKinds.has(cb.dataset.kind);
+    const chip = cb.closest(".isa-chip");
+    if (chip) chip.classList.toggle("active", cb.checked);
+  }
+
   visibleSet = null;
   rebuildVisibleSet();
   renderIsaFilters();
@@ -1200,7 +1231,8 @@ detailNode.addEventListener("click", (e) => {
 $("isa-toggle").addEventListener("click", () => isaPanel.classList.toggle("hidden"));
 $("isa-default").addEventListener("click", () => applyIsaPreset("default"));
 if ($("isa-intel")) $("isa-intel").addEventListener("click", () => applyIsaPreset("intel"));
-if ($("isa-arm"))   $("isa-arm").addEventListener("click",   () => applyIsaPreset("arm"));
+if ($("isa-arm32")) $("isa-arm32").addEventListener("click", () => applyIsaPreset("arm32"));
+if ($("isa-arm64")) $("isa-arm64").addEventListener("click", () => applyIsaPreset("arm64"));
 if ($("isa-riscv")) $("isa-riscv").addEventListener("click", () => applyIsaPreset("riscv"));
 $("isa-none").addEventListener("click", () => applyIsaPreset("none"));
 $("isa-all").addEventListener("click", () => applyIsaPreset("all"));
@@ -1311,6 +1343,7 @@ Promise.all([
     DEFAULT_SUBS = Object.fromEntries(Object.entries(config.default_subs || {}).map(([family, values]) => [family, new Set(values)]));
     isaFamilyOrder = config.family_order || {};
     availableCategories = Array.isArray(config.categories) ? config.categories : [];
+    ARCH_PRESETS = config.presets && typeof config.presets === "object" ? config.presets : {};
     if (stamp && metaNode) {
       const stale = stamp.catalog_generated_at && data.generated_at && stamp.catalog_generated_at !== data.generated_at;
       const label = stamp.git_sha ? `build ${stamp.git_sha}` : `v${stamp.version || ""}`;

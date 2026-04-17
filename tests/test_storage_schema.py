@@ -1,4 +1,4 @@
-"""Schema v10 regression tests.
+"""Schema v11 regression tests.
 
 Builds a tiny in-memory catalog through the real ``build_sqlite`` code path
 and asserts the indexed ``category`` column is present on
@@ -57,15 +57,33 @@ def built_db(tmp_path: Path) -> Path:
     return db
 
 
-def test_schema_version_is_10(built_db: Path):
-    assert SQLITE_SCHEMA_VERSION == "10"
+def test_schema_version_is_11(built_db: Path):
+    assert SQLITE_SCHEMA_VERSION == "11"
     conn = sqlite3.connect(built_db)
     try:
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     finally:
         conn.close()
     assert row is not None
-    assert row[0] == "10"
+    assert row[0] == "11"
+
+
+def test_intrinsics_data_has_arm_arch_column(built_db: Path):
+    conn = sqlite3.connect(built_db)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(intrinsics_data)")}
+    finally:
+        conn.close()
+    assert "arm_arch" in cols
+
+
+def test_intrinsics_data_has_arm_arch_index(built_db: Path):
+    conn = sqlite3.connect(built_db)
+    try:
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(intrinsics_data)")}
+    finally:
+        conn.close()
+    assert "idx_intrinsic_arm_arch" in indexes
 
 
 def test_instructions_data_has_category_column(built_db: Path):
@@ -114,3 +132,36 @@ def test_sqlite_schema_is_current_false_for_older_schema(tmp_path: Path):
     finally:
         conn.close()
     assert sqlite_schema_is_current(db) is False
+
+
+def test_arm_arch_populated_from_supported_architectures(tmp_path: Path):
+    intr_both = IntrinsicRecord(
+        name="vaddq_u8", signature="x vaddq_u8()", description=".", header="arm_neon.h",
+        architecture="arm", isa=["NEON"], category="Arithmetic",
+        metadata={"supported_architectures": "v7/A32/A64"},
+    )
+    intr_a64 = IntrinsicRecord(
+        name="svadd_s32_z", signature="x svadd_s32_z()", description=".", header="arm_sve.h",
+        architecture="arm", isa=["SVE"], category="Arithmetic",
+        metadata={"supported_architectures": "A64"},
+    )
+    intr_x86 = IntrinsicRecord(
+        name="_mm_add_ps", signature="x _mm_add_ps()", description=".", header="xmmintrin.h",
+        architecture="x86", isa=["SSE"], category="Arithmetic",
+    )
+    cat = Catalog(
+        intrinsics=[intr_both, intr_a64, intr_x86],
+        instructions=[],
+        sources=[SourceVersion(source="t", version="t", fetched_at="2025-01-01T00:00:00+00:00", url="test://")],
+        generated_at="2025-01-01T00:00:00+00:00",
+    )
+    db = tmp_path / "catalog.db"
+    build_sqlite(cat, db)
+    conn = sqlite3.connect(db)
+    try:
+        rows = {row[0]: row[1] for row in conn.execute("SELECT name, arm_arch FROM intrinsics_data")}
+    finally:
+        conn.close()
+    assert rows["vaddq_u8"] == "BOTH"
+    assert rows["svadd_s32_z"] == "A64"
+    assert rows["_mm_add_ps"] is None

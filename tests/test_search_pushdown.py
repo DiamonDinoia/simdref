@@ -171,6 +171,58 @@ def test_instruction_family_pushdown(db_path: Path):
     assert "PADDD" not in mnemonics
 
 
+def test_arm_arch_pushdown_filters_intrinsics(tmp_path: Path):
+    intrinsics = [
+        IntrinsicRecord(
+            name="vaddq_u8",
+            signature="uint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b)",
+            description="Add packed u8 lanes.",
+            header="arm_neon.h",
+            architecture="arm",
+            isa=["NEON"],
+            category="Arithmetic",
+            metadata={"supported_architectures": "v7/A32/A64"},
+        ),
+        IntrinsicRecord(
+            name="svadd_s32_z",
+            signature="svint32_t svadd_s32_z(svbool_t pg, svint32_t a, svint32_t b)",
+            description="Add SVE lanes.",
+            header="arm_sve.h",
+            architecture="arm",
+            isa=["SVE"],
+            category="Arithmetic",
+            metadata={"supported_architectures": "A64"},
+        ),
+    ]
+    cat = Catalog(
+        intrinsics=intrinsics, instructions=[],
+        sources=[SourceVersion(source="t", version="t", fetched_at="2025-01-01T00:00:00+00:00", url="test://")],
+        generated_at="2025-01-01T00:00:00+00:00",
+    )
+    db = tmp_path / "catalog.db"
+    build_sqlite(cat, db)
+    spec = FilterSpec()
+    conn = open_db(db)
+    try:
+        a32_rows = {
+            r.name
+            for r in search_intrinsic_candidates_from_db(
+                conn, "add", filter_spec=spec, enabled_arm_arch={"A32", "BOTH"}
+            )
+        }
+        a64_rows = {
+            r.name
+            for r in search_intrinsic_candidates_from_db(
+                conn, "add", filter_spec=spec, enabled_arm_arch={"A64", "BOTH"}
+            )
+        }
+    finally:
+        conn.close()
+    assert "vaddq_u8" in a32_rows
+    assert "svadd_s32_z" not in a32_rows  # A64-only excluded from Arm32 preset
+    assert {"vaddq_u8", "svadd_s32_z"} <= a64_rows
+
+
 def test_pushdown_degrades_gracefully_without_spec(db_path: Path):
     conn = open_db(db_path)
     try:

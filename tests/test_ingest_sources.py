@@ -15,6 +15,30 @@ import zipfile
 import pytest
 
 from simdref import ingest_sources as src
+from simdref.storage import derive_arm_arch
+
+
+@pytest.mark.parametrize(
+    "supported, isa, expected",
+    [
+        ("v7/A32/A64", ["NEON"], "BOTH"),
+        ("A32/A64", ["NEON"], "BOTH"),
+        ("A64", ["SVE"], "A64"),
+        ("A32", ["NEON"], "A32"),
+        ("v7", ["NEON"], "A32"),
+        ("", ["MVE"], "A32"),
+        ("", ["NEON"], None),
+        ("unknown", ["NEON"], None),
+    ],
+)
+def test_derive_arm_arch_classifies_supported_architectures(supported, isa, expected):
+    metadata = {"supported_architectures": supported} if supported else {}
+    assert derive_arm_arch(isa, metadata) == expected
+
+
+def test_derive_arm_arch_none_for_non_arm():
+    assert derive_arm_arch(["SSE"], {}) is None
+    assert derive_arm_arch(["AVX512F"], None) is None
 
 
 # ---------------------------------------------------------------------------

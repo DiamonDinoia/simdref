@@ -527,6 +527,7 @@ class SimdrefApp(App):
         # Map family -> list of sub-ISA names present in the DB
         self._family_subs: dict[str, list[str]] = {}
         self._enabled_kinds: set[str] = {"intrinsic", "instruction"}
+        self._enabled_arm_arch: set[str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -541,7 +542,8 @@ class SimdrefApp(App):
                 yield IsaToggle(family, enabled=family in self._enabled_families)
             yield PresetButton("Default", "default", classes="preset-btn")
             yield PresetButton("Intel", "intel", classes="preset-btn")
-            yield PresetButton("Arm", "arm", classes="preset-btn")
+            yield PresetButton("Arm32", "arm32", classes="preset-btn")
+            yield PresetButton("Arm64", "arm64", classes="preset-btn")
             yield PresetButton("RISC-V", "riscv", classes="preset-btn")
             yield PresetButton("None", "none", classes="preset-btn")
             yield PresetButton("All", "all", classes="preset-btn")
@@ -751,34 +753,33 @@ class SimdrefApp(App):
 
     @on(PresetButton.Clicked)
     def on_preset_clicked(self, event: PresetButton.Clicked) -> None:
-        """Apply ISA presets from the bar buttons."""
-        arch_presets = {
-            "intel": {"x86", "MMX", "SSE", "AVX", "AVX-512", "AVX10", "AMX", "APX", "SVML"},
-            "arm": {"Arm"},
-            "riscv": {"RISC-V"},
-        }
+        """Apply ISA presets — families + subs + arm_arch + kind in one step."""
+        from simdref.filters import ARCH_PRESETS
+
+        preset = ARCH_PRESETS.get(event.mode) or ARCH_PRESETS["default"]
         if event.mode == "all":
             self._enabled_families = set(_ISA_FAMILIES)
             self._enabled_sub_isas = None
-        elif event.mode == "none":
-            self._enabled_families = set()
-            self._enabled_sub_isas = set()
-        elif event.mode in arch_presets:
-            self._enabled_families = {f for f in _ISA_FAMILIES if f in arch_presets[event.mode]}
+        else:
+            self._enabled_families = {f for f in _ISA_FAMILIES if f in preset.families}
+            preset_subs = set(preset.subs)
             subs: set[str] = set()
             for fam in self._enabled_families:
-                subs.update(self._family_subs.get(fam, []))
-            self._enabled_sub_isas = subs if subs else None
-        else:
-            self._enabled_families = set(DEFAULT_ENABLED_ISAS)
-            initial_subs: set[str] = set()
-            for fam in DEFAULT_ENABLED_ISAS:
-                initial_subs.update(DEFAULT_SUBS.get(fam, set()))
-            self._enabled_sub_isas = initial_subs if initial_subs else None
+                available = set(self._family_subs.get(fam, []))
+                subs.update(available & preset_subs)
+            self._enabled_sub_isas = subs if subs else set()
+        self._enabled_arm_arch = set(preset.arm_arch) if preset.arm_arch else None
+        self._enabled_kinds = set(preset.kind)
         self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
         # Update ISA toggle visuals
         for t in self.query(IsaToggle):
             target = t.family in self._enabled_families
+            t.enabled = target
+            t.remove_class("enabled" if not target else "disabled")
+            t.add_class("enabled" if target else "disabled")
+        # Reflect kind toggle state.
+        for t in self.query(KindToggle):
+            target = t.kind in self._enabled_kinds
             t.enabled = target
             t.remove_class("enabled" if not target else "disabled")
             t.add_class("enabled" if target else "disabled")
