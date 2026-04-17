@@ -56,6 +56,9 @@ simdref VADDPS 2             # pick variant #2 from the list
 | `simdref update --build-local` | Refresh local Arm JSON cache and rebuild catalog from upstream sources |
 | `simdref update --offline` | Build the bundled fixture dataset locally |
 | `simdref llm <query>` | Structured JSON output for LLM consumption |
+| `simdref llm query <name>` | Strict lookup (exit 2 on no-match, with `--isa` / `--category` filters) |
+| `simdref llm list` | Enumerate catalog entries (arch/ISA filtered) |
+| `simdref llm schema` | Print JSON schema for `llm` output |
 | `simdref shell-init bash` | Print bash completion setup |
 | `simdref web` | Generate static web app |
 | `simdref doctor` | Validate installation |
@@ -96,10 +99,23 @@ Publishable directly to GitHub Pages.
 
 ## Data sources
 
-| Source | What | Size |
+| Source | What | Catalog entries¹ |
 |--------|------|------|
-| Intel Intrinsics Guide | Function signatures, descriptions, ISA, categories | ~4K intrinsics |
-| uops.info | Instructions, operands, latency, throughput, port usage | ~3K instructions |
+| Intel Intrinsics Guide | Function signatures, descriptions, ISA, categories | 7,146 intrinsics |
+| uops.info | Instructions, operands, latency, throughput, port usage | 22,276 instructions |
+| Arm ACLE intrinsics | NEON/SVE intrinsic signatures and descriptions | 10,791 intrinsics |
+| Arm AARCHMRS (A64) | Base instruction forms and operand tables | live-only² |
+| riscv-rvv-intrinsic-doc | RVV intrinsic signatures, semantics, deterministic instruction refs | 74,319 intrinsics |
+| RISC-V unified-db + docs.riscv.org fallback | RVV instruction forms, ISA tags, Description/Operation sections | 2,868 instructions |
+
+¹ Counts are from the current `--build-local` rebuild with the `vendor/` archives
+committed to this repo. See [`docs/coverage/summary.json`](docs/coverage/summary.json)
+for live parity against upstream and [`docs/SOURCES.md`](docs/SOURCES.md) for
+license and refresh-cadence details.
+
+² Offline snapshots use the bundled fixture (2 sample instructions); the full
+AARCHMRS spec is only available via live fetch or by placing the tarball under
+`vendor/arm/`.
 
 The default `update` path downloads pre-built data from GitHub Releases using
 schema/version-compatible tags when available, with bundled fixtures as the
@@ -109,6 +125,22 @@ the cached local vendor files if the refresh fails. Arm instruction imports can
 also read a vendored `vendor/arm/a64_instructions.json` or an
 `AARCHMRS_BSD*.tar.gz` archive placed under `vendor/arm/`. Bundled fixtures
 remain the offline fallback.
+
+### RISC-V status
+
+Official-first ingest, full upstream coverage against the vendored snapshot:
+
+- RVV intrinsics come from `riscv-rvv-intrinsic-doc` (74,319 entries) with
+  stable project-level URLs instead of synthetic per-intrinsic anchors.
+- Instructions come from `riscv-unified-db` (2,868 entries) and keep dotted
+  mnemonic forms plus extension/policy metadata.
+- Missing instruction semantics are enriched from `docs.riscv.org` HTML
+  fallback when available.
+
+Known exclusions:
+
+- Performance data is still x86-only in v1.
+- RISC-V coverage is broader RVV, not full scalar or privileged ISA completeness.
 
 ## Architecture
 

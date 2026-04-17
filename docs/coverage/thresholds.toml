@@ -1,0 +1,24 @@
+# Per-source coverage floors for `tools/audit_coverage.py diff`.
+#
+# Overrides the default (0.95, or $SIMDREF_COVERAGE_THRESHOLD if set). Bump
+# the numbers up here as ingestion improves — tightening is how upstream
+# drift becomes a CI failure. Never loosen without a documented reason.
+#
+# Current state (see `docs/coverage/summary.json`, also `docs/SOURCES.md`):
+#   - Intel / uops.info / RISC-V / Arm A64: all at or above 99 % against
+#     the vendored archives.
+#   - Arm intrinsics: ~70 %. Upstream encodes optional prefix/suffix
+#     alternatives (e.g. `[__arm_]vddupq[_n]_u8`); the catalog stores one
+#     canonical form per upstream entry, so the 30 % shortfall is real
+#     missing intrinsics, not a counting artefact. Raising this floor
+#     requires extending `parse_arm_intrinsics_payload`.
+#   - Arm A64 offline snapshot uses a 2-entry fixture; live-fetch covers
+#     the full AARCHMRS spec.
+
+[thresholds]
+intel-intrinsics   = 0.99
+uops-info          = 0.98
+arm-intrinsics     = 0.65
+arm-a64            = 0.90
+riscv-rvv          = 0.99
+riscv-unified-db   = 0.99
