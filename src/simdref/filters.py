@@ -51,8 +51,11 @@ DEFAULT_SUBS: dict[str, set[str]] = {
 # Explicitly excludes: AVX-512 _VNNI/_FP16/_BF16/_VBMI*/_VPOPCNTDQ/_BITALG/
 # _IFMA/_VP2INTERSECT, VAES, VPCLMULQDQ, GFNI, AMX, APX, AVX10, SVML.
 X86_64_V4_SUBS: set[str] = {
-    "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2",
-    "AVX", "AVX2", "F16C", "FMA",
+    # psABI x86-64-v2
+    "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2", "POPCNT",
+    # psABI x86-64-v3
+    "AVX", "AVX2", "F16C", "FMA", "BMI1", "BMI2", "LZCNT", "MOVBE",
+    # psABI x86-64-v4
     "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
 }
 
@@ -108,7 +111,8 @@ ARCH_PRESETS: dict[str, PresetSpec] = {
         kind=frozenset({"intrinsic"}),
     ),
     "intel": PresetSpec(
-        families=frozenset({"SSE", "AVX", "AVX-512"}),
+        # Include "x86" so BMI/POPCNT/LZCNT intrinsics (family=x86) are reachable.
+        families=frozenset({"x86", "SSE", "AVX", "AVX-512"}),
         subs=frozenset(X86_64_V4_SUBS),
         arm_arch=None,
         kind=frozenset({"intrinsic"}),

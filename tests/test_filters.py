@@ -152,8 +152,13 @@ class ArchPresetsTests(unittest.TestCase):
 
     def test_intel_preset_is_strict_x86_64_v4(self):
         preset = ARCH_PRESETS["intel"]
-        self.assertEqual(preset.families, frozenset({"SSE", "AVX", "AVX-512"}))
+        self.assertEqual(preset.families, frozenset({"x86", "SSE", "AVX", "AVX-512"}))
         self.assertEqual(set(preset.subs), X86_64_V4_SUBS)
+        # v2/v3/v4 baseline must all be present.
+        for sub in ("SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2",
+                    "AVX", "AVX2", "F16C", "FMA", "BMI1", "BMI2", "POPCNT", "LZCNT",
+                    "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"):
+            self.assertIn(sub, preset.subs, f"Intel preset missing {sub}")
         # Intel preset must NOT enable AMX/APX/AVX10/SVML/VAES/GFNI/AVX-512 _VNNI etc.
         forbidden = {"AMX-TILE", "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16",
                      "AVX512_VBMI", "VAES", "GFNI", "AVX512_VP2INTERSECT"}
