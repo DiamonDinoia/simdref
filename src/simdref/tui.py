@@ -8,10 +8,22 @@ Uses SQLite FTS for fast search instead of loading the full catalog.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 import subprocess
+import sys
+import time
 from typing import TYPE_CHECKING
+
+_PROFILE = os.environ.get("SIMDREF_PROFILE") == "1"
+
+
+def _profile_log(tag: str, elapsed_ms: float, **extras: object) -> None:
+    if not _PROFILE:
+        return
+    extras_str = " ".join(f"{k}={v}" for k, v in extras.items())
+    sys.stderr.write(f"[simdref-profile] {tag} {elapsed_ms:.1f}ms {extras_str}\n")
 
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -183,6 +195,7 @@ def _fts_search(
     limit: int = 30,
 ) -> list[SearchResult]:
     """Search using SQLite FTS5 with ISA family and sub-ISA filtering."""
+    _t_start = time.perf_counter() if _PROFILE else 0.0
     results: list[SearchResult] = []
     fts_query = query.replace('"', '""').replace("*", "")
     if not fts_query.strip():
@@ -298,6 +311,8 @@ def _fts_search(
     # Sort by match score descending, then by kind (intrinsics first)
     candidates.sort(key=lambda c: (-c[0], 0 if c[1].kind == "intrinsic" else 1))
     results = [r for _, r in candidates[offset:offset + limit]]
+    if _PROFILE:
+        _profile_log("_fts_search", (time.perf_counter() - _t_start) * 1000, q=repr(query), n=len(results))
     return results
 
 
