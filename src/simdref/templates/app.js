@@ -32,11 +32,20 @@ let activeKey = null;
 let focusedIndex = -1;
 let renderTimer = null;
 let visibleSet = null;
+let filterRenderScheduled = false;
 let renderedCount = 0;
 let loadMoreScheduled = false;
 const INITIAL_RENDER_BATCH = 50;
 const RENDER_BATCH_SIZE = 10;
 const LOAD_MORE_THRESHOLD_PX = 600;
+
+/* Viewport virtualisation — keep only rows inside the visible window
+ * (plus a small buffer) in the DOM. Row height must match .result in
+ * style.css. */
+const ROW_HEIGHT_PX = 88;
+const VIEWPORT_BUFFER_ROWS = 30;
+let virtualWrap = null;
+let virtualRange = { start: -1, end: -1 };
 
 /* Detail chunk cache: prefix -> Promise<data> */
 const chunkCache = new Map();
@@ -284,34 +293,59 @@ function syncResultsCount(query) {
   }
 }
 
+function _ensureVirtualWrap() {
+  if (virtualWrap && virtualWrap.isConnected) return virtualWrap;
+  resultsNode.innerHTML = '<div class="results-virtual"></div>';
+  virtualWrap = resultsNode.firstElementChild;
+  return virtualWrap;
+}
+
+function _visibleRowRange() {
+  const top = resultsNode.scrollTop;
+  const h = resultsNode.clientHeight;
+  const first = Math.max(0, Math.floor(top / ROW_HEIGHT_PX) - VIEWPORT_BUFFER_ROWS);
+  const last = Math.min(resultPool.length, Math.ceil((top + h) / ROW_HEIGHT_PX) + VIEWPORT_BUFFER_ROWS);
+  return [first, last];
+}
+
+function _rowMarkup(entry, index) {
+  return `<article class="result ${entry.kind}-kind ${entry.key === activeKey ? "active" : ""} ${index === focusedIndex ? "focused" : ""}" data-key="${esc(entry.key)}" data-index="${index}" style="top:${index * ROW_HEIGHT_PX}px">
+      <div class="result-top">
+        <span class="result-kind ${entry.kind}">${esc(entry.kind)}</span>
+        <span class="result-isa">${esc(entry.item.display_architecture || entry.item.architecture || "-")}</span>
+        <span class="result-isa">${esc(entry.item.display_isa || displayIsa(entry.item.isa))}</span>
+      </div>
+      <div class="result-title">${esc(entry.title)}</div>
+      <div class="result-meta">
+        ${entry.item.lat && entry.item.lat !== "-" ? `<span class="result-perf">LAT ${esc(entry.item.lat)}</span>` : ""}
+        ${entry.item.cpi && entry.item.cpi !== "-" ? `<span class="result-perf">CPI ${esc(entry.item.cpi)}</span>` : ""}
+      </div>
+      <div class="result-summary">${esc(entry.subtitle || "")}</div>
+    </article>`;
+}
+
 function renderVisibleResults(reset = false) {
-  const nextCount = Math.min(renderedCount, resultPool.length);
-  if (reset) {
-    resultsNode.innerHTML = resultMarkup(resultPool.slice(0, nextCount), 0);
-    return;
+  const wrap = _ensureVirtualWrap();
+  wrap.style.height = (resultPool.length * ROW_HEIGHT_PX) + "px";
+  const [first, last] = _visibleRowRange();
+  if (reset || first !== virtualRange.start || last !== virtualRange.end) {
+    let html = "";
+    for (let i = first; i < last; i++) html += _rowMarkup(resultPool[i], i);
+    wrap.innerHTML = html;
+    virtualRange = { start: first, end: last };
   }
-  const currentCount = resultsNode.querySelectorAll(".result").length;
-  if (nextCount > currentCount) {
-    resultsNode.insertAdjacentHTML("beforeend", resultMarkup(resultPool.slice(currentCount, nextCount), currentCount));
-  }
+  renderedCount = last;
 }
 
 function loadMoreResults() {
-  if (renderedCount >= resultPool.length) return;
-  renderedCount = Math.min(renderedCount + RENDER_BATCH_SIZE, resultPool.length);
+  // With virtualisation there's no incremental "load more" — the
+  // viewport already shows what's needed. Kept for API parity.
   renderVisibleResults(false);
   syncResultsCount(queryInput.value.trim());
 }
 
 function maybeLoadMoreResults() {
-  while (
-    renderedCount < resultPool.length &&
-    resultsNode.scrollHeight - (resultsNode.scrollTop + resultsNode.clientHeight) <= LOAD_MORE_THRESHOLD_PX
-  ) {
-    const before = renderedCount;
-    loadMoreResults();
-    if (renderedCount === before) break;
-  }
+  renderVisibleResults(false);
 }
 
 /* ── ISA sort key (chronological) ─────────────────────────────────── */
@@ -850,10 +884,7 @@ function renderCategoryFilters() {
       }
       if (cb.checked) enabledCategories.add(cat); else enabledCategories.delete(cat);
       visibleSet = null;
-      rebuildVisibleSet();
-      updateCategorySummary();
-      renderCategoryFilters();
-      renderResults();
+      scheduleFilterRender();
     });
   }
 }
@@ -899,10 +930,7 @@ function renderIsaFilters() {
       ensureManualIsaState();
       if (cb.checked) enabledIsas.add(family); else enabledIsas.delete(family);
       visibleSet = null;
-      rebuildVisibleSet();
-      updateIsaSummary();
-      renderIsaFilters();
-      renderResults();
+      scheduleFilterRender();
     });
   }
 
@@ -919,10 +947,7 @@ function renderIsaFilters() {
         enabledSubIsas.set(family, defaultSubsForFamily(family));
       }
       visibleSet = null;
-      rebuildVisibleSet();
-      updateIsaSummary();
-      renderIsaFilters();
-      renderResults();
+      scheduleFilterRender();
     });
   }
 
@@ -937,10 +962,7 @@ function renderIsaFilters() {
       enabledSubIsas.set(family, familySubs);
       if (!familySubs.size) enabledIsas.delete(family);
       visibleSet = null;
-      rebuildVisibleSet();
-      updateIsaSummary();
-      renderIsaFilters();
-      renderResults();
+      scheduleFilterRender();
     });
   }
   updateIsaSummary();
@@ -982,12 +1004,24 @@ function applyIsaPreset(mode) {
   }
 
   visibleSet = null;
-  rebuildVisibleSet();
-  renderIsaFilters();
-  renderResults();
+  scheduleFilterRender();
 }
 
 /* ── Results rendering ────────────────────────────────────────────── */
+function scheduleFilterRender() {
+  if (filterRenderScheduled) return;
+  filterRenderScheduled = true;
+  requestAnimationFrame(() => {
+    filterRenderScheduled = false;
+    rebuildVisibleSet();
+    if (typeof updateIsaSummary === "function") updateIsaSummary();
+    if (typeof updateCategorySummary === "function") updateCategorySummary();
+    renderIsaFilters();
+    if (typeof renderCategoryFilters === "function") renderCategoryFilters();
+    renderResults();
+  });
+}
+
 function renderResults() {
   const query = queryInput.value.trim();
   if (!catalog) return;
@@ -1012,10 +1046,11 @@ function renderResults() {
       .slice(0, 5000);
   }
 
-  renderedCount = Math.min(INITIAL_RENDER_BATCH, resultPool.length);
+  renderedCount = 0;
+  virtualRange = { start: -1, end: -1 };
+  resultsNode.scrollTop = 0;
   syncResultsCount(query);
   renderVisibleResults(true);
-  requestAnimationFrame(() => maybeLoadMoreResults());
 
   // Auto-select
   const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
@@ -1038,16 +1073,18 @@ function scheduleRender() {
 /* ── Keyboard navigation ──────────────────────────────────────────── */
 function focusResult(idx) {
   if (idx < 0 || idx >= resultPool.length) return;
-  while (idx >= renderedCount && renderedCount < resultPool.length) {
-    renderedCount = Math.min(renderedCount + RENDER_BATCH_SIZE, resultPool.length);
-    renderVisibleResults(false);
-  }
   focusedIndex = idx;
+  // Scroll target row into the viewport, leaving a row's worth of margin
+  // on either edge so it's not clipped.
+  const rowTop = idx * ROW_HEIGHT_PX;
+  const viewTop = resultsNode.scrollTop;
+  const viewBottom = viewTop + resultsNode.clientHeight;
+  if (rowTop < viewTop) resultsNode.scrollTop = rowTop;
+  else if (rowTop + ROW_HEIGHT_PX > viewBottom) resultsNode.scrollTop = rowTop - resultsNode.clientHeight + ROW_HEIGHT_PX;
+  renderVisibleResults(false);
   for (const n of resultsNode.querySelectorAll(".result")) {
     n.classList.toggle("focused", parseInt(n.dataset.index) === idx);
   }
-  const el = resultsNode.querySelector(`.result[data-index="${idx}"]`);
-  if (el) el.scrollIntoView({block: "nearest"});
 }
 
 function selectFocused() {
@@ -1283,8 +1320,7 @@ for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
     if (cb.checked) enabledKinds.add(kind); else enabledKinds.delete(kind);
     cb.parentElement.classList.toggle("active", cb.checked);
     visibleSet = null;
-    rebuildVisibleSet();
-    renderResults();
+    scheduleFilterRender();
   });
 }
 
@@ -1296,20 +1332,14 @@ if ($("category-all")) {
   $("category-all").addEventListener("click", () => {
     enabledCategories = null;
     visibleSet = null;
-    rebuildVisibleSet();
-    updateCategorySummary();
-    renderCategoryFilters();
-    renderResults();
+    scheduleFilterRender();
   });
 }
 if ($("category-none")) {
   $("category-none").addEventListener("click", () => {
     enabledCategories = new Set();
     visibleSet = null;
-    rebuildVisibleSet();
-    updateCategorySummary();
-    renderCategoryFilters();
-    renderResults();
+    scheduleFilterRender();
   });
 }
 $("close-shortcuts").addEventListener("click", () => shortcutsOverlay.classList.add("hidden"));
