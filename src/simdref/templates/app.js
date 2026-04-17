@@ -20,7 +20,6 @@ const themeToggle    = $("theme-toggle");
 const themeIconLight = $("theme-icon-light");
 const themeIconDark  = $("theme-icon-dark");
 const shortcutsOverlay = $("shortcuts-overlay");
-const acNode         = $("autocomplete");
 
 /* ── State ────────────────────────────────────────────────────────── */
 let catalog = null;            // search-index.json payload
@@ -32,8 +31,6 @@ let resultPool = [];
 let activeKey = null;
 let focusedIndex = -1;
 let renderTimer = null;
-let acItems = [];              // current autocomplete entries
-let acIndex = -1;              // highlighted autocomplete index
 let visibleSet = null;
 let renderedCount = 0;
 let loadMoreScheduled = false;
@@ -939,57 +936,7 @@ function renderResults() {
 
 function scheduleRender() {
   if (renderTimer) clearTimeout(renderTimer);
-  renderTimer = setTimeout(() => { renderTimer = null; renderResults(); updateAutocomplete(); }, 90);
-}
-
-/* ── Autocomplete ─────────────────────────────────────────────────── */
-function updateAutocomplete() {
-  const query = queryInput.value.trim();
-  if (!query || !catalog || query.length < 2) { hideAutocomplete(); return; }
-  acItems = resultPool.slice(0, 8);
-  acIndex = -1;
-  if (!acItems.length) { hideAutocomplete(); return; }
-  acNode.innerHTML = acItems.map((e, i) => `
-    <div class="ac-item" data-ac="${i}">
-      <span class="result-kind ${e.kind}">${esc(e.kind)}</span>
-      <span class="ac-name">${esc(e.title)}</span>
-      <span class="ac-desc">${esc(e.subtitle || "")}</span>
-    </div>
-  `).join("");
-  acNode.classList.remove("hidden");
-  for (const el of acNode.querySelectorAll(".ac-item")) {
-    el.addEventListener("click", () => {
-      const idx = parseInt(el.dataset.ac);
-      selectAcItem(idx);
-    });
-  }
-}
-
-function hideAutocomplete() {
-  acNode.classList.add("hidden");
-  acItems = [];
-  acIndex = -1;
-}
-
-function highlightAcItem(idx) {
-  acIndex = idx;
-  for (const el of acNode.querySelectorAll(".ac-item")) {
-    el.classList.toggle("ac-active", parseInt(el.dataset.ac) === idx);
-  }
-  const active = acNode.querySelector(`.ac-item[data-ac="${idx}"]`);
-  if (active) active.scrollIntoView({block: "nearest"});
-}
-
-function selectAcItem(idx) {
-  if (idx < 0 || idx >= acItems.length) return;
-  const entry = acItems[idx];
-  queryInput.value = entry.title;
-  hideAutocomplete();
-  renderResults();
-  if (resultPool.length) {
-    focusedIndex = 0;
-    renderDetail(resultPool[0]);
-  }
+  renderTimer = setTimeout(() => { renderTimer = null; renderResults(); }, 90);
 }
 
 /* ── Keyboard navigation ──────────────────────────────────────────── */
@@ -1057,14 +1004,10 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Escape: close overlays, autocomplete, blur
+  // Escape: close overlays, blur
   if (e.key === "Escape") {
     if (!shortcutsOverlay.classList.contains("hidden")) {
       shortcutsOverlay.classList.add("hidden");
-      return;
-    }
-    if (!acNode.classList.contains("hidden")) {
-      hideAutocomplete();
       return;
     }
     if (!isaPanel.classList.contains("hidden")) {
@@ -1305,7 +1248,6 @@ queryInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
     e.stopPropagation();
-    hideAutocomplete();
     if (focusedIndex >= 0) selectFocused();
     else if (resultPool.length) {
       focusResult(0);
@@ -1315,8 +1257,6 @@ queryInput.addEventListener("keydown", (e) => {
     }
   }
 });
-queryInput.addEventListener("blur", () => setTimeout(hideAutocomplete, 150));
-queryInput.addEventListener("focus", () => { if (queryInput.value.trim().length >= 2) updateAutocomplete(); });
 
 /* ── Hash navigation ──────────────────────────────────────────────── */
 window.addEventListener("hashchange", () => {

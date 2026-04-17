@@ -161,57 +161,6 @@ body {
 }
 .search-wrap input[type="search"]:focus + .search-hint { display: none; }
 
-/* Autocomplete dropdown */
-.autocomplete {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  margin-top: 2px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.autocomplete.hidden { display: none; }
-.ac-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border);
-}
-.ac-item:last-child { border-bottom: none; }
-.ac-item:hover, .ac-item.ac-active {
-  background: var(--accent-soft);
-}
-.ac-item .result-kind {
-  flex-shrink: 0;
-  font-size: 0.6rem;
-}
-.ac-name {
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ac-desc {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-  flex-shrink: 0;
-}
-
 /* ISA toggle button */
 .isa-toggle-btn {
   display: flex;
