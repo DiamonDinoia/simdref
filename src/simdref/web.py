@@ -130,6 +130,14 @@ def _filter_spec_for_catalog(catalog: Catalog) -> FilterSpec:
         for family in families:
             key = (family, item.category, item.subcategory or "")
             aggregate[key] = aggregate.get(key, 0) + 1
+    for item in catalog.instructions:
+        cat = (item.metadata or {}).get("category", "") if isinstance(item.metadata, dict) else ""
+        if not cat:
+            continue
+        families = {isa_family(v) for v in (item.isa or [])} or {"Other"}
+        for family in families:
+            key = (family, cat, "")
+            aggregate[key] = aggregate.get(key, 0) + 1
     spec.categories = [
         CategorySpec(family=fam, category=cat, subcategory=sub, count=n)
         for (fam, cat, sub), n in sorted(aggregate.items())

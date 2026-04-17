@@ -13,6 +13,9 @@ const isaSummary     = $("isa-summary");
 const isaPanel       = $("isa-panel");
 const isaFamiliesNode = $("isa-families");
 const isaSubgroupsNode = $("isa-subgroups");
+const categoryPanel  = $("category-panel");
+const categoryChips  = $("category-chips");
+const categorySummary = $("category-summary");
 const themeToggle    = $("theme-toggle");
 const themeIconLight = $("theme-icon-light");
 const themeIconDark  = $("theme-icon-dark");
@@ -47,6 +50,13 @@ let availableIsas = [];
 let enabledIsas = new Set();
 let enableAllIsas = false;
 let enabledSubIsas = new Map();
+
+/* Category state — null means "all enabled" (no filter) */
+let availableCategories = [];   // [{family, category, subcategory, count}]
+let enabledCategories = null;
+
+/* Kind (intrinsic vs instruction/asm) filter — both enabled by default. */
+const enabledKinds = new Set(["intrinsic", "instruction"]);
 
 let FAMILY_SUB_ORDER = {};
 let DEFAULT_SUBS = {};
@@ -130,11 +140,19 @@ function isaVisible(item) {
   return false;
 }
 
+function categoryVisible(item) {
+  if (enabledCategories === null) return true;
+  const cat = item.category || (item.metadata && item.metadata.category) || "";
+  if (!cat) return enabledCategories.has("");
+  return enabledCategories.has(cat);
+}
+
 function rebuildVisibleSet() {
   visibleSet = new Set();
   for (let i = 0; i < searchEntries.length; i++) {
     const e = searchEntries[i];
-    if (isaVisible(e.item)) visibleSet.add(i);
+    if (!enabledKinds.has(e.kind)) continue;
+    if (isaVisible(e.item) && categoryVisible(e.item)) visibleSet.add(i);
   }
 }
 
@@ -669,6 +687,62 @@ async function renderDetail(entry) {
 
 }
 
+/* ── Category Filters ─────────────────────────────────────────────── */
+
+function updateCategorySummary() {
+  if (!categorySummary) return;
+  if (enabledCategories === null) {
+    categorySummary.textContent = "Category: All";
+    return;
+  }
+  const n = enabledCategories.size;
+  if (n === 0) { categorySummary.textContent = "Category: None"; return; }
+  if (n <= 2) {
+    categorySummary.textContent = "Category: " + [...enabledCategories].map(c => c || "(none)").join(", ");
+    return;
+  }
+  categorySummary.textContent = `Category: ${n} selected`;
+}
+
+function renderCategoryFilters() {
+  if (!categoryChips) return;
+  // De-duplicate categories across families (same name, aggregate count).
+  const bucket = new Map();
+  for (const spec of availableCategories) {
+    const cat = spec.category || "";
+    const prev = bucket.get(cat) || { category: cat, count: 0, families: new Set() };
+    prev.count += spec.count || 0;
+    if (spec.family) prev.families.add(spec.family);
+    bucket.set(cat, prev);
+  }
+  const entries = [...bucket.values()].sort((a, b) => b.count - a.count);
+  categoryChips.innerHTML = entries.map(entry => {
+    const active = enabledCategories === null || enabledCategories.has(entry.category);
+    const label = entry.category || "(uncategorised)";
+    return `<label class="isa-chip ${active ? "active" : ""}" title="${esc([...entry.families].join(", "))}">
+      <input type="checkbox" data-category="${esc(entry.category)}" ${active ? "checked" : ""}>
+      ${esc(label)}
+      <span class="chip-count">${entry.count}</span>
+    </label>`;
+  }).join("");
+
+  for (const cb of categoryChips.querySelectorAll("input[data-category]")) {
+    cb.addEventListener("change", () => {
+      const cat = cb.dataset.category;
+      if (enabledCategories === null) {
+        // First interaction: switch from "all" to an explicit set.
+        enabledCategories = new Set(entries.map(e => e.category));
+      }
+      if (cb.checked) enabledCategories.add(cat); else enabledCategories.delete(cat);
+      visibleSet = null;
+      rebuildVisibleSet();
+      updateCategorySummary();
+      renderCategoryFilters();
+      renderResults();
+    });
+  }
+}
+
 /* ── ISA Filters ──────────────────────────────────────────────────── */
 
 function updateIsaSummary() {
@@ -757,9 +831,20 @@ function renderIsaFilters() {
   updateIsaSummary();
 }
 
+const ARCH_PRESETS = {
+  intel: ["x86", "MMX", "SSE", "AVX", "AVX-512", "AVX10", "AMX", "APX", "SVML"],
+  arm:   ["Arm"],
+  riscv: ["RISC-V"],
+};
+
 function applyIsaPreset(mode) {
+  const archFamilies = ARCH_PRESETS[mode];
   if (mode === "all") {
     enableAllIsas = true;
+  } else if (archFamilies) {
+    enableAllIsas = false;
+    enabledIsas = new Set(archFamilies.filter(v => availableIsas.includes(v)));
+    initEnabledSubIsas();
   } else {
     enableAllIsas = false;
     enabledIsas = mode === "default"
@@ -996,6 +1081,7 @@ document.addEventListener("keydown", (e) => {
 
   // f: toggle ISA filter
   if (e.key === "f") { isaPanel.classList.toggle("hidden"); return; }
+  if (e.key === "g") { categoryPanel.classList.toggle("hidden"); return; }
 
   if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault();
@@ -1113,8 +1199,48 @@ detailNode.addEventListener("click", (e) => {
 /* ── ISA panel toggle ─────────────────────────────────────────────── */
 $("isa-toggle").addEventListener("click", () => isaPanel.classList.toggle("hidden"));
 $("isa-default").addEventListener("click", () => applyIsaPreset("default"));
+if ($("isa-intel")) $("isa-intel").addEventListener("click", () => applyIsaPreset("intel"));
+if ($("isa-arm"))   $("isa-arm").addEventListener("click",   () => applyIsaPreset("arm"));
+if ($("isa-riscv")) $("isa-riscv").addEventListener("click", () => applyIsaPreset("riscv"));
 $("isa-none").addEventListener("click", () => applyIsaPreset("none"));
 $("isa-all").addEventListener("click", () => applyIsaPreset("all"));
+
+/* Kind filter — intrinsics vs instructions/asm */
+for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
+  cb.addEventListener("change", () => {
+    const kind = cb.dataset.kind;
+    if (cb.checked) enabledKinds.add(kind); else enabledKinds.delete(kind);
+    cb.parentElement.classList.toggle("active", cb.checked);
+    visibleSet = null;
+    rebuildVisibleSet();
+    renderResults();
+  });
+}
+
+/* ── Category panel toggle + presets ──────────────────────────────── */
+if ($("category-toggle")) {
+  $("category-toggle").addEventListener("click", () => categoryPanel.classList.toggle("hidden"));
+}
+if ($("category-all")) {
+  $("category-all").addEventListener("click", () => {
+    enabledCategories = null;
+    visibleSet = null;
+    rebuildVisibleSet();
+    updateCategorySummary();
+    renderCategoryFilters();
+    renderResults();
+  });
+}
+if ($("category-none")) {
+  $("category-none").addEventListener("click", () => {
+    enabledCategories = new Set();
+    visibleSet = null;
+    rebuildVisibleSet();
+    updateCategorySummary();
+    renderCategoryFilters();
+    renderResults();
+  });
+}
 $("close-shortcuts").addEventListener("click", () => shortcutsOverlay.classList.add("hidden"));
 themeToggle.addEventListener("click", toggleTheme);
 queryInput.addEventListener("input", scheduleRender);
@@ -1184,11 +1310,14 @@ Promise.all([
     FAMILY_SUB_ORDER = config.family_sub_order || {};
     DEFAULT_SUBS = Object.fromEntries(Object.entries(config.default_subs || {}).map(([family, values]) => [family, new Set(values)]));
     isaFamilyOrder = config.family_order || {};
+    availableCategories = Array.isArray(config.categories) ? config.categories : [];
     if (stamp && metaNode) {
       const stale = stamp.catalog_generated_at && data.generated_at && stamp.catalog_generated_at !== data.generated_at;
       const label = stamp.git_sha ? `build ${stamp.git_sha}` : `v${stamp.version || ""}`;
+      metaNode.textContent = label;
       metaNode.title = `Catalog ${stamp.catalog_generated_at || "?"}${stale ? " (stale)" : ""}`;
       metaNode.dataset.stamp = label;
+      if (stale) metaNode.classList.add("stale");
     }
     catalog.intrByName = Object.fromEntries(data.intrinsics.map(i => [i.name, i]));
     catalog.instrByKey = Object.fromEntries(data.instructions.map(i => [i.key, i]));
@@ -1214,10 +1343,16 @@ Promise.all([
     initEnabledSubIsas();
 
     renderIsaFilters();
+    renderCategoryFilters();
+    updateCategorySummary();
 
     rebuildVisibleSet();
 
-    metaNode.textContent = `${data.intrinsics.length} intrinsics \u00b7 ${data.instructions.length} instructions`;
+    // Build-stamp badge text is set above if a stamp is present; only fall
+    // back to the catalog-size summary when no stamp was emitted.
+    if (!metaNode.dataset.stamp) {
+      metaNode.textContent = `${data.intrinsics.length} intrinsics \u00b7 ${data.instructions.length} instructions`;
+    }
 
     const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
     if (fromHash) queryInput.value = fromHash;

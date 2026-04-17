@@ -100,6 +100,19 @@ def test_web_export_emits_expected_artifacts(catalog: Catalog, tmp_path: Path):
         assert (tmp_path / name).is_file(), f"web export missing {name}"
 
 
+def test_web_export_includes_category_and_kind_panels(catalog: Catalog, tmp_path: Path):
+    # Phase E: UI must ship chip rows for categories and kind (intrinsic/asm).
+    export_web(catalog, tmp_path)
+    html = (tmp_path / "index.html").read_text()
+    assert 'id="category-chips"' in html
+    assert 'id="category-toggle"' in html
+    assert 'id="kind-bar"' in html
+    # Architecture presets next to Default/None/All.
+    assert 'id="isa-intel"' in html
+    assert 'id="isa-arm"' in html
+    assert 'id="isa-riscv"' in html
+
+
 def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
     payload = json.loads((tmp_path / "search-index.json").read_text())

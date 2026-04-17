@@ -30,6 +30,10 @@
       <span id="isa-summary">ISA: Default</span>
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>
     </button>
+    <button id="category-toggle" class="isa-toggle-btn" type="button" title="Category filters (g)">
+      <span id="category-summary">Category: All</span>
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>
+    </button>
   </div>
 
   <div id="isa-panel" class="isa-panel">
@@ -37,11 +41,30 @@
       <div id="isa-families" class="isa-family-chips"></div>
       <div class="isa-presets">
         <button id="isa-default" class="preset-btn" type="button">Default</button>
+        <button id="isa-intel" class="preset-btn" type="button">Intel</button>
+        <button id="isa-arm" class="preset-btn" type="button">Arm</button>
+        <button id="isa-riscv" class="preset-btn" type="button">RISC-V</button>
         <button id="isa-none" class="preset-btn" type="button">None</button>
         <button id="isa-all" class="preset-btn" type="button">All</button>
       </div>
     </div>
     <div id="isa-subgroups" class="isa-groups"></div>
+  </div>
+
+  <div id="kind-bar" class="kind-bar">
+    <span class="kind-label">Kind:</span>
+    <label class="isa-chip active"><input type="checkbox" data-kind="intrinsic" checked> intrinsics</label>
+    <label class="isa-chip active"><input type="checkbox" data-kind="instruction" checked> asm / instructions</label>
+  </div>
+
+  <div id="category-panel" class="isa-panel hidden">
+    <div class="isa-toolbar">
+      <div id="category-chips" class="isa-family-chips"></div>
+      <div class="isa-presets">
+        <button id="category-all" class="preset-btn" type="button">All</button>
+        <button id="category-none" class="preset-btn" type="button">None</button>
+      </div>
+    </div>
   </div>
 
   <div class="layout">
@@ -72,6 +95,7 @@
         <tr><td><kbd>c</kbd></td><td>Copy name to clipboard</td></tr>
         <tr><td><kbd>s</kbd></td><td>Toggle sidebar</td></tr>
         <tr><td><kbd>f</kbd></td><td>Toggle ISA filter</td></tr>
+        <tr><td><kbd>g</kbd></td><td>Toggle category filter</td></tr>
         <tr><td><kbd>d</kbd></td><td>Toggle dark mode</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show shortcuts</td></tr>
       </table>

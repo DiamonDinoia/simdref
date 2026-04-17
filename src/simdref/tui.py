@@ -390,6 +390,14 @@ class SubIsaToggle(_ToggleChip):
         self.isa = isa
 
 
+class KindToggle(_ToggleChip):
+    """Toggle chip for result kind (intrinsic | instruction)."""
+
+    def __init__(self, kind: str, label: str, enabled: bool = True) -> None:
+        super().__init__(label, enabled)
+        self.kind = kind
+
+
 class SearchInput(Input):
     """Search box with result-navigation arrow key behavior."""
 
@@ -507,6 +515,7 @@ class SimdrefApp(App):
         self._batch_toggle = False
         # Map family -> list of sub-ISA names present in the DB
         self._family_subs: dict[str, list[str]] = {}
+        self._enabled_kinds: set[str] = {"intrinsic", "instruction"}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -520,9 +529,16 @@ class SimdrefApp(App):
             for family in _ISA_FAMILIES:
                 yield IsaToggle(family, enabled=family in self._enabled_families)
             yield PresetButton("Default", "default", classes="preset-btn")
+            yield PresetButton("Intel", "intel", classes="preset-btn")
+            yield PresetButton("Arm", "arm", classes="preset-btn")
+            yield PresetButton("RISC-V", "riscv", classes="preset-btn")
             yield PresetButton("None", "none", classes="preset-btn")
             yield PresetButton("All", "all", classes="preset-btn")
         yield VerticalScroll(id="sub-isa-container")
+        with Horizontal(id="kind-bar"):
+            yield ToggleAllLabel("Kind:", classes="isa-label", id="kind-label")
+            yield KindToggle("intrinsic", "intrinsics", enabled="intrinsic" in self._enabled_kinds)
+            yield KindToggle("instruction", "asm", enabled="instruction" in self._enabled_kinds)
         yield ListView(id="results-list")
         yield VerticalScroll(id="detail-scroll")
         yield Label("", id="status-label")
@@ -669,6 +685,11 @@ class SimdrefApp(App):
             all_shown = {t.isa for t in all_subs}
             self._enabled_sub_isas = enabled if enabled != all_shown else None
             self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+        elif isinstance(toggle, KindToggle):
+            if toggle.enabled:
+                self._enabled_kinds.add(toggle.kind)
+            else:
+                self._enabled_kinds.discard(toggle.kind)
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
@@ -720,12 +741,23 @@ class SimdrefApp(App):
     @on(PresetButton.Clicked)
     def on_preset_clicked(self, event: PresetButton.Clicked) -> None:
         """Apply ISA presets from the bar buttons."""
+        arch_presets = {
+            "intel": {"x86", "MMX", "SSE", "AVX", "AVX-512", "AVX10", "AMX", "APX", "SVML"},
+            "arm": {"Arm"},
+            "riscv": {"RISC-V"},
+        }
         if event.mode == "all":
             self._enabled_families = set(_ISA_FAMILIES)
             self._enabled_sub_isas = None
         elif event.mode == "none":
             self._enabled_families = set()
             self._enabled_sub_isas = set()
+        elif event.mode in arch_presets:
+            self._enabled_families = {f for f in _ISA_FAMILIES if f in arch_presets[event.mode]}
+            subs: set[str] = set()
+            for fam in self._enabled_families:
+                subs.update(self._family_subs.get(fam, []))
+            self._enabled_sub_isas = subs if subs else None
         else:
             self._enabled_families = set(DEFAULT_ENABLED_ISAS)
             initial_subs: set[str] = set()
@@ -804,6 +836,8 @@ class SimdrefApp(App):
             offset=0,
             limit=_INITIAL_RESULT_BATCH,
         )
+        if self._enabled_kinds and len(self._enabled_kinds) < 2:
+            results = [r for r in results if r.kind in self._enabled_kinds]
         self._current_results = results
         self._has_more_results = len(results) == _INITIAL_RESULT_BATCH
         for i, result in enumerate(results, 1):
@@ -827,6 +861,8 @@ class SimdrefApp(App):
             offset=len(self._current_results),
             limit=_RESULT_BATCH_SIZE,
         )
+        if self._enabled_kinds and len(self._enabled_kinds) < 2:
+            more = [r for r in more if r.kind in self._enabled_kinds]
         if not more:
             self._has_more_results = False
             return
