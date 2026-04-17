@@ -1,4 +1,5 @@
 import json
+import msgpack
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,49 @@ class LspWebTests(unittest.TestCase):
         self.assertIsNotNone(markdown)
         self.assertIn("_mm256_add_ps", markdown)
         self.assertIn("Instructions:", markdown)
+
+    def test_riscv_instruction_hover_supports_dotted_mnemonic(self):
+        markdown = _hover_markdown(self._conn, "vadd.vv")
+        self.assertIsNotNone(markdown)
+        self.assertIn("vadd.vv", markdown)
+        self.assertIn("ISA V", markdown)
+
+    def test_sqlite_runtime_preserves_riscv_counts_sections_and_policy_metadata(self):
+        intrinsic_count = self._conn.execute(
+            "SELECT COUNT(*) FROM intrinsics_data WHERE architecture = 'riscv'"
+        ).fetchone()[0]
+        instruction_count = self._conn.execute(
+            "SELECT COUNT(*) FROM instructions_data WHERE architecture = 'riscv'"
+        ).fetchone()[0]
+        self.assertEqual(intrinsic_count, 20)
+        self.assertEqual(instruction_count, 20)
+
+        instruction_payload = msgpack.unpackb(
+            self._conn.execute(
+                "SELECT payload FROM instructions_data WHERE key = ?",
+                ("vsub.vv [masked]",),
+            ).fetchone()[0],
+            raw=False,
+        )
+        self.assertIn("Description", instruction_payload["description"])
+        self.assertIn("Operation", instruction_payload["description"])
+        self.assertEqual(instruction_payload["metadata"]["policy"], "agnostic")
+        self.assertEqual(instruction_payload["metadata"]["masking"], "masked")
+        self.assertEqual(instruction_payload["metadata"]["tail_policy"], "agnostic")
+        self.assertEqual(instruction_payload["metadata"]["mask_policy"], "agnostic")
+
+        intrinsic_payload = msgpack.unpackb(
+            self._conn.execute(
+                "SELECT payload FROM intrinsics_data WHERE name = ?",
+                ("__riscv_vsub_vv_i32m1_m",),
+            ).fetchone()[0],
+            raw=False,
+        )
+        self.assertEqual(intrinsic_payload["instructions"], ["vsub.vv [masked]"])
+        self.assertEqual(intrinsic_payload["metadata"]["policy"], "agnostic")
+        self.assertEqual(intrinsic_payload["metadata"]["masking"], "masked")
+        self.assertEqual(intrinsic_payload["metadata"]["tail_policy"], "agnostic")
+        self.assertEqual(intrinsic_payload["metadata"]["mask_policy"], "agnostic")
 
     def test_completion_returns_intrinsics(self):
         items = _completion_candidates(self._conn, "_mm256_a", limit=5)
@@ -65,6 +109,10 @@ class LspWebTests(unittest.TestCase):
             arm_intr = next(item for item in search["intrinsics"] if item["name"] == "vaddq_u8")
             self.assertEqual(arm_intr["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
             self.assertIn("argument_preparation", arm_intr["metadata"])
+            riscv_intr = next(item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1")
+            self.assertEqual(riscv_intr["display_architecture"], "RISC-V")
+            self.assertEqual(riscv_intr["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
+            self.assertIn("riscv:vsub.vv", [item["key"] for item in search["instructions"]])
             # Search index instructions have key but no measurements
             instr = search["instructions"][0]
             self.assertIn("key", instr)
@@ -98,7 +146,27 @@ class LspWebTests(unittest.TestCase):
                         self.assertEqual(metadata["intel-sdm-url"], "https://example.com/intel-sdm.pdf#page=42")
                         self.assertEqual(metadata["intel-sdm-page-start"], "42")
                         self.assertEqual(metadata["intel-sdm-page-end"], "43")
+                    if detail["architecture"] == "riscv" and detail["mnemonic"] == "vsub.vv":
+                        self.assertIn("Description", detail["description"])
+                        self.assertIn("Operation", detail["description"])
             self.assertTrue(saw_sdm)
+
+            # Filter spec: shared source of truth for ISA + category facets
+            filter_spec = json.loads((Path(tmpdir) / "filter_spec.json").read_text())
+            self.assertIn("family_order", filter_spec)
+            self.assertIn("family_sub_order", filter_spec)
+            self.assertIn("default_enabled", filter_spec)
+            self.assertIn("categories", filter_spec)
+            # Every category references a family known to the family_order map.
+            known_families = set(filter_spec["family_order"].keys())
+            for cat in filter_spec["categories"]:
+                self.assertIn(cat["family"], known_families)
+
+            # Build stamp: lets the SPA warn when static bundle ages out of sync
+            stamp = json.loads((Path(tmpdir) / "build_stamp.json").read_text())
+            self.assertIn("version", stamp)
+            self.assertIn("catalog_generated_at", stamp)
+            self.assertEqual(stamp["intrinsics"], len(catalog.intrinsics))
 
             # Intrinsic details
             intr_details = json.loads(

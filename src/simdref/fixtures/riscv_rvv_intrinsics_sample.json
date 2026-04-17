@@ -1,0 +1,451 @@
+{
+  "format": "riscv-rvv-intrinsics-v1",
+  "intrinsics": [
+    {
+      "name": "__riscv_vadd_vv_i32m1",
+      "signature": "vint32m1_t __riscv_vadd_vv_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Adds corresponding 32-bit integer elements from vs2 and vs1.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vadd.vv",
+          "form": "vadd.vv",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vadd_vv_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Adds corresponding 32-bit integer elements from vs2 and vs1."
+      }
+    },
+    {
+      "name": "__riscv_vadd_vv_i32m1_m",
+      "signature": "vint32m1_t __riscv_vadd_vv_i32m1_m(vbool32_t mask, vint32m1_t maskedoff, vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Adds active masked 32-bit integer elements and leaves inactive elements from maskedoff.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vadd.vv",
+          "form": "vadd.vv [masked]",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "masked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vadd_vv_i32m1_m(vbool32_t mask, vint32m1_t maskedoff, vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Adds active masked 32-bit integer elements and leaves inactive elements from maskedoff."
+      }
+    },
+    {
+      "name": "__riscv_vadd_vv_i32m1_tu",
+      "signature": "vint32m1_t __riscv_vadd_vv_i32m1_tu(vint32m1_t vd, vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Adds active elements while preserving inactive tail elements from vd.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vadd.vv",
+          "form": "vadd.vv [tu]",
+          "isa": "V",
+          "policy": "tu",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vadd_vv_i32m1_tu(vint32m1_t vd, vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Adds active elements while preserving inactive tail elements from vd."
+      }
+    },
+    {
+      "name": "__riscv_vadd_vv_i32m1_tumu",
+      "signature": "vint32m1_t __riscv_vadd_vv_i32m1_tumu(vbool32_t mask, vint32m1_t vd, vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Adds active masked elements while preserving inactive mask and tail elements from vd.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vadd.vv",
+          "form": "vadd.vv [tumu]",
+          "isa": "V",
+          "policy": "tumu",
+          "masking": "masked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vadd_vv_i32m1_tumu(vbool32_t mask, vint32m1_t vd, vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Adds active masked elements while preserving inactive mask and tail elements from vd."
+      }
+    },
+    {
+      "name": "__riscv_vsub_vv_i32m1",
+      "signature": "vint32m1_t __riscv_vsub_vv_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Subtracts corresponding 32-bit integer elements in vs1 from vs2.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vsub.vv",
+          "form": "vsub.vv",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vsub_vv_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Subtracts corresponding 32-bit integer elements in vs1 from vs2."
+      }
+    },
+    {
+      "name": "__riscv_vsub_vv_i32m1_m",
+      "signature": "vint32m1_t __riscv_vsub_vv_i32m1_m(vbool32_t mask, vint32m1_t maskedoff, vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Subtracts active masked 32-bit integer elements and leaves inactive elements from maskedoff.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Arithmetic",
+      "instruction_refs": [
+        {
+          "name": "vsub.vv",
+          "form": "vsub.vv [masked]",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "masked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vsub_vv_i32m1_m(vbool32_t mask, vint32m1_t maskedoff, vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Subtracts active masked 32-bit integer elements and leaves inactive elements from maskedoff."
+      }
+    },
+    {
+      "name": "__riscv_vle32_v_i32m1",
+      "signature": "vint32m1_t __riscv_vle32_v_i32m1(const int32_t *base, size_t vl)",
+      "description": "Loads active 32-bit integer elements from contiguous memory.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Unit-stride load",
+      "instruction_refs": [
+        {
+          "name": "vle32.v",
+          "form": "vle32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vle32_v_i32m1(const int32_t *base, size_t vl);",
+        "Semantics": "Loads active 32-bit integer elements from contiguous memory."
+      }
+    },
+    {
+      "name": "__riscv_vse32_v_i32m1",
+      "signature": "void __riscv_vse32_v_i32m1(int32_t *base, vint32m1_t value, size_t vl)",
+      "description": "Stores active 32-bit integer elements to contiguous memory.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Unit-stride store",
+      "instruction_refs": [
+        {
+          "name": "vse32.v",
+          "form": "vse32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "void __riscv_vse32_v_i32m1(int32_t *base, vint32m1_t value, size_t vl);",
+        "Semantics": "Stores active 32-bit integer elements to contiguous memory."
+      }
+    },
+    {
+      "name": "__riscv_vlse32_v_i32m1",
+      "signature": "vint32m1_t __riscv_vlse32_v_i32m1(const int32_t *base, ptrdiff_t bstride, size_t vl)",
+      "description": "Loads active elements from a strided memory region.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Strided load",
+      "instruction_refs": [
+        {
+          "name": "vlse32.v",
+          "form": "vlse32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vlse32_v_i32m1(const int32_t *base, ptrdiff_t bstride, size_t vl);",
+        "Semantics": "Loads active elements from a strided memory region."
+      }
+    },
+    {
+      "name": "__riscv_vsse32_v_i32m1",
+      "signature": "void __riscv_vsse32_v_i32m1(int32_t *base, ptrdiff_t bstride, vint32m1_t value, size_t vl)",
+      "description": "Stores active elements to a strided memory region.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Strided store",
+      "instruction_refs": [
+        {
+          "name": "vsse32.v",
+          "form": "vsse32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "void __riscv_vsse32_v_i32m1(int32_t *base, ptrdiff_t bstride, vint32m1_t value, size_t vl);",
+        "Semantics": "Stores active elements to a strided memory region."
+      }
+    },
+    {
+      "name": "__riscv_vluxei32_v_i32m1",
+      "signature": "vint32m1_t __riscv_vluxei32_v_i32m1(const int32_t *base, vuint32m1_t bindex, size_t vl)",
+      "description": "Loads active elements using unordered indices.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Indexed load",
+      "instruction_refs": [
+        {
+          "name": "vluxei32.v",
+          "form": "vluxei32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vluxei32_v_i32m1(const int32_t *base, vuint32m1_t bindex, size_t vl);",
+        "Semantics": "Loads active elements using unordered indices."
+      }
+    },
+    {
+      "name": "__riscv_vsuxei32_v_i32m1",
+      "signature": "void __riscv_vsuxei32_v_i32m1(int32_t *base, vuint32m1_t bindex, vint32m1_t value, size_t vl)",
+      "description": "Stores active elements using unordered indices.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Loads and Stores",
+      "subcategory": "Indexed store",
+      "instruction_refs": [
+        {
+          "name": "vsuxei32.v",
+          "form": "vsuxei32.v",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "void __riscv_vsuxei32_v_i32m1(int32_t *base, vuint32m1_t bindex, vint32m1_t value, size_t vl);",
+        "Semantics": "Stores active elements using unordered indices."
+      }
+    },
+    {
+      "name": "__riscv_vmand_mm_b32",
+      "signature": "vbool32_t __riscv_vmand_mm_b32(vbool32_t vs2, vbool32_t vs1, size_t vl)",
+      "description": "Computes the logical AND of two mask registers.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Mask Operations",
+      "instruction_refs": [
+        {
+          "name": "vmand.mm",
+          "form": "vmand.mm",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vbool32_t __riscv_vmand_mm_b32(vbool32_t vs2, vbool32_t vs1, size_t vl);",
+        "Semantics": "Computes the logical AND of two mask registers."
+      }
+    },
+    {
+      "name": "__riscv_vredsum_vs_i32m1_i32m1",
+      "signature": "vint32m1_t __riscv_vredsum_vs_i32m1_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Reduces active 32-bit integer lanes using addition.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Reductions",
+      "instruction_refs": [
+        {
+          "name": "vredsum.vs",
+          "form": "vredsum.vs",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vredsum_vs_i32m1_i32m1(vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Reduces active 32-bit integer lanes using addition."
+      }
+    },
+    {
+      "name": "__riscv_vwadd_vv_i64m2",
+      "signature": "vint64m2_t __riscv_vwadd_vv_i64m2(vint32m1_t vs2, vint32m1_t vs1, size_t vl)",
+      "description": "Widens 32-bit integer elements and adds them into 64-bit results.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Widening/Narrowing",
+      "instruction_refs": [
+        {
+          "name": "vwadd.vv",
+          "form": "vwadd.vv",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint64m2_t __riscv_vwadd_vv_i64m2(vint32m1_t vs2, vint32m1_t vs1, size_t vl);",
+        "Semantics": "Widens 32-bit integer elements and adds them into 64-bit results."
+      }
+    },
+    {
+      "name": "__riscv_vnclipu_wi_u16m1",
+      "signature": "vuint16m1_t __riscv_vnclipu_wi_u16m1(vuint32m2_t vs2, size_t vl)",
+      "description": "Narrows unsigned fixed-point elements with clipping after a right shift.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Widening/Narrowing",
+      "instruction_refs": [
+        {
+          "name": "vnclipu.wi",
+          "form": "vnclipu.wi",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vuint16m1_t __riscv_vnclipu_wi_u16m1(vuint32m2_t vs2, size_t vl);",
+        "Semantics": "Narrows unsigned fixed-point elements with clipping after a right shift."
+      }
+    },
+    {
+      "name": "__riscv_vzext_vf2_u16m2",
+      "signature": "vuint16m2_t __riscv_vzext_vf2_u16m2(vuint8m1_t vs2, size_t vl)",
+      "description": "Zero-extends integer elements to the next wider element width.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Widening/Narrowing",
+      "instruction_refs": [
+        {
+          "name": "vzext.vf2",
+          "form": "vzext.vf2",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vuint16m2_t __riscv_vzext_vf2_u16m2(vuint8m1_t vs2, size_t vl);",
+        "Semantics": "Zero-extends integer elements to the next wider element width."
+      }
+    },
+    {
+      "name": "__riscv_vrgather_vv_i32m1",
+      "signature": "vint32m1_t __riscv_vrgather_vv_i32m1(vint32m1_t vs2, vuint32m1_t vs1, size_t vl)",
+      "description": "Permutes vector elements according to vector indices.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Permute/Move",
+      "instruction_refs": [
+        {
+          "name": "vrgather.vv",
+          "form": "vrgather.vv",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vint32m1_t __riscv_vrgather_vv_i32m1(vint32m1_t vs2, vuint32m1_t vs1, size_t vl);",
+        "Semantics": "Permutes vector elements according to vector indices."
+      }
+    },
+    {
+      "name": "__riscv_vmv_x_s_i32m1_i32",
+      "signature": "int32_t __riscv_vmv_x_s_i32m1_i32(vint32m1_t vs2)",
+      "description": "Moves the lowest-numbered 32-bit vector element into a scalar integer register.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["V"],
+      "category": "Permute/Move",
+      "instruction_refs": [
+        {
+          "name": "vmv.x.s",
+          "form": "vmv.x.s",
+          "isa": "V",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "int32_t __riscv_vmv_x_s_i32m1_i32(vint32m1_t vs2);",
+        "Semantics": "Moves the lowest-numbered 32-bit vector element into a scalar integer register."
+      }
+    },
+    {
+      "name": "__riscv_vaesdf_vv_u32m1",
+      "signature": "vuint32m1_t __riscv_vaesdf_vv_u32m1(vuint32m1_t state, vuint32m1_t round_key, size_t vl)",
+      "description": "Executes the final AES decryption round on each active element group.",
+      "header": "riscv_vector.h",
+      "url": "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc",
+      "isa": ["Zvkned"],
+      "category": "Vector Crypto",
+      "instruction_refs": [
+        {
+          "name": "vaesdf.vv",
+          "form": "vaesdf.vv",
+          "isa": "Zvkned",
+          "policy": "agnostic",
+          "masking": "unmasked"
+        }
+      ],
+      "doc_sections": {
+        "Prototype": "vuint32m1_t __riscv_vaesdf_vv_u32m1(vuint32m1_t state, vuint32m1_t round_key, size_t vl);",
+        "Semantics": "Executes the final AES decryption round on each active element group."
+      }
+    }
+  ]
+}

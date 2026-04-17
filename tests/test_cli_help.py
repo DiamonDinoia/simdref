@@ -4,6 +4,8 @@ import subprocess
 import sys
 import unittest
 
+from simdref.cli import _is_completion_invocation
+
 
 class CliHelpTests(unittest.TestCase):
     def test_top_level_help_mentions_local_rebuild_commands(self):
@@ -22,6 +24,10 @@ class CliHelpTests(unittest.TestCase):
         self.assertIn("simdref update --build-local", output)
         self.assertIn("simdref update --offline", output)
         self.assertIn("--with-sdm", output)
+
+    def test_completion_invocation_detection(self):
+        self.assertTrue(_is_completion_invocation({"_SIMDREF_COMPLETE": "complete_bash"}))
+        self.assertFalse(_is_completion_invocation({"COMP_WORDS": "simdref update --"}))
 
 
 if __name__ == "__main__":

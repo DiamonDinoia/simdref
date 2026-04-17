@@ -1,0 +1,136 @@
+"""Tests for simdref.filters — the shared filter spec."""
+
+import json
+import sqlite3
+import unittest
+from types import SimpleNamespace
+
+from simdref.filters import (
+    CategorySpec,
+    FilterSpec,
+    build_filter_spec,
+    load_categories_from_db,
+)
+
+
+class FilterSpecJsonTests(unittest.TestCase):
+    def test_to_json_roundtrips_through_json_module(self):
+        spec = FilterSpec()
+        spec.categories = [CategorySpec("SSE", "Arithmetic", "", 42)]
+        payload = spec.to_json()
+        # Must be JSON-serialisable for the web export.
+        text = json.dumps(payload)
+        recovered = json.loads(text)
+        self.assertEqual(recovered["default_enabled"], list(spec.default_enabled))
+        self.assertEqual(recovered["categories"][0]["family"], "SSE")
+        self.assertEqual(recovered["categories"][0]["count"], 42)
+
+    def test_default_subs_are_sorted_for_stable_output(self):
+        spec = FilterSpec()
+        payload = spec.to_json()
+        # Stable ordering matters for diff-friendly static bundles.
+        self.assertEqual(payload["default_subs"]["SSE"], sorted(payload["default_subs"]["SSE"]))
+
+
+class FilterSpecMatchesTests(unittest.TestCase):
+    def test_matches_by_family_uses_isa_family_mapping(self):
+        spec = FilterSpec()
+        rec_arm = SimpleNamespace(isa=["SVE2"], category="")
+        rec_x86 = SimpleNamespace(isa=["AVX512F"], category="")
+        self.assertTrue(spec.matches(rec_arm, enabled_families={"Arm"}))
+        self.assertFalse(spec.matches(rec_arm, enabled_families={"SSE"}))
+        self.assertTrue(spec.matches(rec_x86, enabled_families={"AVX-512"}))
+
+    def test_matches_by_category_uses_record_category(self):
+        spec = FilterSpec()
+        rec = SimpleNamespace(isa=["SSE"], category="Arithmetic")
+        self.assertTrue(spec.matches(rec, enabled_categories={"Arithmetic"}))
+        self.assertFalse(spec.matches(rec, enabled_categories={"Swizzle"}))
+
+    def test_matches_falls_back_to_metadata_category(self):
+        spec = FilterSpec()
+        rec = SimpleNamespace(isa=["AVX"], metadata={"category": "shift"})
+        self.assertTrue(spec.matches(rec, enabled_categories={"shift"}))
+
+    def test_none_filters_always_match(self):
+        spec = FilterSpec()
+        rec = SimpleNamespace(isa=[], category="")
+        self.assertTrue(spec.matches(rec))
+
+
+class FilterSpecSqlPredicateTests(unittest.TestCase):
+    def test_sql_predicate_empty_filters_returns_empty_clause(self):
+        spec = FilterSpec()
+        clause, binds = spec.sql_predicate("intrinsics_data")
+        self.assertEqual(clause, "")
+        self.assertEqual(binds, [])
+
+    def test_sql_predicate_family_expands_to_sub_tokens(self):
+        spec = FilterSpec()
+        clause, binds = spec.sql_predicate("intrinsics_data", enabled_families=["Arm"])
+        self.assertIn("intrinsics_data.isa LIKE ?", clause)
+        # Family "Arm" should expand to its sub tokens plus the family label.
+        self.assertTrue(any("NEON" in b or "SVE" in b or "Arm" in b for b in binds))
+
+    def test_sql_predicate_category_applies_only_to_intrinsics_table(self):
+        spec = FilterSpec()
+        _, binds_intr = spec.sql_predicate("intrinsics_data", enabled_categories=["Arithmetic"])
+        _, binds_instr = spec.sql_predicate("instructions_data", enabled_categories=["Arithmetic"])
+        self.assertIn("Arithmetic", binds_intr)
+        self.assertNotIn("Arithmetic", binds_instr)
+
+    def test_sql_predicate_runs_against_real_sqlite(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE intrinsics_data (isa TEXT, category TEXT)")
+        conn.executemany(
+            "INSERT INTO intrinsics_data VALUES (?, ?)",
+            [("AVX512F", "Arithmetic"), ("NEON", "Logical"), ("SSE2", "Arithmetic")],
+        )
+        spec = FilterSpec()
+        clause, binds = spec.sql_predicate(
+            "intrinsics_data",
+            enabled_families=["Arm"],
+            enabled_categories=["Logical"],
+        )
+        sql = "SELECT COUNT(*) FROM intrinsics_data"
+        if clause:
+            sql += f" WHERE {clause}"
+        count = conn.execute(sql, binds).fetchone()[0]
+        self.assertEqual(count, 1)
+        conn.close()
+
+
+class CategoryAggregationTests(unittest.TestCase):
+    def _make_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE intrinsics_data (category TEXT, subcategory TEXT, isa TEXT)")
+        conn.executemany(
+            "INSERT INTO intrinsics_data VALUES (?, ?, ?)",
+            [
+                ("Arithmetic", "Add", "AVX512F"),
+                ("Arithmetic", "Add", "AVX512F"),
+                ("Logical", "", "NEON"),
+                ("", "", "SSE"),  # no category: excluded
+            ],
+        )
+        return conn
+
+    def test_load_categories_aggregates_and_assigns_family(self):
+        conn = self._make_conn()
+        cats = load_categories_from_db(conn)
+        families = {c.family for c in cats}
+        self.assertIn("AVX-512", families)
+        self.assertIn("Arm", families)
+        arith = next(c for c in cats if c.category == "Arithmetic")
+        self.assertEqual(arith.count, 2)
+        conn.close()
+
+    def test_build_filter_spec_without_conn_has_empty_categories(self):
+        spec = build_filter_spec(None)
+        self.assertEqual(spec.categories, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

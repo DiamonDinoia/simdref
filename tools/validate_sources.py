@@ -26,10 +26,19 @@ from simdref.ingest_catalog import (
     _resolve_instruction_ref,
     parse_arm_intrinsics_payload,
     parse_intel_payload,
+    parse_riscv_instruction_payload,
+    parse_riscv_intrinsics_payload,
     parse_uops_xml,
     link_records,
 )
-from simdref.ingest_sources import fetch_arm_a64_data, fetch_arm_acle_data, fetch_intel_data, fetch_uops_xml
+from simdref.ingest_sources import (
+    fetch_arm_a64_data,
+    fetch_arm_acle_data,
+    fetch_intel_data,
+    fetch_riscv_rvv_intrinsics_data,
+    fetch_riscv_unified_db_data,
+    fetch_uops_xml,
+)
 from simdref.ingest_pdf import find_pdf_source_path
 from simdref.pdfparse.intel import INTEL_SDM_CACHE_PATH
 
@@ -170,6 +179,28 @@ _X86_SDM_FAMILY_THRESHOLDS: dict[str, float] = {
     "AVX-512": 0.01,
     "AMX": 0.01,
 }
+
+_RISCV_EXPECTED_SEMANTICS: dict[str, str] = {
+    "vadd.vv": "arithmetic",
+    "vsub.vv": "arithmetic",
+    "vle32.v": "loads/stores",
+    "vse32.v": "loads/stores",
+    "vlse32.v": "loads/stores",
+    "vsse32.v": "loads/stores",
+    "vluxei32.v": "loads/stores",
+    "vsuxei32.v": "loads/stores",
+    "vmand.mm": "mask operations",
+    "vredsum.vs": "reductions",
+    "vwadd.vv": "widening/narrowing",
+    "vnclipu.wi": "widening/narrowing",
+    "vzext.vf2": "widening/narrowing",
+    "vrgather.vv": "permute/move",
+    "vmv.x.s": "permute/move",
+    "vaesdf.vv": "crypto",
+}
+_RISCV_MIN_DESCRIPTION_COVERAGE = 0.95
+_RISCV_MIN_OPERATION_COVERAGE = 0.60
+_RISCV_MIN_LINK_COVERAGE = 1.0
 
 
 def _unwrap_intel_source_text(text: str) -> str:
@@ -522,6 +553,164 @@ def validate_arm_instructions(offline: bool, require_authoritative: bool) -> tup
     return checked, failures
 
 
+def validate_riscv_intrinsics(offline: bool) -> tuple[int, int]:
+    text, _source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+    parsed = parse_riscv_intrinsics_payload(text)
+    payload = json.loads(text)
+    raw_records = payload.get("intrinsics") or []
+    parsed_by_name = {record.name: record for record in parsed}
+    failures = 0
+    checked = 0
+    unlinked = 0
+
+    for item in raw_records:
+        if not isinstance(item, dict):
+            continue
+        name = _strip(item.get("name"))
+        if not name:
+            continue
+        checked += 1
+        record = parsed_by_name.get(name)
+        if record is None:
+            print(f"FAIL riscv intrinsics: missing {name}")
+            failures += 1
+            continue
+        if record.header != _strip(item.get("header") or "riscv_vector.h"):
+            print(f"FAIL riscv intrinsics: header mismatch for {name}")
+            failures += 1
+        if not record.instruction_refs:
+            unlinked += 1
+        if "Prototype" not in record.doc_sections or "Semantics" not in record.doc_sections:
+            print(f"FAIL riscv intrinsics: missing prototype/semantics sections for {name}")
+            failures += 1
+
+    print(
+        "validated RISC-V intrinsics: "
+        f"checked={checked} parsed={len(parsed)} unlinked={unlinked} failures={failures}"
+    )
+    return checked, failures
+
+
+def validate_riscv_instructions(offline: bool) -> tuple[int, int]:
+    text, _source = fetch_riscv_unified_db_data(offline=offline)
+    parsed = parse_riscv_instruction_payload(text)
+    payload = json.loads(text)
+    raw_records = payload.get("instructions") or []
+    parsed_by_form = {record.form.casefold(): record for record in parsed}
+    failures = 0
+    checked = 0
+
+    for item in raw_records:
+        if not isinstance(item, dict):
+            continue
+        mnemonic = _strip(item.get("mnemonic") or item.get("name")).casefold()
+        if not mnemonic:
+            continue
+        checked += 1
+        form = _strip(item.get("form") or mnemonic).casefold()
+        record = parsed_by_form.get(form)
+        if record is None:
+            print(f"FAIL riscv instructions: missing {form}")
+            failures += 1
+            continue
+        if not record.summary.strip():
+            print(f"FAIL riscv instructions: empty summary for {form}")
+            failures += 1
+    print(f"validated RISC-V instructions: checked={checked} parsed={len(parsed)} failures={failures}")
+    return checked, failures
+
+
+def validate_riscv_intrinsic_links(offline: bool) -> tuple[int, int]:
+    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+    instruction_text, _instruction_source = fetch_riscv_unified_db_data(offline=offline)
+    intrinsics = parse_riscv_intrinsics_payload(intrinsic_text)
+    instructions = parse_riscv_instruction_payload(instruction_text)
+    checked = sum(len(item.instruction_refs) for item in intrinsics)
+    failures = 0
+    ambiguous = 0
+    unresolved = 0
+
+    link_records(intrinsics, instructions)
+    for intrinsic in intrinsics:
+        for ref in intrinsic.instruction_refs:
+            if not ref.get("key", "").strip():
+                unresolved += 1
+                failures += 1
+                print(f"FAIL riscv links: unresolved {intrinsic.name} -> {ref.get('form') or ref.get('name')}")
+                continue
+            if ref.get("match_count") != "1":
+                ambiguous += 1
+                failures += 1
+                print(f"FAIL riscv links: ambiguous {intrinsic.name} -> {ref.get('form') or ref.get('name')} matches={ref.get('match_count')}")
+
+    print(
+        "validated RISC-V intrinsic links: "
+        f"checked={checked} ambiguous={ambiguous} unresolved={unresolved} failures={failures}"
+    )
+    return checked, failures
+
+
+def validate_riscv_semantics_and_coverage(offline: bool) -> tuple[int, int]:
+    instruction_text, _instruction_source = fetch_riscv_unified_db_data(offline=offline)
+    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+    instructions = parse_riscv_instruction_payload(instruction_text)
+    intrinsics = parse_riscv_intrinsics_payload(intrinsic_text)
+    link_records(intrinsics, instructions)
+
+    failures = 0
+    by_mnemonic = {record.mnemonic: record for record in instructions}
+    for mnemonic, family in _RISCV_EXPECTED_SEMANTICS.items():
+        record = by_mnemonic.get(mnemonic)
+        if record is None:
+            print(f"FAIL riscv semantics: missing {mnemonic} sample for {family}")
+            failures += 1
+            continue
+        if not record.description.get("Description", "").strip():
+            print(f"FAIL riscv semantics: missing Description for {mnemonic}")
+            failures += 1
+        if not record.description.get("Operation", "").strip():
+            print(f"FAIL riscv semantics: missing Operation for {mnemonic}")
+            failures += 1
+
+    described = sum(1 for record in instructions if record.description.get("Description", "").strip())
+    operational = sum(1 for record in instructions if record.description.get("Operation", "").strip())
+    linkable = sum(1 for intrinsic in intrinsics if intrinsic.instruction_refs)
+    linked = sum(1 for intrinsic in intrinsics if intrinsic.instruction_refs and all(ref.get("key", "").strip() for ref in intrinsic.instruction_refs))
+    description_coverage = described / len(instructions) if instructions else 0.0
+    operation_coverage = operational / len(instructions) if instructions else 0.0
+    link_coverage = linked / linkable if linkable else 1.0
+
+    if description_coverage < _RISCV_MIN_DESCRIPTION_COVERAGE:
+        failures += 1
+        print(f"FAIL riscv coverage: description {description_coverage:.3f} below threshold {_RISCV_MIN_DESCRIPTION_COVERAGE:.3f}")
+    if operation_coverage < _RISCV_MIN_OPERATION_COVERAGE:
+        failures += 1
+        print(f"FAIL riscv coverage: operation {operation_coverage:.3f} below threshold {_RISCV_MIN_OPERATION_COVERAGE:.3f}")
+    if link_coverage < _RISCV_MIN_LINK_COVERAGE:
+        failures += 1
+        print(f"FAIL riscv coverage: links {link_coverage:.3f} below threshold {_RISCV_MIN_LINK_COVERAGE:.3f}")
+
+    family_counts: dict[str, int] = {}
+    for family in _RISCV_EXPECTED_SEMANTICS.values():
+        family_counts.setdefault(family, 0)
+    for mnemonic, family in _RISCV_EXPECTED_SEMANTICS.items():
+        if mnemonic in by_mnemonic:
+            family_counts[family] += 1
+
+    print(
+        "validated RISC-V semantics/coverage: "
+        f"checked={len(instructions)} description={description_coverage:.3f} "
+        f"operation={operation_coverage:.3f} links={link_coverage:.3f} "
+        f"linkable={linkable} failures={failures}"
+    )
+    print(
+        "validated RISC-V coverage summary: "
+        f"instructions={len(instructions)} intrinsics={len(intrinsics)} "
+        + " ".join(f"{family.replace('/', '_')}={count}" for family, count in sorted(family_counts.items()))
+    )
+    return len(instructions), failures
+
+
 def _load_sdm_descriptions() -> dict[str, dict[str, Any]] | None:
     pdf_path = find_pdf_source_path("intel-sdm", offline=False)
     if pdf_path is not None and pdf_path.exists():
@@ -716,6 +905,10 @@ def main() -> int:
         validate_uops_instructions(args.offline),
         validate_arm_intrinsics(args.offline),
         validate_arm_instructions(args.offline, args.require_authoritative_arm_instructions),
+        validate_riscv_intrinsics(args.offline),
+        validate_riscv_instructions(args.offline),
+        validate_riscv_intrinsic_links(args.offline),
+        validate_riscv_semantics_and_coverage(args.offline),
         validate_x86_intrinsic_links(args.offline),
         validate_x86_sdm_semantics(require_sdm=args.require_sdm and not args.offline),
         validate_x86_sdm_coverage(args.offline, require_sdm=args.require_sdm and not args.offline),

@@ -1171,15 +1171,25 @@ window.addEventListener("hashchange", () => {
 });
 
 /* ── Bootstrap ────────────────────────────────────────────────────── */
-fetch("search-index.json")
-  .then(r => r.json())
-  .then(data => {
+Promise.all([
+  fetch("search-index.json").then(r => r.json()),
+  fetch("filter_spec.json").then(r => r.ok ? r.json() : null).catch(() => null),
+  fetch("build_stamp.json").then(r => r.ok ? r.json() : null).catch(() => null),
+])
+  .then(([data, spec, stamp]) => {
     catalog = data;
-    const config = data.isa_config || {};
+    // Prefer filter_spec.json (single source of truth) over embedded isa_config.
+    const config = spec || data.isa_config || {};
     defaultEnabledIsas = new Set(config.default_enabled || [...defaultEnabledIsas]);
     FAMILY_SUB_ORDER = config.family_sub_order || {};
     DEFAULT_SUBS = Object.fromEntries(Object.entries(config.default_subs || {}).map(([family, values]) => [family, new Set(values)]));
     isaFamilyOrder = config.family_order || {};
+    if (stamp && metaNode) {
+      const stale = stamp.catalog_generated_at && data.generated_at && stamp.catalog_generated_at !== data.generated_at;
+      const label = stamp.git_sha ? `build ${stamp.git_sha}` : `v${stamp.version || ""}`;
+      metaNode.title = `Catalog ${stamp.catalog_generated_at || "?"}${stale ? " (stale)" : ""}`;
+      metaNode.dataset.stamp = label;
+    }
     catalog.intrByName = Object.fromEntries(data.intrinsics.map(i => [i.name, i]));
     catalog.instrByKey = Object.fromEntries(data.instructions.map(i => [i.key, i]));
     catalog.instrByDisplayKey = Object.fromEntries(data.instructions.map(i => [i.display_key || i.key, i]));

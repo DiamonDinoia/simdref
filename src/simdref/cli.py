@@ -565,6 +565,18 @@ def _smart_lookup(query: str) -> int:
     return _run_tui(initial_query=query)
 
 
+def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
+    env = env or os.environ
+    for key, value in env.items():
+        if not key.endswith("_COMPLETE"):
+            continue
+        if "SIMDREF" not in key.upper():
+            continue
+        if value:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Typer commands
 # ---------------------------------------------------------------------------
@@ -603,38 +615,235 @@ def update(
     _build_runtime_locally(offline=offline, man_dir=man_dir, include_sdm=with_sdm)
 
 
-@app.command()
-def llm(query: list[str] = typer.Argument(help="Search query (multiple tokens allowed)."), limit: int = typer.Option(8, help="Maximum number of search results in search mode.")) -> None:
-    """Output structured JSON for LLM consumption."""
-    query = " ".join(query)
+LLM_EXIT_MATCH = 0
+LLM_EXIT_USAGE = 1
+LLM_EXIT_NO_MATCH = 2
+LLM_EXIT_AMBIGUOUS = 3
+LLM_EXIT_INTERNAL = 10
+
+
+def _llm_filter_records(records: list[dict], isa: list[str] | None, category: list[str] | None) -> list[dict]:
+    """Filter llm payload dicts by ISA family and category facets."""
+    from simdref.display import isa_family as _isa_family
+    if not isa and not category:
+        return records
+    isa_set = {f.strip() for f in (isa or []) if f and f.strip()}
+    cat_set = {c.strip() for c in (category or []) if c and c.strip()}
+    kept: list[dict] = []
+    for rec in records:
+        if isa_set:
+            rec_isa = rec.get("isa") or []
+            if isinstance(rec_isa, str):
+                rec_isa = [rec_isa]
+            families = {_isa_family(v) for v in rec_isa}
+            if not families & isa_set:
+                continue
+        if cat_set:
+            rec_cat = rec.get("category", "")
+            if rec_cat not in cat_set:
+                continue
+        kept.append(rec)
+    return kept
+
+
+def _llm_format_markdown(payload: dict) -> str:
+    """Render an llm payload as prompt-friendly markdown."""
+    mode = payload.get("mode", "search")
+    query = payload.get("query", "")
+    lines: list[str] = [f"# simdref: {query}", ""]
+    if mode == "exact" and payload.get("match_kind") == "intrinsic":
+        rec = payload.get("result", {})
+        lines.append(f"**Intrinsic:** `{rec.get('intrinsic', '')}`")
+        if rec.get("signature"):
+            lines.append(f"**Signature:** `{rec['signature']}`")
+        if rec.get("isa"):
+            lines.append(f"**ISA:** {', '.join(rec['isa'])}")
+        if rec.get("instructions"):
+            lines.append(f"**Instruction:** `{rec['instructions'][0]}`")
+        if rec.get("lat") and rec["lat"] != "-":
+            lines.append(f"**Latency:** {rec['lat']}  •  **CPI:** {rec.get('cpi', '-')}")
+        if rec.get("summary"):
+            lines += ["", rec["summary"]]
+        return "\n".join(lines)
+    items = payload.get("results", [])
+    if mode == "exact":
+        lines.append(f"**{len(items)} instruction match(es)**")
+    else:
+        lines.append(f"**{len(items)} search result(s)**")
+    lines.append("")
+    for r in items:
+        title = r.get("intrinsic") or r.get("query") or ""
+        if isinstance(title, list):
+            title = ", ".join(title)
+        summary = r.get("summary", "")
+        isa = ", ".join(r.get("isa") or [])
+        lines.append(f"- **{title}** `{isa}` — {summary}")
+    return "\n".join(lines)
+
+
+def _emit_llm_payload(payload: dict, fmt: str) -> None:
+    if fmt == "ndjson":
+        mode = payload.get("mode")
+        if mode == "exact" and "result" in payload:
+            typer.echo(json.dumps(payload["result"], sort_keys=True))
+            return
+        for item in payload.get("results") or []:
+            typer.echo(json.dumps(item, sort_keys=True))
+        return
+    if fmt == "markdown":
+        typer.echo(_llm_format_markdown(payload))
+        return
+    typer.echo(json.dumps(payload, sort_keys=True, indent=2))
+
+
+def _llm_exit_code(payload: dict) -> int:
+    mode = payload.get("mode")
+    if mode == "exact":
+        if "result" in payload:
+            return LLM_EXIT_MATCH
+        results = payload.get("results") or []
+        if len(results) > 1 and payload.get("match_kind") == "instruction":
+            exact_name_hits = sum(1 for r in results if r.get("query", "").casefold() == payload.get("query", "").casefold())
+            if exact_name_hits > 1:
+                return LLM_EXIT_AMBIGUOUS
+        return LLM_EXIT_MATCH if results else LLM_EXIT_NO_MATCH
+    return LLM_EXIT_MATCH if payload.get("results") else LLM_EXIT_NO_MATCH
+
+
+def _llm_schema_payload() -> dict:
+    """Approximate JSON Schema for llm payloads (stable for tool consumers)."""
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "simdref.llm",
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "mode": {"type": "string", "enum": ["exact", "search"]},
+            "match_kind": {"type": ["string", "null"], "enum": ["intrinsic", "instruction", None]},
+            "result": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "intrinsic": {"type": ["string", "array"]},
+                    "signature": {"type": "string"},
+                    "instructions": {"type": "array", "items": {"type": "string"}},
+                    "isa": {"type": "array", "items": {"type": "string"}},
+                    "lat": {"type": "string"},
+                    "cpi": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+            },
+            "results": {"type": "array", "items": {"$ref": "#/properties/result"}},
+        },
+        "required": ["query", "mode"],
+    }
+
+
+llm_app = typer.Typer(help="Structured output for LLM/tool consumption.", invoke_without_command=False)
+
+
+def _llm_query_impl(
+    query_tokens: list[str],
+    limit: int,
+    fmt: str,
+    isa: list[str] | None,
+    category: list[str] | None,
+) -> None:
+    fmt_lower = (fmt or "json").lower()
+    if fmt_lower not in {"json", "ndjson", "markdown"}:
+        typer.echo(f"error: unknown --format '{fmt}' (expected json|ndjson|markdown)", err=True)
+        raise typer.Exit(code=LLM_EXIT_USAGE)
+    if not query_tokens:
+        typer.echo("error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True)
+        raise typer.Exit(code=LLM_EXIT_USAGE)
+    query_str = " ".join(query_tokens)
+    ensure_runtime()
+    try:
+        with open_db() as conn:
+            intrinsic = load_intrinsic_from_db(conn, query_str)
+            if intrinsic is not None:
+                result = _llm_intrinsic_payload(conn, intrinsic)
+                kept = _llm_filter_records([result], isa, category)
+                payload = {
+                    "query": query_str, "mode": "exact",
+                    "match_kind": "intrinsic" if kept else None,
+                    **({"result": kept[0]} if kept else {"results": []}),
+                }
+            else:
+                instructions = _find_instructions_fast(query_str)
+                if instructions:
+                    items = [_llm_instruction_payload(item) for item in instructions]
+                    items = _llm_filter_records(items, isa, category)
+                    payload = {
+                        "query": query_str, "mode": "exact",
+                        "match_kind": "instruction",
+                        "results": items,
+                    }
+                else:
+                    results, intrinsic_map, instruction_map = _search_runtime(conn, query_str, limit=limit)
+                    items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
+                    items = _llm_filter_records(items, isa, category)
+                    payload = {
+                        "query": query_str, "mode": "search",
+                        "match_kind": None,
+                        "results": items,
+                    }
+    except typer.Exit:
+        raise
+    except Exception as exc:  # pragma: no cover - internal error path
+        typer.echo(f"internal error: {exc}", err=True)
+        raise typer.Exit(code=LLM_EXIT_INTERNAL)
+    _emit_llm_payload(payload, fmt_lower)
+    raise typer.Exit(code=_llm_exit_code(payload))
+
+
+@llm_app.command("query")
+def llm_query(
+    query: list[str] = typer.Argument(..., help="Search query (multiple tokens allowed)."),
+    limit: int = typer.Option(8, help="Maximum number of search results in search mode."),
+    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json, ndjson, or markdown."),
+    isa: list[str] = typer.Option(None, "--isa", help="Filter by ISA family (repeatable)."),
+    category: list[str] = typer.Option(None, "--category", help="Filter by intrinsic category (repeatable)."),
+) -> None:
+    """Resolve a query and emit an LLM-friendly payload.
+
+    Exit codes: 0 match, 2 no-match, 3 ambiguous, 1 usage error, 10 internal.
+    """
+    _llm_query_impl(query, limit, fmt, isa, category)
+
+
+@llm_app.command("list")
+def llm_list(
+    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json or markdown."),
+) -> None:
+    """Emit the FilterSpec (ISA families, sub-ISAs, categories)."""
+    from simdref.filters import build_filter_spec
     ensure_runtime()
     with open_db() as conn:
-        intrinsic = load_intrinsic_from_db(conn, query)
-        if intrinsic is not None:
-            payload = {
-                "query": query,
-                "mode": "exact",
-                "match_kind": "intrinsic",
-                "result": _llm_intrinsic_payload(conn, intrinsic),
-            }
-        else:
-            instructions = _find_instructions_fast(query)
-            if instructions:
-                payload = {
-                    "query": query,
-                    "mode": "exact",
-                    "match_kind": "instruction",
-                    "results": [_llm_instruction_payload(item) for item in instructions],
-                    }
-            else:
-                results, intrinsic_map, instruction_map = _search_runtime(conn, query, limit=limit)
-                payload = {
-                    "query": query,
-                    "mode": "search",
-                    "match_kind": None,
-                    "results": [_llm_result_payload(conn, result, intrinsic_map, instruction_map) for result in results],
-                    }
-    console.print_json(json.dumps(payload, sort_keys=True))
+        spec = build_filter_spec(conn)
+    payload = spec.to_json()
+    if (fmt or "json").lower() == "markdown":
+        lines = ["# simdref filter spec", "", "## ISA families"]
+        for fam in payload["default_enabled"]:
+            lines.append(f"- **{fam}** (default)")
+        for fam in payload["family_order"]:
+            if fam not in payload["default_enabled"]:
+                lines.append(f"- {fam}")
+        lines += ["", "## Categories"]
+        for cat in payload["categories"]:
+            lines.append(f"- {cat['family']} / {cat['category']} ({cat['count']})")
+        typer.echo("\n".join(lines))
+        return
+    typer.echo(json.dumps(payload, sort_keys=True, indent=2))
+
+
+@llm_app.command("schema")
+def llm_schema() -> None:
+    """Emit the JSON Schema for `simdref llm` payloads."""
+    typer.echo(json.dumps(_llm_schema_payload(), sort_keys=True, indent=2))
+
+
+app.add_typer(llm_app, name="llm")
 
 
 @app.command()
@@ -683,6 +892,9 @@ def main() -> int:
     """CLI entry point — dispatches to subcommand or smart lookup."""
     global SHOW_FP16_ISAS, SHORT_MODE, FULL_MODE
     argv = sys.argv[1:]
+    if _is_completion_invocation():
+        app()
+        return 0
     if "--fp16" in argv:
         SHOW_FP16_ISAS = True
         argv = [arg for arg in argv if arg != "--fp16"]
@@ -692,6 +904,11 @@ def main() -> int:
     if "--full" in argv or "-f" in argv:
         FULL_MODE = True
         argv = [arg for arg in argv if arg not in ("--full", "-f")]
+    # Rewrite `llm <bare-query>` to `llm query <bare-query>` so Typer's
+    # subcommand dispatch (list/schema) works without stealing bare queries.
+    llm_subcommands = {"query", "list", "schema", "--help", "-h"}
+    if argv and argv[0] == "llm" and len(argv) >= 2 and argv[1] not in llm_subcommands and not argv[1].startswith("-"):
+        argv = ["llm", "query", *argv[1:]]
     sys.argv = [sys.argv[0], *argv]
     commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):

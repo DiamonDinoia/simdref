@@ -62,6 +62,12 @@ def _normalized_instruction_query(value: str) -> str:
 def _classify_query(query: str) -> str:
     lowered = query.casefold().strip()
     normalized = _normalize_text(query)
+    if lowered.startswith("__riscv_"):
+        return "intrinsic"
+    if "." in lowered and not lowered.startswith("_"):
+        return "instruction"
+    if lowered == "v" or lowered.startswith("zv") or lowered.startswith("zve") or lowered.startswith("rv"):
+        return "instruction"
     if lowered.startswith("_mm") or lowered.startswith("__m") or normalized.startswith("mm ") or normalized == "mm":
         return "intrinsic"
     if "_" in lowered and "mm" in lowered:
@@ -166,13 +172,38 @@ def _intent_bias(query_kind: str, result_kind: str) -> float:
     return 0.0
 
 
+def _isa_match_bias(query: str, isa_values: list[str], result_kind: str) -> float:
+    normalized_query = _normalize_text(query)
+    if not normalized_query:
+        return 0.0
+    isa_tokens = {_normalize_text(value) for value in isa_values if _normalize_text(value)}
+    if normalized_query not in isa_tokens:
+        return 0.0
+    return 30.0 if result_kind == "instruction" else -15.0
+
+
+def _is_pure_isa_query(query: str, isa_values: list[str]) -> bool:
+    normalized_query = _normalize_text(query)
+    if not normalized_query:
+        return False
+    return normalized_query in {_normalize_text(value) for value in isa_values if _normalize_text(value)}
+
+
+def _looks_like_isa_query(query: str) -> bool:
+    lowered = query.casefold().strip()
+    return lowered == "v" or lowered.startswith("zv") or lowered.startswith("zve") or lowered.startswith("rv")
+
+
 def search_records(intrinsics: list, instructions: list, query: str, limit: int = 20) -> list[SearchResult]:
     results: list[SearchResult] = []
     query_kind = _classify_query(query)
     for item in intrinsics:
+        if query_kind == "instruction" and _is_pure_isa_query(query, item.isa) and not _has_structural_overlap(query, item.name):
+            continue
         if query_kind == "intrinsic" and not _has_structural_overlap(query, item.name):
             continue
         score = max(_base_score(query, item.name), _base_score(query, item.search_blob)) + _intent_bias(query_kind, "intrinsic")
+        score += _isa_match_bias(query, item.isa, "intrinsic")
         score += _width_family_bonus(query, item.name)
         if score >= 35:
             results.append(
@@ -185,10 +216,13 @@ def search_records(intrinsics: list, instructions: list, query: str, limit: int 
                 )
             )
     for item in instructions:
-        if query_kind == "instruction" and not _has_structural_overlap(query, item.key):
+        if _looks_like_isa_query(query) and not _is_pure_isa_query(query, item.isa):
+            continue
+        if query_kind == "instruction" and not _looks_like_isa_query(query) and not _has_structural_overlap(query, item.key):
             continue
         score = max(_base_score(query, item.mnemonic), _base_score(query, item.key), _base_score(query, item.search_blob))
         score += _intent_bias(query_kind, "instruction")
+        score += _isa_match_bias(query, item.isa, "instruction")
         if score >= 35:
             results.append(
                 SearchResult(

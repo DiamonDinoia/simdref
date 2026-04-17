@@ -115,6 +115,11 @@ def intrinsic_perf_summary_runtime(
     """
     from simdref.perf import best_numeric
 
+    ref_keys = [
+        ref.get("key", "").strip()
+        for ref in intrinsic.instruction_refs
+        if isinstance(ref, dict) and ref.get("key", "").strip()
+    ]
     linked: list[InstructionRecord] = []
     keys = ref_keys or intrinsic.instructions
     for key in keys:

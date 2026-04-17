@@ -121,6 +121,28 @@ def _isa_matches_sub(isa: str, sub_isa: str) -> bool:
     )
 
 
+def _normalize_sub_isa_selection(
+    enabled_families: set[str],
+    enabled_sub_isas: set[str] | None,
+    family_subs: dict[str, list[str]],
+) -> set[str] | None:
+    """Keep only sub-ISAs that belong to enabled families.
+
+    Returns ``None`` when all visible sub-ISAs are effectively enabled.
+    """
+    visible_subs: set[str] = set()
+    for family in enabled_families:
+        visible_subs.update(family_subs.get(family, []))
+    if not visible_subs:
+        return None
+    if enabled_sub_isas is None:
+        return None
+    normalized = {sub for sub in enabled_sub_isas if sub in visible_subs}
+    if not normalized or normalized == visible_subs:
+        return None
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # FTS search
 # ---------------------------------------------------------------------------
@@ -173,9 +195,6 @@ def _fts_search(
     fts_expr = f"{{name name_tokens}} : {term_expr}"
     fts_expr_broad = term_expr
 
-    # Fetch more than limit to account for filtering and re-ranking.
-    fetch_limit = max((offset + limit) * 5, limit * 5)
-
     def _isa_visible(isa_str: str) -> bool:
         parts = [v.strip() for v in isa_str.replace(",", " ").split() if v.strip()]
         families = {isa_family(v) for v in parts}
@@ -195,21 +214,59 @@ def _fts_search(
     candidates: list[tuple[int, SearchResult]] = []
 
     seen: set[str] = set()
+
+    def _target_candidate_count() -> int:
+        return offset + limit + max(limit, 20)
+
+    def _query_intrinsic_rows(expr: str) -> list[sqlite3.Row]:
+        rows: list[sqlite3.Row] = []
+        fetch_limit = max((offset + limit) * 5, 100)
+        while fetch_limit <= 5000:
+            for sql in (
+                "SELECT name, summary, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
+                "SELECT name, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
+            ):
+                try:
+                    rows = conn.execute(sql, (expr, fetch_limit)).fetchall()
+                    break
+                except sqlite3.OperationalError:
+                    continue
+            visible = sum(1 for row in rows if row["name"] not in seen and _isa_visible(row["isa"] or ""))
+            if visible >= _target_candidate_count() or len(rows) < fetch_limit:
+                return rows
+            fetch_limit *= 2
+        return rows
+
+    def _query_instruction_rows(expr: str) -> list[sqlite3.Row]:
+        rows: list[sqlite3.Row] = []
+        fetch_limit = max((offset + limit) * 5, 100)
+        while fetch_limit <= 5000:
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT instructions_data.db_key, instructions_fts.key, instructions_fts.summary, instructions_fts.isa
+                    FROM instructions_fts
+                    JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
+                    WHERE instructions_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (expr, fetch_limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return rows
+            visible = sum(1 for row in rows if row["db_key"] not in seen and _isa_visible(row["isa"] or ""))
+            if visible >= _target_candidate_count() or len(rows) < fetch_limit:
+                return rows
+            fetch_limit *= 2
+        return rows
+
     # Search name columns first (precise), then broaden to all columns.
     # The name-only query uses {name name_tokens} column filter which
     # requires schema v7+; fall back to broad search on OperationalError.
     search_exprs = [fts_expr, fts_expr_broad]
     for expr in search_exprs:
-        rows = []
-        for sql in (
-            "SELECT name, summary, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
-            "SELECT name, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
-        ):
-            try:
-                rows = conn.execute(sql, (expr, fetch_limit)).fetchall()
-                break
-            except sqlite3.OperationalError:
-                continue
+        rows = _query_intrinsic_rows(expr)
         for row in rows:
             if row["name"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
@@ -224,20 +281,7 @@ def _fts_search(
             )
             candidates.append((_name_match_score(row["name"], terms), result))
 
-        try:
-            irows = conn.execute(
-                """
-                SELECT instructions_data.db_key, instructions_fts.key, instructions_fts.summary, instructions_fts.isa
-                FROM instructions_fts
-                JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
-                WHERE instructions_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (expr, fetch_limit),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            continue
+        irows = _query_instruction_rows(expr)
         for row in irows:
             if row["db_key"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
@@ -510,10 +554,25 @@ class SimdrefApp(App):
             self.call_after_refresh(self._refresh_sub_isa_bar)
 
     def _build_family_subs(self) -> None:
-        """Build sub-ISA lists from canonical definitions only."""
-        for fam, subs in FAMILY_SUB_ORDER.items():
-            if len(subs) > 1:
-                self._family_subs[fam] = list(subs)
+        """Build sub-ISA lists from ISA tokens present in the current DB."""
+        assert self._conn is not None
+        family_subs: dict[str, set[str]] = {}
+        rows = self._conn.execute(
+            """
+            SELECT isa FROM instructions_data
+            UNION ALL
+            SELECT isa FROM intrinsics_data
+            """
+        ).fetchall()
+        for row in rows:
+            for raw_isa in str(row["isa"] or "").replace(",", " ").split():
+                family = isa_family(raw_isa)
+                sub_isa = isa_to_sub_isa(raw_isa)
+                if family and sub_isa:
+                    family_subs.setdefault(family, set()).add(sub_isa)
+        for fam, subs in family_subs.items():
+            self._family_subs[fam] = sorted(subs, key=lambda sub: FAMILY_SUB_ORDER.get(fam, []).index(sub) if sub in FAMILY_SUB_ORDER.get(fam, []) else len(FAMILY_SUB_ORDER.get(fam, [])))
+        self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
 
     def _refresh_sub_isa_bar(self) -> None:
         """Rebuild the sub-ISA rows — one or more rows per enabled family."""
@@ -602,12 +661,14 @@ class SimdrefApp(App):
                 if self._enabled_sub_isas is not None:
                     fam_subs = set(self._family_subs.get(toggle.family, []))
                     self._enabled_sub_isas -= fam_subs
+            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
             self._refresh_sub_isa_bar()
         elif isinstance(toggle, SubIsaToggle):
             all_subs = list(self.query(SubIsaToggle))
             enabled = {t.isa for t in all_subs if t.enabled}
             all_shown = {t.isa for t in all_subs}
             self._enabled_sub_isas = enabled if enabled != all_shown else None
+            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
@@ -632,6 +693,7 @@ class SimdrefApp(App):
                 self._enabled_sub_isas = subs if subs else None
             else:
                 self._enabled_sub_isas = set()
+            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
             self._refresh_sub_isa_bar()
         else:
             # Family-level sub toggle: find sibling SubIsaToggles in same row
@@ -650,6 +712,7 @@ class SimdrefApp(App):
             all_subs = list(self.query(SubIsaToggle))
             enabled = {t.isa for t in all_subs if t.enabled}
             self._enabled_sub_isas = enabled if enabled else set()
+            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
@@ -659,10 +722,7 @@ class SimdrefApp(App):
         """Apply ISA presets from the bar buttons."""
         if event.mode == "all":
             self._enabled_families = set(_ISA_FAMILIES)
-            subs: set[str] = set()
-            for fam in self._enabled_families:
-                subs.update(self._family_subs.get(fam, []))
-            self._enabled_sub_isas = None if subs else None
+            self._enabled_sub_isas = None
         elif event.mode == "none":
             self._enabled_families = set()
             self._enabled_sub_isas = set()
@@ -672,6 +732,7 @@ class SimdrefApp(App):
             for fam in DEFAULT_ENABLED_ISAS:
                 initial_subs.update(DEFAULT_SUBS.get(fam, set()))
             self._enabled_sub_isas = initial_subs if initial_subs else None
+        self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
         # Update ISA toggle visuals
         for t in self.query(IsaToggle):
             target = t.family in self._enabled_families

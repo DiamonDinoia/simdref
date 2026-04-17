@@ -17,7 +17,7 @@ from simdref.storage import (
 )
 
 
-WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 
 @dataclass
@@ -65,7 +65,7 @@ def _line_prefix(text: str, line: int, character: int) -> str:
     if line >= len(lines):
         return ""
     current = lines[line][:character]
-    match = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", current)
+    match = re.search(r"[A-Za-z_][A-Za-z0-9_.]*$", current)
     return match.group(0) if match else ""
 
 
@@ -167,7 +167,7 @@ def main() -> int:
                         "capabilities": {
                             "hoverProvider": True,
                             "textDocumentSync": 1,
-                            "completionProvider": {"resolveProvider": False, "triggerCharacters": ["_", "m", "v"]},
+                            "completionProvider": {"resolveProvider": False, "triggerCharacters": ["_", ".", "m", "v"]},
                         }
                     },
                 }

@@ -14,10 +14,18 @@ from simdref.ingest_catalog import (
     build_catalog,
     link_records,
     parse_intel_payload,
+    parse_riscv_instruction_payload,
+    parse_riscv_intrinsics_payload,
     parse_uops_xml,
 )
 from simdref.ingest_pdf import merge_pdf_enrichment
-from simdref.ingest_sources import fetch_intel_data, fetch_uops_xml, now_iso
+from simdref.ingest_sources import (
+    fetch_intel_data,
+    fetch_riscv_rvv_intrinsics_data,
+    fetch_riscv_unified_db_data,
+    fetch_uops_xml,
+    now_iso,
+)
 from simdref.pdfparse.intel import INTEL_SDM_CACHE_PATH, INTEL_SDM_URL, parse_intel_sdm
 from simdref.storage import ensure_dir
 
@@ -89,6 +97,8 @@ def _merge_descriptions(
 __all__ = [
     "build_catalog",
     "fetch_intel_data",
+    "fetch_riscv_rvv_intrinsics_data",
+    "fetch_riscv_unified_db_data",
     "fetch_uops_xml",
     "link_records",
     "load_or_parse_intel_sdm",
@@ -97,5 +107,7 @@ __all__ = [
     "now_iso",
     "parse_intel_sdm",
     "parse_intel_payload",
+    "parse_riscv_instruction_payload",
+    "parse_riscv_intrinsics_payload",
     "parse_uops_xml",
 ]

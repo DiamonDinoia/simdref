@@ -31,6 +31,18 @@ ARM_INTRINSICS_DATA_BASE_URL = "https://developer.arm.com/architectures/instruct
 ARM_INTRINSICS_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "intrinsics.json"
 ARM_INTRINSICS_OPERATIONS_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "operations.json"
 ARM_INTRINSICS_EXAMPLES_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "examples.json"
+RISCV_UNIFIED_DB_REPO_URL = "https://github.com/riscv-software-src/riscv-unified-db"
+RISCV_RVV_INTRINSICS_REPO_URL = "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc"
+RISCV_UNIFIED_DB_CANDIDATE_URLS = [
+    "https://raw.githubusercontent.com/riscv-software-src/riscv-unified-db/main/build/instructions.json",
+    "https://raw.githubusercontent.com/riscv-software-src/riscv-unified-db/main/generated/instructions.json",
+    "https://raw.githubusercontent.com/riscv-software-src/riscv-unified-db/main/artifacts/instructions.json",
+]
+RISCV_RVV_INTRINSICS_CANDIDATE_URLS = [
+    "https://raw.githubusercontent.com/riscv-non-isa/riscv-rvv-intrinsic-doc/main/auto-generated/intrinsics.json",
+    "https://raw.githubusercontent.com/riscv-non-isa/riscv-rvv-intrinsic-doc/main/generated/intrinsics.json",
+    "https://raw.githubusercontent.com/riscv-non-isa/riscv-rvv-intrinsic-doc/main/intrinsics.json",
+]
 ARM_ACLE_NEON_DB_PATH = "tools/intrinsic_db/advsimd.csv"
 ARM_ACLE_NEON_CLASSIFICATION_PATH = "tools/intrinsic_db/advsimd_classification.csv"
 ARM_ACLE_MAIN_MD_PATH = "main/acle.md"
@@ -65,6 +77,19 @@ LOCAL_ARM_A64_ARCHIVES = [
     _REPO_ROOT / "vendor" / "arm" / "AARCHMRS_BSD.tar.gz",
     _REPO_ROOT / "vendor" / "arm" / "aarchmrs_bsd.tar.gz",
     _REPO_ROOT / "vendor" / "arm" / "aarchmrs-bsd.tar.gz",
+]
+LOCAL_RISCV_UNIFIED_DB_JSONS = [
+    _REPO_ROOT / "vendor" / "riscv" / "unified_db_bundle.json",
+    _REPO_ROOT / "vendor" / "riscv" / "unified_db_instructions.json",
+    _REPO_ROOT / "vendor" / "riscv" / "instructions.json",
+]
+LOCAL_RISCV_RVV_INTRINSICS_JSONS = [
+    _REPO_ROOT / "vendor" / "riscv" / "rvv_intrinsics_bundle.json",
+    _REPO_ROOT / "vendor" / "riscv" / "rvv_intrinsics.json",
+    _REPO_ROOT / "vendor" / "riscv" / "intrinsics.json",
+]
+LOCAL_RISCV_DOCS_JSONS = [
+    _REPO_ROOT / "vendor" / "riscv" / "docs_pages.json",
 ]
 
 
@@ -201,6 +226,70 @@ def _read_local_text(paths: list[Path], source: str, version_prefix: str) -> tup
             url=str(text_path),
         )
     return None
+
+
+def _riscv_missing_semantics_urls(payload: dict) -> list[str]:
+    instructions = payload.get("instructions") or payload.get("records") or []
+    urls: list[str] = []
+    for item in instructions:
+        if not isinstance(item, dict):
+            continue
+        sections = item.get("description") or item.get("doc_sections") or item.get("sections") or {}
+        if not isinstance(sections, dict):
+            sections = {}
+        has_description = str(sections.get("Description") or "").strip()
+        has_operation = str(sections.get("Operation") or "").strip()
+        if has_description and has_operation:
+            continue
+        url = str(item.get("url") or item.get("reference_url") or "").strip()
+        if url.startswith("https://docs.riscv.org/"):
+            urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
+def _augment_riscv_unified_db_payload_with_docs(text: str) -> str:
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return text
+    if not isinstance(payload, dict):
+        return text
+    if payload.get("docs_pages"):
+        return text
+
+    docs_pages: dict[str, str] = {}
+    local_docs = _read_local_text(LOCAL_RISCV_DOCS_JSONS, "docs.riscv.org", "local-json")
+    if local_docs is not None:
+        try:
+            parsed = json.loads(local_docs[0])
+            if isinstance(parsed, dict):
+                docs_pages.update({
+                    str(key).strip(): str(value).strip()
+                    for key, value in parsed.items()
+                    if str(key).strip() and str(value).strip()
+                })
+        except Exception:
+            pass
+
+    for url in _riscv_missing_semantics_urls(payload):
+        if url in docs_pages:
+            continue
+        base = url.split("#", 1)[0]
+        if base in docs_pages:
+            docs_pages[url] = docs_pages[base]
+            continue
+        try:
+            page = _fetch_text(base)
+        except Exception:
+            continue
+        if page.strip():
+            docs_pages[base] = page
+            docs_pages[url] = page
+
+    if not docs_pages:
+        return text
+    payload["docs_pages"] = docs_pages
+    return json.dumps(payload)
 
 
 def _arm_acle_bundle_payload(
@@ -422,3 +511,55 @@ def fetch_arm_a64_data(offline: bool = False) -> tuple[str, SourceVersion]:
     if archive is not None:
         return archive
     return fetch_arm_a64_data(offline=True)
+
+
+def fetch_riscv_unified_db_data(offline: bool = False) -> tuple[str, SourceVersion]:
+    if offline:
+        return _fixture_text("riscv_unified_db_sample.json"), SourceVersion(
+            source="riscv-unified-db",
+            version="fixture",
+            fetched_at=now_iso(),
+            url="fixture:riscv_unified_db_sample.json",
+            used_fixture=True,
+        )
+    local = _read_local_text(LOCAL_RISCV_UNIFIED_DB_JSONS, "riscv-unified-db", "local-json")
+    if local is not None:
+        return _augment_riscv_unified_db_payload_with_docs(local[0]), local[1]
+    for url in RISCV_UNIFIED_DB_CANDIDATE_URLS:
+        try:
+            text = _fetch_text(url)
+            return _augment_riscv_unified_db_payload_with_docs(text), SourceVersion(
+                source="riscv-unified-db",
+                version="live",
+                fetched_at=now_iso(),
+                url=url,
+            )
+        except Exception:
+            pass
+    return fetch_riscv_unified_db_data(offline=True)
+
+
+def fetch_riscv_rvv_intrinsics_data(offline: bool = False) -> tuple[str, SourceVersion]:
+    if offline:
+        return _fixture_text("riscv_rvv_intrinsics_sample.json"), SourceVersion(
+            source="rvv-intrinsic-doc",
+            version="fixture",
+            fetched_at=now_iso(),
+            url="fixture:riscv_rvv_intrinsics_sample.json",
+            used_fixture=True,
+        )
+    local = _read_local_text(LOCAL_RISCV_RVV_INTRINSICS_JSONS, "rvv-intrinsic-doc", "local-json")
+    if local is not None:
+        return local
+    for url in RISCV_RVV_INTRINSICS_CANDIDATE_URLS:
+        try:
+            text = _fetch_text(url)
+            return text, SourceVersion(
+                source="rvv-intrinsic-doc",
+                version="live",
+                fetched_at=now_iso(),
+                url=url,
+            )
+        except Exception:
+            pass
+    return fetch_riscv_rvv_intrinsics_data(offline=True)

@@ -20,10 +20,13 @@ from simdref.ingest_sources import (
     fetch_arm_a64_data,
     fetch_arm_acle_data,
     fetch_intel_data,
+    fetch_riscv_rvv_intrinsics_data,
+    fetch_riscv_unified_db_data,
     fetch_uops_xml,
     now_iso,
 )
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
+from simdref.riscv import parse_riscv_instruction_payload, parse_riscv_intrinsics_payload
 
 _UOPS_METADATA_KEYS = frozenset({"category", "cpl", "extension", "iclass", "iform", "url", "url-ref"})
 _UOPS_OPERAND_KEYS = ("idx", "r", "w", "type", "width", "xtype", "name")
@@ -925,9 +928,14 @@ def _resolve_instruction_ref(
         if matched:
             resolution = "xed"
     if not matched and name and form:
-        matched = by_key.get((ref_arch, (_canonical_instruction_key(name, form) or name).casefold()), [])
-        if matched:
-            resolution = "key"
+        key_candidates = [(_canonical_instruction_key(name, form) or name).casefold()]
+        if ref_arch == "riscv":
+            key_candidates.insert(0, form.casefold())
+        for candidate_key in key_candidates:
+            matched = by_key.get((ref_arch, candidate_key), [])
+            if matched:
+                resolution = "key"
+                break
     if not matched and name:
         matched = by_mnemonic.get((ref_arch, name.casefold()), [])
         if matched:
@@ -942,6 +950,41 @@ def _resolve_instruction_ref(
             if narrowed:
                 matched = narrowed
                 resolution = "arm-isa"
+    if ref_arch == "riscv" and len(matched) > 1:
+        ref_isa = {value.casefold() for value in _normalize_isa(ref.get("isa", ""))}
+        if ref_isa:
+            narrowed = [
+                instruction
+                for instruction in matched
+                if ref_isa & {value.casefold() for value in instruction.isa}
+            ]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-riscv-isa"
+        ref_policy = ref.get("policy", "").strip()
+        if len(matched) > 1 and ref_policy:
+            narrowed = [instruction for instruction in matched if instruction.metadata.get("policy", "").strip() == ref_policy]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-riscv-policy"
+        ref_tail_policy = ref.get("tail_policy", "").strip()
+        if len(matched) > 1 and ref_tail_policy:
+            narrowed = [instruction for instruction in matched if instruction.metadata.get("tail_policy", "").strip() == ref_tail_policy]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-riscv-tail"
+        ref_mask_policy = ref.get("mask_policy", "").strip()
+        if len(matched) > 1 and ref_mask_policy:
+            narrowed = [instruction for instruction in matched if instruction.metadata.get("mask_policy", "").strip() == ref_mask_policy]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-riscv-mask"
+        ref_masking = ref.get("masking", "").strip()
+        if len(matched) > 1 and ref_masking:
+            narrowed = [instruction for instruction in matched if instruction.metadata.get("masking", "").strip() == ref_masking]
+            if narrowed:
+                matched = narrowed
+                resolution = f"{resolution}-riscv-masking"
     if ref_arch == "x86" and len(matched) > 1:
         lowered_name = intrinsic.name.casefold()
         if "_maskz_" in lowered_name:
@@ -1051,14 +1094,22 @@ def build_catalog(
     emit("Fetching Arm A64 instruction data")
     arm_a64_text, arm_a64_source = fetch_arm_a64_data(offline=offline)
     emit(f"Fetched Arm A64 instruction data from {arm_a64_source.url}")
+    emit("Fetching RISC-V RVV intrinsic data")
+    riscv_intrinsics_text, riscv_intrinsics_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+    emit(f"Fetched RISC-V RVV intrinsic data from {riscv_intrinsics_source.url}")
+    emit("Fetching RISC-V unified-db instruction data")
+    riscv_instructions_text, riscv_instructions_source = fetch_riscv_unified_db_data(offline=offline)
+    emit(f"Fetched RISC-V unified-db instruction data from {riscv_instructions_source.url}")
     emit("Parsing intrinsic catalog")
     intrinsics = parse_intel_payload(intel_text)
     arm_intrinsics = parse_arm_intrinsics_payload(arm_acle_text)
     intrinsics.extend(arm_intrinsics)
+    intrinsics.extend(parse_riscv_intrinsics_payload(riscv_intrinsics_text))
     emit(f"Parsed {len(intrinsics)} intrinsics")
     emit("Parsing instruction catalog")
     instructions = parse_uops_xml(uops_text)
     instructions.extend(parse_arm_instruction_payload(arm_a64_text))
+    instructions.extend(parse_riscv_instruction_payload(riscv_instructions_text))
     emit(f"Parsed {len(instructions)} instructions")
     emit("Linking intrinsics to instructions")
     link_records(intrinsics, instructions)
@@ -1079,6 +1130,6 @@ def build_catalog(
     return Catalog(
         intrinsics=sorted(intrinsics, key=lambda item: item.name),
         instructions=sorted(instructions, key=lambda item: (item.architecture, item.mnemonic, item.form)),
-        sources=[intel_source, uops_source, arm_acle_source, arm_a64_source],
+        sources=[intel_source, uops_source, arm_acle_source, arm_a64_source, riscv_intrinsics_source, riscv_instructions_source],
         generated_at=now_iso(),
     )

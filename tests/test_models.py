@@ -100,6 +100,17 @@ def test_instruction_record_arm_db_key_is_architecture_aware():
     assert record.db_key == "arm:add (zd.s, pg/m, zn.s, zm.s)"
 
 
+def test_instruction_record_riscv_db_key_is_architecture_aware():
+    record = InstructionRecord(
+        mnemonic="vadd.vv",
+        form="vadd.vv",
+        summary="Add vector elements.",
+        architecture="riscv",
+    )
+    assert record.key == "vadd.vv"
+    assert record.db_key == "riscv:vadd.vv"
+
+
 def test_instruction_record_normalizes_legacy_intel_metadata_to_pdf_refs():
     record = InstructionRecord(
         mnemonic="ADDPS",

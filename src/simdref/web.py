@@ -21,16 +21,15 @@ from dataclasses import asdict
 from importlib import resources
 from pathlib import Path
 
+from simdref import __version__
+from simdref.filters import FilterSpec, CategorySpec
 from simdref.models import Catalog
 from simdref.display import (
-    DEFAULT_ENABLED_ISAS,
-    DEFAULT_SUBS,
-    FAMILY_SUB_ORDER,
-    ISA_FAMILY_ORDER,
     display_architecture,
     display_isa,
     display_instruction_form,
     isa_families,
+    isa_family,
     isa_to_sub_isa,
     normalize_instruction_query,
     strip_instruction_decorators,
@@ -121,13 +120,28 @@ def _instruction_search_fields(item) -> list[str]:
     ]
 
 
+def _filter_spec_for_catalog(catalog: Catalog) -> FilterSpec:
+    spec = FilterSpec()
+    aggregate: dict[tuple[str, str, str], int] = {}
+    for item in catalog.intrinsics:
+        if not item.category:
+            continue
+        families = {isa_family(v) for v in (item.isa or [])} or {"Other"}
+        for family in families:
+            key = (family, item.category, item.subcategory or "")
+            aggregate[key] = aggregate.get(key, 0) + 1
+    spec.categories = [
+        CategorySpec(family=fam, category=cat, subcategory=sub, count=n)
+        for (fam, cat, sub), n in sorted(aggregate.items())
+    ]
+    return spec
+
+
 def _isa_config() -> dict:
-    return {
-        "family_order": ISA_FAMILY_ORDER,
-        "family_sub_order": FAMILY_SUB_ORDER,
-        "default_enabled": list(DEFAULT_ENABLED_ISAS),
-        "default_subs": {family: sorted(values) for family, values in DEFAULT_SUBS.items()},
-    }
+    """Legacy isa_config block embedded in ``search-index.json``."""
+    payload = FilterSpec().to_json()
+    payload.pop("categories", None)
+    return payload
 
 
 def _search_payload(catalog: Catalog) -> dict:
@@ -267,26 +281,58 @@ def _intrinsic_details(catalog: Catalog) -> dict[str, dict]:
     }
 
 
+def _build_stamp(catalog: Catalog) -> dict:
+    from datetime import datetime, timezone
+    import subprocess
+    git_sha = ""
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).strip()
+    except (subprocess.SubprocessError, OSError):
+        git_sha = ""
+    return {
+        "version": __version__,
+        "git_sha": git_sha,
+        "catalog_generated_at": catalog.generated_at,
+        "intrinsics": len(catalog.intrinsics),
+        "instructions": len(catalog.instructions),
+        "built_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def export_web(catalog: Catalog, web_dir: Path) -> None:
     """Write the web app to *web_dir*.
 
     Outputs:
     * ``index.html`` -- assembled SPA
     * ``search-index.json`` -- compact search data
+    * ``filter_spec.json`` -- shared ISA/category facets (web + CLI)
+    * ``build_stamp.json`` -- version/freshness metadata
     * ``detail-chunks/{PREFIX}.json`` -- instruction detail chunks
     * ``intrinsic-details.json`` -- full intrinsic details
     """
     web_dir.mkdir(parents=True, exist_ok=True)
 
-    # Assembled HTML
     (web_dir / "index.html").write_text(_load_template())
 
-    # Tier 1: search index
     (web_dir / "search-index.json").write_text(
         json.dumps(_search_payload(catalog), separators=(",", ":"), sort_keys=True)
     )
 
-    # Tier 2: detail chunks
+    filter_spec = _filter_spec_for_catalog(catalog)
+    (web_dir / "filter_spec.json").write_text(
+        json.dumps(filter_spec.to_json(), separators=(",", ":"), sort_keys=True)
+    )
+
+    (web_dir / "build_stamp.json").write_text(
+        json.dumps(_build_stamp(catalog), separators=(",", ":"), sort_keys=True)
+    )
+
     chunks_dir = web_dir / "detail-chunks"
     if chunks_dir.exists():
         shutil.rmtree(chunks_dir)
@@ -296,7 +342,6 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
             json.dumps(chunk, separators=(",", ":"), sort_keys=True)
         )
 
-    # Intrinsic details (single file, small enough)
     (web_dir / "intrinsic-details.json").write_text(
         json.dumps(_intrinsic_details(catalog), separators=(",", ":"), sort_keys=True)
     )

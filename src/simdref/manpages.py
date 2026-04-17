@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from simdref.display import display_architecture
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 from simdref.queries import instruction_rows_for_intrinsic
 
@@ -51,7 +52,7 @@ def intrinsic_page(record: IntrinsicRecord, catalog: Catalog) -> str:
     parts.append(_section("HEADER", _roff_escape(record.header or "Unknown")))
     if record.url:
         parts.append(_section("SOURCE", _roff_escape(record.url)))
-    parts.append(_section("ARCHITECTURE", _roff_escape(record.architecture or "Unknown")))
+    parts.append(_section("ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))))
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("CATEGORY", _roff_escape(record.category or "Unknown")))
     parts.append(_section("INSTRUCTIONS", _roff_escape(", ".join(record.instructions) or "None linked")))
@@ -71,7 +72,7 @@ def instruction_page(record: InstructionRecord) -> str:
         parts.append(_section("DESCRIPTION", _roff_escape(record.summary)))
     if record.description.get("Operation"):
         parts.append(_section("OPERATION", f".nf\n{_roff_escape(record.description['Operation'])}\n.fi"))
-    parts.append(_section("ARCHITECTURE", _roff_escape(record.architecture or "Unknown")))
+    parts.append(_section("ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))))
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("OPERANDS", _roff_escape("\n".join(record.operands) or "No operand details available.")))
     parts.append(_section("INTRINSICS", _roff_escape(", ".join(record.linked_intrinsics) or "None linked")))

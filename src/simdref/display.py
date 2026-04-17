@@ -92,38 +92,19 @@ ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
     "AVX512VPOPCNTDQ": (6, 12), "AVX5124VNNIW": (6, 13),
     "AVX5124FMAPS": (6, 14), "AVX512VP2INTERSECT": (6, 15),
     "AVX512BF16": (6, 16), "AVX512FP16": (6, 99),
-    "AVX10": (7, 0), "AMX": (7, 0), "SVE": (8, 0), "SVE2": (8, 1), "APX": (9, 0),
+    "AVX10": (7, 0), "AMX": (7, 0), "SVE": (8, 0), "SVE2": (8, 1), "V": (8, 2), "ZVE": (8, 3), "ZV": (8, 4), "APX": (9, 0),
 }
 
 _ISA_PREFIXES_BY_LEN = sorted(ISA_CHRONOLOGY.items(), key=lambda kv: len(kv[0]), reverse=True)
 
-ISA_FAMILY_ORDER: dict[str, int] = {
-    "x86": 0, "MMX": 1, "SSE": 2, "AVX": 3,
-    "AVX-512": 4, "AVX10": 5, "AMX": 6, "APX": 7, "Arm": 8, "SVML": 9, "Other": 10,
-}
-
-DEFAULT_ENABLED_ISAS: tuple[str, ...] = ("SSE", "AVX", "AVX-512")
-
-FAMILY_SUB_ORDER: dict[str, list[str]] = {
-    "SSE": ["SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"],
-    "AVX": ["AVX", "AVX2", "FMA", "F16C", "AVX_VNNI", "AVX_VNNI_INT8", "AVX_VNNI_INT16", "AVX_IFMA", "AVX_NE_CONVERT"],
-    "AVX-512": [
-        "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
-        "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16", "AVX512_VBMI", "AVX512_VBMI2",
-        "AVX512_BITALG", "AVX512IFMA52", "AVX512VPOPCNTDQ", "AVX512_VP2INTERSECT",
-        "VAES", "VPCLMULQDQ", "GFNI",
-    ],
-    "AMX": ["AMX-TILE", "AMX-INT8", "AMX-BF16", "AMX-FP16", "AMX-COMPLEX"],
-    "Arm": ["NEON", "SVE", "SVE2"],
-}
-
-DEFAULT_SUBS: dict[str, set[str]] = {
-    "SSE": {"SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"},
-    "AVX": {"AVX", "AVX2", "FMA", "F16C"},
-    "AVX-512": {"AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"},
-    "AMX": {"AMX-TILE", "AMX-INT8", "AMX-BF16"},
-    "Arm": {"NEON", "SVE", "SVE2"},
-}
+# ISA family/sub-ISA constants live in simdref.filters (single source of truth).
+# Re-exported here for back-compat with TUI, web export, and external callers.
+from simdref.filters import (  # noqa: E402  (re-export)
+    DEFAULT_ENABLED_ISAS,
+    DEFAULT_SUBS,
+    FAMILY_SUB_ORDER,
+    ISA_FAMILY_ORDER,
+)
 
 X86_BASE_ISAS: frozenset[str] = frozenset({
     "I86", "I186", "I286", "I386", "I486", "I586", "X87", "CMOV",
@@ -310,6 +291,7 @@ def display_architecture(architecture: str) -> str:
     return {
         "x86": "x86",
         "arm": "Arm",
+        "riscv": "RISC-V",
     }.get((architecture or "").lower(), architecture or "-")
 
 
@@ -329,6 +311,8 @@ def isa_family(isa: str) -> str:
         return "SVML"
     if d in {"AARCH64", "NEON"} or d.startswith("SVE"):
         return "Arm"
+    if d == "V" or d.startswith("RV") or d.startswith("ZV") or d.startswith("ZVE"):
+        return "RISC-V"
     if d.startswith("APX"):
         return "APX"
     if d.startswith("AMX"):

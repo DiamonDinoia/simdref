@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from pathlib import Path
+import tempfile
 
 from simdref.cli import _resolve_query_payload
 from simdref.display import (
@@ -16,9 +17,10 @@ from simdref.ingest import _instruction_summary, _normalize_operand_xtype, build
 from simdref.arm_instructions import parse_arm_instruction_payload
 from simdref.ingest_catalog import parse_arm_intrinsics_payload
 from simdref.models import InstructionRecord, IntrinsicRecord
+from simdref.riscv import _infer_intrinsic_policy, parse_riscv_instruction_payload, parse_riscv_intrinsics_payload
 from simdref.search import find_instruction, find_intrinsic, search_catalog, search_records
 from simdref.storage import build_sqlite, open_db, save_catalog
-from simdref.tui import _fts_search
+from simdref.tui import _fts_search, _normalize_sub_isa_selection
 
 
 class SearchTests(unittest.TestCase):
@@ -39,6 +41,11 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(arm_record.metadata["reference_url"], "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#addition")
         self.assertIn("ACLE Documentation", arm_record.doc_sections)
         self.assertIn("AArch64 instruction:", arm_record.doc_sections["ACLE Documentation"])
+        riscv_record = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1")
+        self.assertIsNotNone(riscv_record)
+        self.assertEqual(riscv_record.architecture, "riscv")
+        self.assertEqual(riscv_record.instructions, ["vadd.vv"])
+        self.assertEqual(riscv_record.url, "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
 
     def test_instruction_lookup(self):
         catalog = build_catalog(offline=True)
@@ -52,6 +59,10 @@ class SearchTests(unittest.TestCase):
         self.assertIsNotNone(arm_record)
         self.assertEqual(arm_record.architecture, "arm")
         self.assertIn("svadd_s32_z", arm_record.linked_intrinsics)
+        riscv_record = find_instruction(catalog, "vadd.vv")
+        self.assertIsNotNone(riscv_record)
+        self.assertEqual(riscv_record.architecture, "riscv")
+        self.assertIn("__riscv_vadd_vv_i32m1", riscv_record.linked_intrinsics)
 
     def test_instruction_lookup_accepts_tokenized_form(self):
         catalog = build_catalog(offline=True)
@@ -66,6 +77,15 @@ class SearchTests(unittest.TestCase):
         arm_results = search_catalog(catalog, "svadd")
         self.assertTrue(any(result.kind == "intrinsic" and result.title == "svadd_s32_z" for result in arm_results))
         self.assertTrue(any(result.kind == "intrinsic" and result.title == "svadd" for result in arm_results))
+        riscv_mnemonic = search_catalog(catalog, "vadd.vv")
+        self.assertEqual(riscv_mnemonic[0].kind, "instruction")
+        self.assertEqual(riscv_mnemonic[0].title, "vadd.vv")
+        riscv_intrinsic = search_catalog(catalog, "__riscv_vadd_vv_i32m1")
+        self.assertEqual(riscv_intrinsic[0].kind, "intrinsic")
+        self.assertEqual(riscv_intrinsic[0].title, "__riscv_vadd_vv_i32m1")
+        riscv_extension = search_catalog(catalog, "zvkned")
+        self.assertEqual(riscv_extension[0].kind, "instruction")
+        self.assertEqual(riscv_extension[0].title, "vaesdf.vv")
 
     def test_llm_exact_intrinsic_payload(self):
         catalog = build_catalog(offline=True)
@@ -152,6 +172,11 @@ class SearchTests(unittest.TestCase):
             ],
         )
         self.assertEqual(summary, "Masked Add Packed Single Precision Floating-Point Values.")
+
+    def test_riscv_policy_suffixes_mark_masked_variants(self):
+        self.assertEqual(_infer_intrinsic_policy("__riscv_vadd_vv_i32m1_mu"), ("mu", "masked"))
+        self.assertEqual(_infer_intrinsic_policy("__riscv_vadd_vv_i32m1_tum"), ("tum", "masked"))
+        self.assertEqual(_infer_intrinsic_policy("__riscv_vadd_vv_i32m1_tumu"), ("tumu", "masked"))
 
     def test_maskz_query_prefers_maskz_intrinsic(self):
         catalog = build_catalog(offline=True)
@@ -275,6 +300,71 @@ class SearchTests(unittest.TestCase):
         sve_add = next(item for item in arm_records if item.form == "ADD (Zd.S, Pg/M, Zn.S, Zm.S)")
         self.assertIn("vaddq_u8", neon_add.linked_intrinsics)
         self.assertNotIn("vaddq_u8", sve_add.linked_intrinsics)
+
+    def test_mixed_catalog_keeps_riscv_keys_separate(self):
+        catalog = build_catalog(offline=True)
+        riscv_records = [item for item in catalog.instructions if item.architecture == "riscv" and item.mnemonic == "vadd.vv"]
+        self.assertGreaterEqual(len(riscv_records), 4)
+        self.assertEqual(len({item.db_key for item in riscv_records}), len(riscv_records))
+        plain = next(item for item in riscv_records if item.form == "vadd.vv")
+        masked = next(item for item in riscv_records if item.form == "vadd.vv [masked]")
+        self.assertIn("__riscv_vadd_vv_i32m1", plain.linked_intrinsics)
+        self.assertNotIn("__riscv_vadd_vv_i32m1_m", plain.linked_intrinsics)
+        self.assertIn("__riscv_vadd_vv_i32m1_m", masked.linked_intrinsics)
+
+    def test_parse_riscv_fixture_payloads(self):
+        intrinsics = parse_riscv_intrinsics_payload(Path("src/simdref/fixtures/riscv_rvv_intrinsics_sample.json").read_text())
+        instructions = parse_riscv_instruction_payload(Path("src/simdref/fixtures/riscv_unified_db_sample.json").read_text())
+        self.assertTrue(any(item.name == "__riscv_vadd_vv_i32m1" for item in intrinsics))
+        self.assertTrue(any(item.mnemonic == "vadd.vv" for item in instructions))
+        self.assertTrue(any(item.mnemonic == "vsub.vv" for item in instructions))
+        self.assertTrue(any(item.name == "__riscv_vse32_v_i32m1" for item in intrinsics))
+        crypto = next(item for item in instructions if item.mnemonic == "vaesdf.vv")
+        self.assertEqual(crypto.isa, ["Zvkned"])
+
+    def test_riscv_policy_variants_do_not_cross_link(self):
+        catalog = build_catalog(offline=True)
+        plain = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1")
+        masked = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1_m")
+        tu = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1_tu")
+        tumu = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1_tumu")
+        self.assertEqual(plain.instructions, ["vadd.vv"])
+        self.assertEqual(masked.instructions, ["vadd.vv [masked]"])
+        self.assertEqual(tu.instructions, ["vadd.vv [tu]"])
+        self.assertEqual(tumu.instructions, ["vadd.vv [tumu]"])
+
+    def test_riscv_vsub_variants_link_without_crossing_masking(self):
+        catalog = build_catalog(offline=True)
+        plain = find_intrinsic(catalog, "__riscv_vsub_vv_i32m1")
+        masked = find_intrinsic(catalog, "__riscv_vsub_vv_i32m1_m")
+        self.assertEqual(plain.instructions, ["vsub.vv"])
+        self.assertEqual(masked.instructions, ["vsub.vv [masked]"])
+
+    def test_riscv_docs_html_enrichment_fills_missing_sections(self):
+        payload = {
+            "format": "riscv-unified-db-v1",
+            "instructions": [
+                {
+                    "mnemonic": "vslideup.vx",
+                    "form": "vslideup.vx",
+                    "summary": "Slide vector elements upward",
+                    "isa": ["V"],
+                    "url": "https://docs.riscv.org/reference/isa/unpriv/v-st-ext.html#vslideup-vx",
+                    "description": {},
+                }
+            ],
+            "docs_pages": {
+                "https://docs.riscv.org/reference/isa/unpriv/v-st-ext.html": """
+                    <html><body>
+                    <h2>Description</h2><p>Slides elements in <code>vs2</code> upward by the scalar offset.</p>
+                    <h2>Operation</h2><pre>vd[i + offset] = vs2[i]</pre>
+                    </body></html>
+                """
+            },
+        }
+        records = parse_riscv_instruction_payload(json.dumps(payload))
+        self.assertEqual(records[0].description["Description"], "Slides elements in vs2 upward by the scalar offset.")
+        self.assertIn("vd[i + offset] = vs2[i]", records[0].description["Operation"])
 
     def test_generic_sve_mapping_links_to_sve_form_only(self):
         catalog = build_catalog(offline=True)
@@ -476,6 +566,51 @@ class TuiSearchFilterTests(unittest.TestCase):
         )
         self.assertNotIn("svadd_s32_z", [result.key for result in filtered])
 
+    def test_fts_search_supports_riscv_family_and_sub_isa(self):
+        results = _fts_search(
+            self._conn,
+            "vadd.vv",
+            {"RISC-V"},
+            {"V"},
+            limit=10,
+        )
+        keys = [result.key for result in results]
+        self.assertIn("__riscv_vadd_vv_i32m1", keys)
+        self.assertIn("riscv:vadd.vv", keys)
+
+        filtered = _fts_search(
+            self._conn,
+            "vaesdf",
+            {"RISC-V"},
+            {"V"},
+            limit=10,
+        )
+        self.assertNotIn("__riscv_vaesdf_vv_u32m1", [result.key for result in filtered])
+
+    def test_fts_search_sub_returns_riscv_results(self):
+        results = _fts_search(
+            self._conn,
+            "sub",
+            {"RISC-V"},
+            {"V"},
+            limit=10,
+        )
+        keys = [result.key for result in results]
+        self.assertIn("__riscv_vsub_vv_i32m1", keys)
+        self.assertIn("riscv:vsub.vv", keys)
+
+    def test_fts_search_load_returns_riscv_results(self):
+        results = _fts_search(
+            self._conn,
+            "load",
+            {"RISC-V"},
+            {"V"},
+            limit=10,
+        )
+        keys = [result.key for result in results]
+        self.assertIn("__riscv_vle32_v_i32m1", keys)
+        self.assertIn("riscv:vle32.v", keys)
+
     def test_fts_search_add_returns_arm_results(self):
         results = _fts_search(
             self._conn,
@@ -487,6 +622,42 @@ class TuiSearchFilterTests(unittest.TestCase):
         keys = [result.key for result in results]
         self.assertIn("vaddq_u8", keys)
         self.assertIn("arm:add (vd.16b, vn.16b, vm.16b)", keys)
+
+    def test_normalize_sub_isa_selection_drops_stale_family_entries(self):
+        normalized = _normalize_sub_isa_selection(
+            {"RISC-V"},
+            {"SSE2", "AVX2", "V"},
+            {"RISC-V": ["V", "ZV"], "SSE": ["SSE2"], "AVX": ["AVX2"]},
+        )
+        self.assertEqual(normalized, {"V"})
+
+    def test_fts_search_add_can_reach_riscv_after_many_x86_matches(self):
+        noisy_catalog = build_catalog(offline=True)
+        for index in range(250):
+            noisy_catalog.instructions.append(
+                InstructionRecord(
+                    mnemonic=f"ADDNOISE{index}",
+                    form=f"ADDNOISE{index} (R32, R32)",
+                    summary="Add noisy scalar operands.",
+                    architecture="x86",
+                    isa=["I86"],
+                )
+            )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "catalog.db"
+            build_sqlite(noisy_catalog, path=db_path)
+            conn = open_db(path=db_path)
+            try:
+                results = _fts_search(
+                    conn,
+                    "add",
+                    {"RISC-V"},
+                    {"V", "ZV"},
+                    limit=10,
+                )
+            finally:
+                conn.close()
+        self.assertIn("riscv:vadd.vv", [result.key for result in results])
 
 
 if __name__ == "__main__":

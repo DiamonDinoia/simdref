@@ -46,6 +46,9 @@ class DisplayISATests(unittest.TestCase):
     def test_display_isa_arm_tokens(self):
         self.assertEqual(display_isa(["advsimd", "SVE2p1"]), "NEON, SVE2")
 
+    def test_display_isa_riscv_tokens(self):
+        self.assertEqual(display_isa(["V", "Zve32x", "Zvkned"]), "V, Zve32x, Zvkned")
+
     def test_display_isa_deduplicates(self):
         result = display_isa(["SSE", "SSE"])
         self.assertEqual(result, "SSE")
@@ -67,10 +70,12 @@ class DisplayISATests(unittest.TestCase):
     def test_isa_family_arm(self):
         self.assertEqual(isa_family("SVE2"), "Arm")
         self.assertEqual(isa_family("NEON"), "Arm")
+        self.assertEqual(isa_family("Zvkned"), "RISC-V")
 
     def test_display_architecture(self):
         self.assertEqual(display_architecture("arm"), "Arm")
         self.assertEqual(display_architecture("x86"), "x86")
+        self.assertEqual(display_architecture("riscv"), "RISC-V")
 
     def test_acle_operation_uses_code_highlighting(self):
         self.assertEqual(_CODE_SECTION_LANG["ACLE Operation"], "asm")
