@@ -154,13 +154,103 @@ function armArchVisible(item) {
   return bucket !== null && enabledArmArch.has(bucket);
 }
 
-function rebuildVisibleSet() {
-  visibleSet = new Set();
+/* ── Bucket indexes (built once after load) ─────────────────────────
+ * Filter toggles intersect small buckets instead of scanning ~140k
+ * entries. Buckets:
+ *   byKind:     "intrinsic" | "instruction"       -> entry indexes
+ *   byFamily:   family name                        -> entry indexes
+ *   byCategory: category name (or "")              -> entry indexes
+ *   byArmArch:  "A32" | "A64" | "BOTH" | "__none"  -> entry indexes
+ */
+let bucketsBuilt = false;
+const byKind = new Map();
+const byFamily = new Map();
+const byCategory = new Map();
+const byArmArch = new Map();
+
+function _pushBucket(map, key, i) {
+  let arr = map.get(key);
+  if (!arr) { arr = []; map.set(key, arr); }
+  arr.push(i);
+}
+
+function buildBuckets() {
+  byKind.clear(); byFamily.clear(); byCategory.clear(); byArmArch.clear();
   for (let i = 0; i < searchEntries.length; i++) {
     const e = searchEntries[i];
-    if (!enabledKinds.has(e.kind)) continue;
-    if (isaVisible(e.item) && categoryVisible(e.item) && armArchVisible(e.item)) visibleSet.add(i);
+    _pushBucket(byKind, e.kind, i);
+    const fams = e.item.isa_families || [];
+    if (fams.length === 0) _pushBucket(byFamily, "__none", i);
+    for (const f of fams) _pushBucket(byFamily, f, i);
+    const cat = e.item.category || "";
+    _pushBucket(byCategory, cat, i);
+    const arch = e.item.arm_arch || "__none";
+    _pushBucket(byArmArch, arch, i);
   }
+  bucketsBuilt = true;
+}
+
+function _unionKeys(map, keys) {
+  const out = new Set();
+  for (const k of keys) {
+    const list = map.get(k);
+    if (!list) continue;
+    for (const i of list) out.add(i);
+  }
+  return out;
+}
+
+function rebuildVisibleSet() {
+  if (!bucketsBuilt) buildBuckets();
+  // Kind filter: union of enabled-kind buckets.
+  let cand = _unionKeys(byKind, [...enabledKinds]);
+
+  // ISA family/sub-family filter — keep the existing predicate for the
+  // sub-ISA case (FAMILY_SUB_ORDER), but short-circuit at the family
+  // bucket first to avoid scanning every row.
+  if (!enableAllIsas) {
+    const famCand = _unionKeys(byFamily, [...enabledIsas]);
+    cand = _intersect(cand, famCand);
+    // Sub-ISA filtering — may still require a per-entry check when
+    // enabledSubIsas doesn't match the family default.
+    const needsSubCheck = [...enabledIsas].some(f => FAMILY_SUB_ORDER[f]);
+    if (needsSubCheck) {
+      cand = _filterSet(cand, (i) => isaVisible(searchEntries[i].item));
+    }
+  }
+
+  if (enabledCategories !== null) {
+    const catCand = _unionKeys(byCategory, [...enabledCategories]);
+    cand = _intersect(cand, catCand);
+  }
+
+  if (enabledArmArch) {
+    // Non-Arm entries are never filtered out. Union of:
+    //   * arm_arch bucket entries (Arm, bucketed by A32/A64/BOTH)
+    //   * entries whose families don't include "Arm"
+    const armCand = _unionKeys(byArmArch, [...enabledArmArch]);
+    const nonArm = _filterSet(cand, (i) => !(searchEntries[i].item.isa_families || []).includes("Arm"));
+    // armCand ∩ cand, ∪ nonArm
+    const intersect = new Set();
+    for (const i of armCand) if (cand.has(i)) intersect.add(i);
+    for (const i of nonArm) intersect.add(i);
+    cand = intersect;
+  }
+
+  visibleSet = cand;
+}
+
+function _intersect(a, b) {
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  const out = new Set();
+  for (const i of small) if (big.has(i)) out.add(i);
+  return out;
+}
+
+function _filterSet(s, pred) {
+  const out = new Set();
+  for (const i of s) if (pred(i)) out.add(i);
+  return out;
 }
 
 function resultMarkup(entries, offset = 0) {
