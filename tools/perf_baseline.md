@@ -113,6 +113,39 @@ TUI target (`< 40 ms p95` for common queries) is hit for short
 prefixes. Broad queries like "vec" remain slower because many rows
 match the FTS expression across families.
 
+## After Phase 1.4 + 1.5 (web virtualisation + rAF batching) — 2026-04-17
+
+Viewport virtualisation replaces the progressive-append result list
+(up to 5 000 DOM rows) with absolute-positioned rows in a
+fixed-height (88 px) wrapper, keeping ~60 rows in the DOM at a time
+regardless of pool size. Filter toggles + preset clicks now coalesce
+into a single `requestAnimationFrame` via `scheduleFilterRender()` —
+no flash between `rebuildVisibleSet` / `renderIsaFilters` /
+`renderResults`.
+
+| Metric                 | After 1.1-1.3 | After 1.4+1.5 |
+|------------------------|---------------|---------------|
+| Cold load              | 1.40 s        | 1.35 s        |
+| First paint            | 96 ms         | 408 ms (initial virtual-wrapper layout) |
+| Keystroke 'a'          | 43 ms         | 42 ms         |
+| Keystroke 'd'          | 67 ms         | 87 ms         |
+| Keystroke 'd' (3rd)    | 30 ms         | 27 ms         |
+
+(Biggest non-harness win: DOM node count at 5k-result scroll ~30k → ~60.)
+
+## After Phase 2.2 + 2.4 (TUI incremental refresh + detail cache) — 2026-04-17
+
+TUI sub-ISA bar short-circuits to in-place `set_enabled()` updates
+when only sub-ISA selection changes (common case); removes the
+per-keystroke remount flash. Detail-pane record fetch is wrapped in
+an in-session LRU (16 slots) so re-visits are free.
+
+Micro-bench (detail lookup, 50 iterations):
+
+```
+raw load_intrinsic_from_db  1.1 ms  →  cached  ~0 ms
+```
+
 ## Targets (from plan)
 
 | Metric                   | Today     | Target        |
