@@ -96,6 +96,23 @@ sets `Content-Encoding: gzip` when `Accept-Encoding: gzip` is present.
 **Targets met** at this point: cold load < 2 s, keystroke p95 < 100 ms,
 search-index on-wire < 3 MB.
 
+## After Phase 2.1 (TUI SQL pushdown) — 2026-04-17
+
+Push the sub-ISA / family filter into the FTS query as an extra
+`AND REPLACE(isa, '-', '') LIKE '%…%'` clause. SQLite now drops rows
+the user has filtered out before handing them to Python, cutting
+`_fts_search` wall time ~4× even with the REPLACE() overhead.
+
+| Metric                | Baseline | Now      | Δ |
+|-----------------------|----------|----------|---|
+| `_fts_search('add')`  | 127 ms   | **38 ms** | −70 % |
+| `_fts_search('mul')`  | ~130 ms  | **28 ms** | −78 % |
+| `_fts_search('vec')`  | ~300 ms  | 198 ms   | −34 % |
+
+TUI target (`< 40 ms p95` for common queries) is hit for short
+prefixes. Broad queries like "vec" remain slower because many rows
+match the FTS expression across families.
+
 ## Targets (from plan)
 
 | Metric                   | Today     | Target        |

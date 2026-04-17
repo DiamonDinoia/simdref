@@ -208,6 +208,30 @@ def _fts_search(
     fts_expr = f"{{name name_tokens}} : {term_expr}"
     fts_expr_broad = term_expr
 
+    # Build an ISA LIKE-clause fragment so SQLite can drop non-matching rows
+    # before we ever hand them to Python. Sub-ISA tokens (e.g. "SSE2") and
+    # family names (e.g. "Arm") are substring-matched against the space-joined
+    # isa column. Families without a sub-ISA breakdown (RISC-V "x86", etc.)
+    # get their family name added so a plain family-level toggle still matches.
+    isa_like_tokens: list[str] = []
+    if enabled_families:
+        for fam in enabled_families:
+            subs = FAMILY_SUB_ORDER.get(fam)
+            if not subs:
+                isa_like_tokens.append(fam)
+    if enabled_sub_isas is not None:
+        isa_like_tokens.extend(enabled_sub_isas)
+    # Normalise the isa column the same way _isa_matches_sub does: strip
+    # hyphens so "AVX-512F" matches a pushed-down "AVX512F" pattern. REPLACE
+    # isn't indexed, but it runs only over FTS-matching rows.
+    if isa_like_tokens:
+        normalized_tokens = [tok.replace("-", "") for tok in isa_like_tokens]
+        isa_like_sql = "(" + " OR ".join("REPLACE(isa, '-', '') LIKE ?" for _ in normalized_tokens) + ")"
+        isa_like_params = [f"%{tok}%" for tok in normalized_tokens]
+    else:
+        isa_like_sql = ""
+        isa_like_params = []
+
     def _isa_visible(isa_str: str) -> bool:
         parts = [v.strip() for v in isa_str.replace(",", " ").split() if v.strip()]
         families = {isa_family(v) for v in parts}
@@ -231,16 +255,20 @@ def _fts_search(
     def _target_candidate_count() -> int:
         return offset + limit + max(limit, 20)
 
+    # With the ISA LIKE filter in SQL, fetch_limit can stay modest — the
+    # filter drops non-matching rows before they reach Python.
+    isa_filter_clause = f" AND {isa_like_sql}" if isa_like_sql else ""
+
     def _query_intrinsic_rows(expr: str) -> list[sqlite3.Row]:
         rows: list[sqlite3.Row] = []
-        fetch_limit = max((offset + limit) * 5, 100)
+        fetch_limit = max((offset + limit) * 2, 60)
         while fetch_limit <= 5000:
             for sql in (
-                "SELECT name, summary, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
-                "SELECT name, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ? ORDER BY rank LIMIT ?",
+                f"SELECT name, summary, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ?{isa_filter_clause} ORDER BY rank LIMIT ?",
+                f"SELECT name, description, isa FROM intrinsics_fts WHERE intrinsics_fts MATCH ?{isa_filter_clause} ORDER BY rank LIMIT ?",
             ):
                 try:
-                    rows = conn.execute(sql, (expr, fetch_limit)).fetchall()
+                    rows = conn.execute(sql, (expr, *isa_like_params, fetch_limit)).fetchall()
                     break
                 except sqlite3.OperationalError:
                     continue
@@ -252,19 +280,19 @@ def _fts_search(
 
     def _query_instruction_rows(expr: str) -> list[sqlite3.Row]:
         rows: list[sqlite3.Row] = []
-        fetch_limit = max((offset + limit) * 5, 100)
+        fetch_limit = max((offset + limit) * 2, 60)
         while fetch_limit <= 5000:
             try:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT instructions_data.db_key, instructions_fts.key, instructions_fts.summary, instructions_fts.isa
                     FROM instructions_fts
                     JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
-                    WHERE instructions_fts MATCH ?
+                    WHERE instructions_fts MATCH ?{isa_filter_clause.replace('REPLACE(isa,', 'REPLACE(instructions_fts.isa,')}
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (expr, fetch_limit),
+                    (expr, *isa_like_params, fetch_limit),
                 ).fetchall()
             except sqlite3.OperationalError:
                 return rows
