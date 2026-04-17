@@ -1,0 +1,60 @@
+name: Nightly coverage audit
+
+# Re-runs tools/audit_coverage.py against live upstream feeds and opens a
+# PR if docs/coverage/summary.json drifts. Offline CI (ci.yml) enforces the
+# thresholds committed in docs/coverage/thresholds.toml on every PR.
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # 05:00 UTC, daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Install package
+        run: uv pip install -e .
+
+      - name: Build local catalog
+        run: python -m simdref update --build-local
+
+      - name: Re-run coverage audit
+        run: python tools/audit_coverage.py fetch
+
+      - name: Detect drift
+        id: drift
+        run: |
+          if ! git diff --quiet docs/coverage/; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open PR on drift
+        if: steps.drift.outputs.drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: nightly-coverage-drift
+          commit-message: "chore: refresh docs/coverage/ snapshot"
+          title: "chore: nightly coverage drift"
+          body: |
+            Automated upstream parity audit detected coverage drift.
+            See `docs/coverage/summary.json` for the updated per-source numbers.
+          add-paths: docs/coverage/
