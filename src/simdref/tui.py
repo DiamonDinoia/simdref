@@ -438,6 +438,17 @@ class SimdrefApp(App):
         margin: 0 1;
         overflow-x: auto;
     }
+    #kind-bar {
+        height: 1;
+        margin: 0 1;
+        overflow-x: auto;
+    }
+    #kind-bar .isa-label {
+        width: auto;
+        color: $text-muted;
+        padding: 0 1 0 0;
+        text-style: underline;
+    }
     #sub-isa-container {
         height: auto;
         max-height: 10;
