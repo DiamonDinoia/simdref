@@ -343,17 +343,28 @@ def isa_families(values: list[str]) -> list[str]:
 
 
 def isa_to_sub_isa(raw_isa: str) -> str | None:
-    """Map a raw ISA token to its configured family sub-ISA."""
+    """Map a raw ISA token to its configured family sub-ISA.
+
+    Longest matching sub wins so that ``SSE2``/``SSE4.1`` don't collapse
+    to ``SSE`` just because SSE appears earlier in FAMILY_SUB_ORDER.
+    """
     family = isa_family(raw_isa)
     subs = FAMILY_SUB_ORDER.get(family)
     if not subs:
         return None
     normalized = normalize_isa_token(display_isa([raw_isa]) or raw_isa)
+    # Exact match first, then longest-prefix match.
+    for sub in subs:
+        if normalize_isa_token(sub) == normalized:
+            return sub
+    best: str | None = None
+    best_len = -1
     for sub in subs:
         candidate = normalize_isa_token(sub)
-        if normalized == candidate or normalized.startswith(candidate):
-            return sub
-    return None
+        if normalized.startswith(candidate) and len(candidate) > best_len:
+            best = sub
+            best_len = len(candidate)
+    return best
 
 
 def isa_sort_key(values: list[str]) -> tuple[int, int, str]:

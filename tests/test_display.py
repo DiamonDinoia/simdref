@@ -10,6 +10,7 @@ from simdref.display import (
     display_architecture,
     display_isa,
     isa_family,
+    isa_to_sub_isa,
     display_instruction_form,
     instruction_query_text,
     instruction_variant_items,
@@ -20,6 +21,25 @@ from simdref.display import (
     render_instruction,
     uarch_sort_key,
 )
+
+
+class IsaToSubIsaTests(unittest.TestCase):
+    def test_sse_variants_do_not_collapse_to_sse(self):
+        # Longest-match rule: SSE2/SSE3/SSE4.1/SSE4.2 must resolve to
+        # themselves, not to the SSE prefix that appears first in the list.
+        self.assertEqual(isa_to_sub_isa("SSE"), "SSE")
+        self.assertEqual(isa_to_sub_isa("SSE2"), "SSE2")
+        self.assertEqual(isa_to_sub_isa("SSE3"), "SSE3")
+        self.assertEqual(isa_to_sub_isa("SSSE3"), "SSSE3")
+        self.assertEqual(isa_to_sub_isa("SSE4.1"), "SSE4.1")
+        self.assertEqual(isa_to_sub_isa("SSE4.2"), "SSE4.2")
+        self.assertEqual(isa_to_sub_isa("SSE4_1"), "SSE4.1")
+        self.assertEqual(isa_to_sub_isa("SSE4_2"), "SSE4.2")
+
+    def test_avx512_variants_prefer_exact_match(self):
+        self.assertEqual(isa_to_sub_isa("AVX512F"), "AVX512F")
+        self.assertEqual(isa_to_sub_isa("AVX512VL"), "AVX512VL")
+        self.assertEqual(isa_to_sub_isa("AVX_VNNI"), "AVX_VNNI")
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 
 
