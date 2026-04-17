@@ -72,12 +72,20 @@ class FilterSpecSqlPredicateTests(unittest.TestCase):
         # Family "Arm" should expand to its sub tokens plus the family label.
         self.assertTrue(any("NEON" in b or "SVE" in b or "Arm" in b for b in binds))
 
-    def test_sql_predicate_category_applies_only_to_intrinsics_table(self):
+    def test_sql_predicate_category_applies_to_both_tables(self):
+        # Schema v10 adds an indexed `category` column to instructions_data;
+        # the predicate must push category filters into SQL for both tables.
         spec = FilterSpec()
         _, binds_intr = spec.sql_predicate("intrinsics_data", enabled_categories=["Arithmetic"])
         _, binds_instr = spec.sql_predicate("instructions_data", enabled_categories=["Arithmetic"])
         self.assertIn("Arithmetic", binds_intr)
-        self.assertNotIn("Arithmetic", binds_instr)
+        self.assertIn("Arithmetic", binds_instr)
+
+    def test_sql_predicate_category_skipped_for_unrelated_tables(self):
+        spec = FilterSpec()
+        sql, binds = spec.sql_predicate("some_other_table", enabled_categories=["Arithmetic"])
+        self.assertNotIn("Arithmetic", binds)
+        self.assertNotIn("category", sql)
 
     def test_sql_predicate_runs_against_real_sqlite(self):
         conn = sqlite3.connect(":memory:")

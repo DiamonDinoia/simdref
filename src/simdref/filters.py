@@ -126,10 +126,9 @@ class FilterSpec:
     ) -> tuple[str, list[Any]]:
         """Return a SQL ``WHERE`` fragment and bind values for *table*.
 
-        The current schema has an indexed ``category`` column only on
-        ``intrinsics_data``; category filtering on ``instructions_data`` is
-        skipped at the SQL level and handled downstream. ISA family filtering
-        relies on substring match against the space-joined ``isa`` column.
+        Both ``intrinsics_data`` and ``instructions_data`` carry an indexed
+        ``category`` column (schema v10+). ISA family filtering relies on
+        substring match against the space-joined ``isa`` column.
         """
         clauses: list[str] = []
         binds: list[Any] = []
@@ -143,10 +142,12 @@ class FilterSpec:
                     "(" + " OR ".join(f"{table}.isa LIKE ?" for _ in family_tokens) + ")"
                 )
                 binds.extend(f"%{tok}%" for tok in family_tokens)
-        if enabled_categories and table == "intrinsics_data":
-            placeholders = ",".join("?" for _ in enabled_categories)
-            clauses.append(f"{table}.category IN ({placeholders})")
-            binds.extend(enabled_categories)
+        if enabled_categories and table in ("intrinsics_data", "instructions_data"):
+            categories_list = list(enabled_categories)
+            if categories_list:
+                placeholders = ",".join("?" for _ in categories_list)
+                clauses.append(f"{table}.category IN ({placeholders})")
+                binds.extend(categories_list)
         return (" AND ".join(clauses), binds)
 
 
@@ -163,25 +164,36 @@ def load_categories_from_db(conn: sqlite3.Connection) -> list[CategorySpec]:
     on the payload and are skipped here (schema lacks an indexed column).
     """
     from simdref.display import isa_family  # local import avoids cycle
-    rows = conn.execute(
+    queries = [
         """
         SELECT category, subcategory, isa, COUNT(*) AS n
         FROM intrinsics_data
         WHERE category != ''
         GROUP BY category, subcategory, isa
+        """,
         """
-    ).fetchall()
+        SELECT category, '' AS subcategory, isa, COUNT(*) AS n
+        FROM instructions_data
+        WHERE category != ''
+        GROUP BY category, isa
+        """,
+    ]
     aggregate: dict[tuple[str, str, str], int] = {}
-    for row in rows:
-        isa_str = row["isa"] if hasattr(row, "keys") else row[2]
-        category = row["category"] if hasattr(row, "keys") else row[0]
-        subcategory = row["subcategory"] if hasattr(row, "keys") else row[1]
-        count = row["n"] if hasattr(row, "keys") else row[3]
-        tokens = [t for t in str(isa_str or "").split() if t]
-        families = {isa_family(t) for t in tokens} or {"Other"}
-        for family in families:
-            key = (family, category, subcategory)
-            aggregate[key] = aggregate.get(key, 0) + int(count)
+    for sql in queries:
+        try:
+            rows = conn.execute(sql).fetchall()
+        except sqlite3.Error:
+            continue
+        for row in rows:
+            isa_str = row["isa"] if hasattr(row, "keys") else row[2]
+            category = row["category"] if hasattr(row, "keys") else row[0]
+            subcategory = row["subcategory"] if hasattr(row, "keys") else row[1]
+            count = row["n"] if hasattr(row, "keys") else row[3]
+            tokens = [t for t in str(isa_str or "").split() if t]
+            families = {isa_family(t) for t in tokens} or {"Other"}
+            for family in families:
+                key = (family, category, subcategory)
+                aggregate[key] = aggregate.get(key, 0) + int(count)
     specs = [
         CategorySpec(family=fam, category=cat, subcategory=sub, count=n)
         for (fam, cat, sub), n in sorted(aggregate.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2]))

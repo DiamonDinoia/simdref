@@ -54,7 +54,7 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "9"
+SQLITE_SCHEMA_VERSION = "10"
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 SQLITE_INSERT_BATCH_SIZE = 512
 
@@ -110,9 +110,12 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         actual_columns = {item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()}
         if expected_columns != actual_columns:
             return False
-        expected_instruction_columns = {"db_key", "key", "architecture", "mnemonic", "form", "summary", "isa", "payload"}
+        expected_instruction_columns = {"db_key", "key", "architecture", "mnemonic", "form", "summary", "isa", "category", "payload"}
         actual_instruction_columns = {item[1] for item in conn.execute("PRAGMA table_info(instructions_data)").fetchall()}
-        return expected_instruction_columns == actual_instruction_columns
+        if expected_instruction_columns != actual_instruction_columns:
+            return False
+        indexes = {item[1] for item in conn.execute("PRAGMA index_list(instructions_data)").fetchall()}
+        return "idx_instruction_category" in indexes
     except sqlite3.Error:
         return False
     finally:
@@ -178,10 +181,12 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             form TEXT NOT NULL,
             summary TEXT NOT NULL,
             isa TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '',
             payload BLOB NOT NULL
         );
         CREATE INDEX idx_instruction_key ON instructions_data (key);
         CREATE INDEX idx_instruction_mnemonic ON instructions_data (mnemonic);
+        CREATE INDEX idx_instruction_category ON instructions_data (category);
         CREATE VIRTUAL TABLE intrinsics_fts USING fts5(name, signature, description, header, isa, category, instructions, notes, aliases, summary, name_tokens);
         CREATE VIRTUAL TABLE instructions_fts USING fts5(key, mnemonic, form, summary, isa, linked_intrinsics, aliases, key_tokens);
         """
@@ -272,6 +277,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             record.form,
             record.summary,
             " ".join(record.isa),
+            record.metadata.get("category", "") if isinstance(record.metadata, dict) else "",
             payload,
         ))
         instructions_fts_batch.append((
@@ -286,7 +292,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         ))
         if len(instructions_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
-                "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 instructions_data_batch,
             )
             cur.executemany(
@@ -297,7 +303,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
             instructions_fts_batch.clear()
     if instructions_data_batch:
         cur.executemany(
-            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             instructions_data_batch,
         )
         cur.executemany(
@@ -369,37 +375,92 @@ def _fts_match_query(query: str) -> str:
     return " AND ".join(f'"{token}"*' for token in tokens if token)
 
 
-def search_intrinsic_candidates_from_db(conn: sqlite3.Connection, query: str, limit: int = 200) -> list[IntrinsicRecord]:
+def _append_filter_clause(
+    base_sql: str,
+    table: str,
+    filter_spec,
+    enabled_families,
+    enabled_categories,
+    binds: list,
+    match_marker: str,
+) -> str:
+    """Splice a FilterSpec WHERE fragment into the SQL query after the
+    FTS MATCH placeholder, so bind ordering stays correct.
+
+    ``match_marker`` must be the exact string that appears immediately after
+    the MATCH ``?`` placeholder in ``base_sql`` (e.g. a newline-preserving
+    pattern) — the helper inserts ``AND <clause>`` just after it.
+    """
+    if filter_spec is None:
+        return base_sql
+    clause, extra_binds = filter_spec.sql_predicate(
+        table,
+        enabled_families=enabled_families,
+        enabled_categories=enabled_categories,
+    )
+    if not clause:
+        return base_sql
+    binds.extend(extra_binds)
+    if match_marker not in base_sql:
+        return base_sql
+    return base_sql.replace(match_marker, f"{match_marker} AND {clause} ", 1)
+
+
+def search_intrinsic_candidates_from_db(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 200,
+    *,
+    filter_spec=None,
+    enabled_families=None,
+    enabled_categories=None,
+) -> list[IntrinsicRecord]:
     match_query = _fts_match_query(query)
     if not match_query:
         return []
-    rows = conn.execute(
-        """
+    binds: list = [match_query]
+    sql = """
         SELECT intrinsics_data.payload
         FROM intrinsics_fts
         JOIN intrinsics_data ON intrinsics_data.id = intrinsics_fts.rowid
         WHERE intrinsics_fts MATCH ?
         ORDER BY bm25(intrinsics_fts), length(intrinsics_data.name), intrinsics_data.name
         LIMIT ?
-        """,
-        (match_query, limit),
-    ).fetchall()
+        """
+    sql = _append_filter_clause(
+        sql, "intrinsics_data", filter_spec, enabled_families, enabled_categories, binds,
+        match_marker="intrinsics_fts MATCH ?",
+    )
+    binds.append(limit)
+    rows = conn.execute(sql, binds).fetchall()
     return [IntrinsicRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
-def search_instruction_candidates_from_db(conn: sqlite3.Connection, query: str, limit: int = 200) -> list[InstructionRecord]:
+def search_instruction_candidates_from_db(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 200,
+    *,
+    filter_spec=None,
+    enabled_families=None,
+    enabled_categories=None,
+) -> list[InstructionRecord]:
     match_query = _fts_match_query(query)
     if not match_query:
         return []
-    rows = conn.execute(
-        """
+    binds: list = [match_query]
+    sql = """
         SELECT instructions_data.payload
         FROM instructions_fts
         JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
         WHERE instructions_fts MATCH ?
         ORDER BY bm25(instructions_fts), length(instructions_data.key), instructions_data.key
         LIMIT ?
-        """,
-        (match_query, limit),
-    ).fetchall()
+        """
+    sql = _append_filter_clause(
+        sql, "instructions_data", filter_spec, enabled_families, enabled_categories, binds,
+        match_marker="instructions_fts MATCH ?",
+    )
+    binds.append(limit)
+    rows = conn.execute(sql, binds).fetchall()
     return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
