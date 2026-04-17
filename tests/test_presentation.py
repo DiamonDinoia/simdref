@@ -134,12 +134,22 @@ def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path
     payload = json.loads((tmp_path / "search-index.json").read_text())
     intrinsics = payload.get("intrinsics") or []
     assert intrinsics, "search-index.json exposes no intrinsics"
-    required = {"name", "signature", "description", "isa", "display_isa", "isa_families"}
+    # Slim shape: only what the client needs for search + result-card render.
+    required = {"name", "subtitle", "isa", "display_isa", "isa_families", "search_fields"}
+    forbidden = {"signature", "header", "url", "notes", "metadata", "search_tokens", "display_isa_tokens"}
     for item in intrinsics:
         missing = required - item.keys()
         assert not missing, f"intrinsic {item.get('name')!r} missing {missing}"
-        for field in ("name", "signature", "description"):
-            assert item[field], f"intrinsic {item.get('name')!r} has empty {field}"
+        extra = forbidden & item.keys()
+        assert not extra, f"intrinsic {item.get('name')!r} has unexpected fat fields {extra}"
+        assert item["name"], "empty name"
+
+
+def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
+    export_web(catalog, tmp_path)
+    # Pre-compressed sidecars must be emitted for gzip-aware static serve.
+    for name in ("search-index.json", "intrinsic-details.json", "filter_spec.json"):
+        assert (tmp_path / f"{name}.gz").is_file(), f"missing {name}.gz sidecar"
 
 
 def test_search_index_instructions_have_required_fields(catalog: Catalog, tmp_path: Path):

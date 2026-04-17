@@ -14,6 +14,7 @@ The HTML template is assembled from three source files under
 
 from __future__ import annotations
 
+import gzip
 import json
 import shutil
 from collections import defaultdict
@@ -31,11 +32,11 @@ from simdref.display import (
     isa_families,
     isa_family,
     isa_to_sub_isa,
-    normalize_instruction_query,
     strip_instruction_decorators,
 )
 from simdref.perf import best_numeric, latency_cycle_values, variant_perf_summary
 from simdref.pdfrefs import normalize_pdf_refs
+from simdref.storage import derive_arm_arch
 
 
 def _load_template() -> str:
@@ -83,25 +84,11 @@ def _chunk_prefix(mnemonic: str) -> str:
     return clean[:3] if len(clean) >= 3 else clean
 
 
-def _search_tokens(*values: str) -> list[str]:
-    seen: set[str] = set()
-    tokens: list[str] = []
-    for value in values:
-        for token in normalize_instruction_query(value).split():
-            if token and token not in seen:
-                seen.add(token)
-                tokens.append(token)
-    return tokens
-
-
 def _intrinsic_search_fields(item) -> list[str]:
+    """Slim search-only field set: only what ranking/scoring actually needs."""
     return [
         item.name,
-        item.signature or "",
         item.description or "",
-        item.header or "",
-        item.url or "",
-        " ".join(str(value) for value in (item.metadata or {}).values()),
         display_isa(item.isa),
         " ".join(item.instructions or []),
     ]
@@ -116,7 +103,6 @@ def _instruction_search_fields(item) -> list[str]:
         display_form,
         item.summary or "",
         display_isa(item.isa),
-        " ".join(item.linked_intrinsics or []),
     ]
 
 
@@ -168,59 +154,71 @@ def _search_payload(catalog: Catalog) -> dict:
                 return instr_perf[key]
         return ("-", "-")
 
+    def _intrinsic_primary_instr(item) -> str:
+        for ref in item.instruction_refs or []:
+            key = ref.get("key") if isinstance(ref, dict) else None
+            if key:
+                return key
+        return (item.instructions or [""])[0]
+
+    intrinsics_out = []
+    for item in catalog.intrinsics:
+        lat, cpi = _intrinsic_perf(item)
+        fields = _intrinsic_search_fields(item)
+        entry: dict = {
+            "name": item.name,
+            "subtitle": _truncate(item.description or "", 80),
+            "architecture": item.architecture,
+            "isa": item.isa,
+            "lat": lat,
+            "cpi": cpi,
+            "display_architecture": display_architecture(item.architecture),
+            "display_isa": display_isa(item.isa),
+            "isa_families": isa_families(item.isa),
+            "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
+            "search_fields": fields,
+        }
+        primary = _intrinsic_primary_instr(item)
+        if primary:
+            entry["primary_instr"] = primary
+        arm_arch = derive_arm_arch(item.isa, item.metadata if isinstance(item.metadata, dict) else {})
+        if arm_arch:
+            entry["arm_arch"] = arm_arch
+        category = (item.metadata or {}).get("category", "") if isinstance(item.metadata, dict) else ""
+        if category:
+            entry["category"] = category
+        intrinsics_out.append(entry)
+
+    instructions_out = []
+    for item in catalog.instructions:
+        lat, cpi = instr_perf[item.db_key]
+        fields = _instruction_search_fields(item)
+        instructions_out.append({
+            "key": item.db_key,
+            "mnemonic": item.mnemonic,
+            "form": item.form,
+            "architecture": item.architecture,
+            "summary": _truncate(item.summary or "", 80),
+            "isa": item.isa,
+            "linked_intrinsics": item.linked_intrinsics,
+            "lat": lat,
+            "cpi": cpi,
+            "display_architecture": display_architecture(item.architecture),
+            "display_key": display_instruction_form(item.key),
+            "display_form": display_instruction_form(item.form),
+            "display_mnemonic": strip_instruction_decorators(item.mnemonic),
+            "display_isa": display_isa(item.isa),
+            "isa_families": isa_families(item.isa),
+            "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
+            "search_fields": fields,
+        })
+
     return {
         "generated_at": catalog.generated_at,
         "sources": [asdict(source) for source in catalog.sources],
         "isa_config": _isa_config(),
-        "intrinsics": [
-            {
-                "name": item.name,
-                "signature": _truncate(item.signature),
-                "description": _truncate(item.description),
-                "header": item.header,
-                "url": item.url,
-                "architecture": item.architecture,
-                "isa": item.isa,
-                "instructions": item.instructions,
-                "instruction_refs": item.instruction_refs,
-                "metadata": item.metadata,
-                "notes": item.notes,
-                "lat": _intrinsic_perf(item)[0],
-                "cpi": _intrinsic_perf(item)[1],
-                "display_architecture": display_architecture(item.architecture),
-                "display_isa": display_isa(item.isa),
-                "display_isa_tokens": [display_isa([value]) for value in item.isa],
-                "isa_families": isa_families(item.isa),
-                "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
-                "search_fields": _intrinsic_search_fields(item),
-                "search_tokens": _search_tokens(*_intrinsic_search_fields(item)),
-            }
-            for item in catalog.intrinsics
-        ],
-        "instructions": [
-            {
-                "key": item.db_key,
-                "mnemonic": item.mnemonic,
-                "form": item.form,
-                "architecture": item.architecture,
-                "summary": _truncate(item.summary),
-                "isa": item.isa,
-                "linked_intrinsics": item.linked_intrinsics,
-                "lat": instr_perf[item.db_key][0],
-                "cpi": instr_perf[item.db_key][1],
-                "display_architecture": display_architecture(item.architecture),
-                "display_key": display_instruction_form(item.key),
-                "display_form": display_instruction_form(item.form),
-                "display_mnemonic": strip_instruction_decorators(item.mnemonic),
-                "display_isa": display_isa(item.isa),
-                "display_isa_tokens": [display_isa([value]) for value in item.isa],
-                "isa_families": isa_families(item.isa),
-                "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
-                "search_fields": _instruction_search_fields(item),
-                "search_tokens": _search_tokens(*_instruction_search_fields(item)),
-            }
-            for item in catalog.instructions
-        ],
+        "intrinsics": intrinsics_out,
+        "instructions": instructions_out,
     }
 
 
@@ -327,30 +325,26 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
     """
     web_dir.mkdir(parents=True, exist_ok=True)
 
+    def _write_json(path: Path, payload) -> None:
+        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        path.write_bytes(raw)
+        with gzip.open(str(path) + ".gz", "wb", compresslevel=6) as fh:
+            fh.write(raw)
+
     (web_dir / "index.html").write_text(_load_template())
 
-    (web_dir / "search-index.json").write_text(
-        json.dumps(_search_payload(catalog), separators=(",", ":"), sort_keys=True)
-    )
+    _write_json(web_dir / "search-index.json", _search_payload(catalog))
 
     filter_spec = _filter_spec_for_catalog(catalog)
-    (web_dir / "filter_spec.json").write_text(
-        json.dumps(filter_spec.to_json(), separators=(",", ":"), sort_keys=True)
-    )
+    _write_json(web_dir / "filter_spec.json", filter_spec.to_json())
 
-    (web_dir / "build_stamp.json").write_text(
-        json.dumps(_build_stamp(catalog), separators=(",", ":"), sort_keys=True)
-    )
+    _write_json(web_dir / "build_stamp.json", _build_stamp(catalog))
 
     chunks_dir = web_dir / "detail-chunks"
     if chunks_dir.exists():
         shutil.rmtree(chunks_dir)
     chunks_dir.mkdir()
     for prefix, chunk in _detail_chunks(catalog).items():
-        (chunks_dir / f"{prefix}.json").write_text(
-            json.dumps(chunk, separators=(",", ":"), sort_keys=True)
-        )
+        _write_json(chunks_dir / f"{prefix}.json", chunk)
 
-    (web_dir / "intrinsic-details.json").write_text(
-        json.dumps(_intrinsic_details(catalog), separators=(",", ":"), sort_keys=True)
-    )
+    _write_json(web_dir / "intrinsic-details.json", _intrinsic_details(catalog))

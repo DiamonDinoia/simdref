@@ -883,6 +883,73 @@ def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output direct
     _export_web_impl(web_dir)
 
 
+@app.command("serve")
+def serve_command(
+    web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8765),
+) -> None:
+    """Serve the exported web app with gzip support.
+
+    Prefers pre-compressed ``*.json.gz`` sidecars written by ``simdref web``
+    when the client sends ``Accept-Encoding: gzip``; falls back to plain files.
+    """
+    import http.server
+    import os
+    import socketserver
+
+    web_dir = Path(web_dir).resolve()
+    if not web_dir.is_dir():
+        console.print(f"[red]directory not found: {web_dir}[/red]")
+        raise typer.Exit(1)
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(web_dir), **kwargs)
+
+        def do_GET(self) -> None:  # noqa: N802
+            accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "")
+            url_path = self.path.split("?", 1)[0].split("#", 1)[0]
+            rel = url_path.lstrip("/")
+            target = (web_dir / rel).resolve()
+            # Containment check.
+            try:
+                target.relative_to(web_dir)
+            except ValueError:
+                self.send_error(403)
+                return
+            if target.is_dir():
+                target = target / "index.html"
+            gz_candidate = Path(str(target) + ".gz")
+            if accepts_gzip and target.suffix == ".json" and gz_candidate.is_file():
+                try:
+                    data = gz_candidate.read_bytes()
+                except OSError:
+                    super().do_GET()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "public, max-age=60")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            super().do_GET()
+
+    os.chdir(web_dir)
+
+    class _Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+
+    with _Server((host, port), Handler) as srv:
+        console.print(f"serving [cyan]{web_dir}[/cyan] at [cyan]http://{host}:{port}[/cyan] (gzip-aware)")
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -910,7 +977,7 @@ def main() -> int:
     if argv and argv[0] == "llm" and len(argv) >= 2 and argv[1] not in llm_subcommands and not argv[1].startswith("-"):
         argv = ["llm", "query", *argv[1:]]
     sys.argv = [sys.argv[0], *argv]
-    commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "llm", "complete", "shell-init", "--help", "-h"}
+    commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "serve", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         return _smart_lookup(" ".join(argv))
     if not argv:

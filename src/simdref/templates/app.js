@@ -148,21 +148,9 @@ function categoryVisible(item) {
 
 function armArchVisible(item) {
   if (!enabledArmArch) return true;
-  // Only intrinsics carry arm_arch metadata; instructions are not filtered.
-  const families = item.isa_families || [];
-  if (!families.includes("Arm")) return true;
-  const supported = String((item.metadata && item.metadata.supported_architectures) || "").toUpperCase();
-  let bucket = null;
-  if (!supported) {
-    // Infer A32 when MVE is present; otherwise unknown.
-    if ((item.isa || []).some(t => String(t).toUpperCase() === "MVE")) bucket = "A32";
-  } else {
-    const hasA64 = supported.includes("A64");
-    const hasA32 = supported.includes("A32") || supported.includes("V7") || supported.includes("MVE");
-    if (hasA64 && hasA32) bucket = "BOTH";
-    else if (hasA64) bucket = "A64";
-    else if (hasA32) bucket = "A32";
-  }
+  // Only intrinsics carry arm_arch classification; instructions are not filtered.
+  if (!(item.isa_families || []).includes("Arm")) return true;
+  const bucket = item.arm_arch || null;
   return bucket !== null && enabledArmArch.has(bucket);
 }
 
@@ -328,7 +316,7 @@ function buildSearchIndexes(entries) {
   searchTokenIndex = new Map();
   searchPrefixIndex = new Map();
   entries.forEach((entry, i) => {
-    entry.searchTokens = [...new Set((entry.item.search_tokens || entry.fields.flatMap(f => tokens(f))))];
+    entry.searchTokens = [...new Set(entry.fields.flatMap(f => tokens(f)))];
     for (const t of entry.searchTokens) {
       if (!searchTokenIndex.has(t)) searchTokenIndex.set(t, []);
       searchTokenIndex.get(t).push(i);
@@ -373,6 +361,25 @@ function naturalCmp(a, b) {
   return 0;
 }
 
+/* ── gzip-aware fetch ─────────────────────────────────────────────────
+ * Prefer a pre-compressed *.gz sidecar (so GitHub Pages & bare static
+ * hosts don't need Content-Encoding: gzip), fall back to the raw .json.
+ */
+async function fetchJson(path) {
+  const base = path.replace(/\.json$/, "");
+  if (typeof DecompressionStream !== "undefined") {
+    try {
+      const r = await fetch(`${base}.json.gz`);
+      if (r.ok) {
+        const ds = r.body.pipeThrough(new DecompressionStream("gzip"));
+        return await new Response(ds).json();
+      }
+    } catch (_) { /* fall through */ }
+  }
+  const r = await fetch(`${base}.json`);
+  return r.ok ? r.json() : null;
+}
+
 /* ── Lazy detail loading ──────────────────────────────────────────── */
 function chunkPrefix(mnemonic) {
   const c = (mnemonic || "").trim().toUpperCase();
@@ -381,8 +388,8 @@ function chunkPrefix(mnemonic) {
 
 function loadChunk(prefix) {
   if (chunkCache.has(prefix)) return chunkCache.get(prefix);
-  const p = fetch(`detail-chunks/${encodeURIComponent(prefix)}.json`)
-    .then(r => r.ok ? r.json() : {})
+  const p = fetchJson(`detail-chunks/${encodeURIComponent(prefix)}.json`)
+    .then(data => data || {})
     .catch(() => ({}));
   chunkCache.set(prefix, p);
   return p;
@@ -390,9 +397,8 @@ function loadChunk(prefix) {
 
 function loadIntrinsicDetails() {
   if (intrinsicDetails) return Promise.resolve(intrinsicDetails);
-  return fetch("intrinsic-details.json")
-    .then(r => r.ok ? r.json() : {})
-    .then(data => { intrinsicDetails = data; return data; })
+  return fetchJson("intrinsic-details.json")
+    .then(data => { intrinsicDetails = data || {}; return intrinsicDetails; })
     .catch(() => ({}));
 }
 
@@ -669,7 +675,7 @@ async function renderDetail(entry) {
 
   if (entry.kind === "intrinsic") {
     // Load primary instruction detail for operands/measurements
-    const primaryKey = (entry.item.instruction_refs || [])[0]?.key || (entry.item.instructions || [])[0];
+    const primaryKey = entry.item.primary_instr || (entry.item.instruction_refs || [])[0]?.key || (entry.item.instructions || [])[0];
     let detail = null;
     if (primaryKey) {
       const instr = catalog.instrByDisplayKey[primaryKey] || catalog.instrByKey[primaryKey] || catalog.instrByMnem[primaryKey];
@@ -1162,10 +1168,10 @@ detailNode.addEventListener("click", (e) => {
   let entry = null;
   if (kind === "intrinsic") {
     const item = catalog.intrByName[key];
-    if (item) entry = { kind: "intrinsic", key: item.name, title: item.name, subtitle: item.description, item, fields: item.search_fields || [] };
+    if (item) entry = { kind: "intrinsic", key: item.name, title: item.name, subtitle: item.subtitle || "", item, fields: item.search_fields || [] };
   } else {
     const item = catalog.instrByKey[key];
-    if (item) entry = { kind: "instruction", key: item.key, title: item.display_key || item.key, subtitle: item.summary, item, fields: item.search_fields || [] };
+    if (item) entry = { kind: "instruction", key: item.key, title: item.display_key || item.key, subtitle: item.summary || "", item, fields: item.search_fields || [] };
   }
   if (entry) renderDetail(entry);
 });
@@ -1263,16 +1269,16 @@ window.addEventListener("hashchange", () => {
   const key = decodeURIComponent(location.hash.replace(/^#/, ""));
   if (!catalog || !key) return;
   const entry = resultPool.find(e => e.key === key)
-    || (catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].description, item: catalog.intrByName[key], fields: catalog.intrByName[key].search_fields || []} : null)
-    || (catalog.instrByKey[key] ? {kind: "instruction", key, title: catalog.instrByKey[key].display_key || key, subtitle: catalog.instrByKey[key].summary, item: catalog.instrByKey[key], fields: catalog.instrByKey[key].search_fields || []} : null);
+    || (catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].subtitle || "", item: catalog.intrByName[key], fields: catalog.intrByName[key].search_fields || []} : null)
+    || (catalog.instrByKey[key] ? {kind: "instruction", key, title: catalog.instrByKey[key].display_key || key, subtitle: catalog.instrByKey[key].summary || "", item: catalog.instrByKey[key], fields: catalog.instrByKey[key].search_fields || []} : null);
   if (entry) renderDetail(entry);
 });
 
 /* ── Bootstrap ────────────────────────────────────────────────────── */
 Promise.all([
-  fetch("search-index.json").then(r => r.json()),
-  fetch("filter_spec.json").then(r => r.ok ? r.json() : null).catch(() => null),
-  fetch("build_stamp.json").then(r => r.ok ? r.json() : null).catch(() => null),
+  fetchJson("search-index.json"),
+  fetchJson("filter_spec.json").catch(() => null),
+  fetchJson("build_stamp.json").catch(() => null),
 ])
   .then(([data, spec, stamp]) => {
     catalog = data;
@@ -1299,12 +1305,12 @@ Promise.all([
 
     searchEntries = [
       ...data.intrinsics.map(i => ({
-        kind: "intrinsic", key: i.name, title: i.name, subtitle: i.description, item: i,
-        fields: i.search_fields || [i.name, i.signature || "", i.description || "", i.header || "", i.display_isa || displayIsa(i.isa), (i.instructions || []).join(" ")],
+        kind: "intrinsic", key: i.name, title: i.name, subtitle: i.subtitle || i.description || "", item: i,
+        fields: i.search_fields || [i.name, i.description || "", i.display_isa || displayIsa(i.isa), (i.instructions || []).join(" ")],
       })),
       ...data.instructions.map(i => ({
-        kind: "instruction", key: i.key, title: i.display_key || i.key, subtitle: i.summary, item: i,
-        fields: i.search_fields || [i.display_mnemonic || i.mnemonic || "", i.display_form || i.form || "", i.summary || "", i.display_isa || displayIsa(i.isa), (i.linked_intrinsics || []).join(" ")],
+        kind: "instruction", key: i.key, title: i.display_key || i.key, subtitle: i.summary || "", item: i,
+        fields: i.search_fields || [i.display_mnemonic || i.mnemonic || "", i.display_form || i.form || "", i.summary || "", i.display_isa || displayIsa(i.isa)],
       })),
     ];
 

@@ -72,6 +72,30 @@ Top cProfile frames (cumulative):
 **Headline**: ~75 % of per-keystroke cost is Python-side ISA filtering of SQL
 candidates. SQL itself is 55 ms.
 
+## After Phase 1.1 + 1.2 — 2026-04-17
+
+Slimmed `_search_payload` (drop `signature`/`header`/`url`/`metadata`/`notes`/
+`instruction_refs`/`search_tokens`/`display_isa_tokens`, promote `arm_arch` +
+`category` + `primary_instr` to top-level, shorten `subtitle` to 80 chars);
+emit `*.json.gz` sidecars; client uses `DecompressionStream` to read gz
+directly (works on vanilla GitHub Pages). New `simdref serve` handler
+sets `Content-Encoding: gzip` when `Accept-Encoding: gzip` is present.
+
+| Metric                         | Baseline | Now      | Δ |
+|--------------------------------|----------|----------|---|
+| `search-index.json` raw        | 182 MB   | **54 MB** | −70 % |
+| `search-index.json` on-wire    | 182 MB   | **2.08 MB** | −99 % |
+| `intrinsic-details.json` wire  | 118 MB   | **3.43 MB** | −97 % |
+| Cold load → networkidle        | 2.62 s   | **1.40 s** | −46 % |
+| First paint                    | 88 ms    | 96 ms    | ~ |
+| JS heap (used)                 | 703 MB   | **553 MB** | −21 % |
+| Keystroke 'a'                  | 56 ms    | 43 ms    | −23 % |
+| Keystroke 'd'                  | 135 ms   | 67 ms    | −50 % |
+| Keystroke 'd' (3rd)            | **684 ms** | **30 ms** | −96 % |
+
+**Targets met** at this point: cold load < 2 s, keystroke p95 < 100 ms,
+search-index on-wire < 3 MB.
+
 ## Targets (from plan)
 
 | Metric                   | Today     | Target        |

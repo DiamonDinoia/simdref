@@ -106,12 +106,14 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("instructions", search)
             self.assertTrue(len(search["intrinsics"]) > 0)
             self.assertTrue(len(search["instructions"]) > 0)
-            arm_intr = next(item for item in search["intrinsics"] if item["name"] == "vaddq_u8")
-            self.assertEqual(arm_intr["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
-            self.assertIn("argument_preparation", arm_intr["metadata"])
+            details = json.loads((Path(tmpdir) / "intrinsic-details.json").read_text())
+            arm_detail = details["vaddq_u8"]
+            self.assertEqual(arm_detail["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
+            self.assertIn("argument_preparation", arm_detail["metadata"])
             riscv_intr = next(item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1")
             self.assertEqual(riscv_intr["display_architecture"], "RISC-V")
-            self.assertEqual(riscv_intr["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
+            riscv_detail = details["__riscv_vadd_vv_i32m1"]
+            self.assertEqual(riscv_detail["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
             self.assertIn("riscv:vsub.vv", [item["key"] for item in search["instructions"]])
             # Search index instructions have key but no measurements
             instr = search["instructions"][0]
