@@ -388,6 +388,14 @@ class _ToggleChip(Static):
         self.add_class("enabled" if self.enabled else "disabled")
         self.post_message(self.Toggled(self))
 
+    def set_enabled(self, enabled: bool) -> None:
+        """Update the enabled state without firing a Toggled event."""
+        if self.enabled == enabled:
+            return
+        self.enabled = enabled
+        self.remove_class("enabled" if not enabled else "disabled")
+        self.add_class("enabled" if enabled else "disabled")
+
 
 class ToggleAllLabel(Static):
     """Clickable label that toggles all sibling chips on/off."""
@@ -567,6 +575,11 @@ class SimdrefApp(App):
         self._enabled_sub_isas: set[str] | None = initial_subs if initial_subs else None
         self._current_detail: IntrinsicRecord | InstructionRecord | None = None
         self._batch_toggle = False
+        # Small LRU for detail-pane DB lookups so navigating back to a
+        # recently-selected record skips the msgpack round-trip.
+        self._detail_cache: dict[tuple[str, str], IntrinsicRecord | InstructionRecord] = {}
+        self._detail_cache_order: list[tuple[str, str]] = []
+        self._detail_cache_cap = 16
         # Map family -> list of sub-ISA names present in the DB
         self._family_subs: dict[str, list[str]] = {}
         self._enabled_kinds: set[str] = {"intrinsic", "instruction"}
@@ -647,8 +660,46 @@ class SimdrefApp(App):
         self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
 
     def _refresh_sub_isa_bar(self) -> None:
-        """Rebuild the sub-ISA rows — one or more rows per enabled family."""
+        """Rebuild the sub-ISA rows — one or more rows per enabled family.
+
+        Fast path: when the set of (family, sub_isa) widgets hasn't
+        changed, just update each SubIsaToggle's enabled state in place.
+        Full remount is reserved for family-set or layout-width changes.
+        """
         container = self.query_one("#sub-isa-container", VerticalScroll)
+        current = list(container.query(SubIsaToggle))
+        current_keys: set[tuple[str, str]] = set()
+        for toggle in current:
+            parent_row = toggle.parent
+            # The family prefix label is the first child in each row.
+            fam_label = parent_row.children[0] if parent_row is not None else None
+            fam_text = getattr(fam_label, "renderable", None)
+            fam = str(fam_text).split(":", 1)[0].strip() if fam_text else ""
+            if fam:
+                current_keys.add((fam, toggle.isa))
+
+        needed_keys: set[tuple[str, str]] = set()
+        for fam in _ISA_FAMILIES:
+            if fam not in self._enabled_families or fam not in self._family_subs:
+                continue
+            for sub in self._family_subs[fam]:
+                needed_keys.add((fam, sub))
+
+        if current_keys == needed_keys and current:
+            # Fast path — just flip enabled bits.
+            for toggle in current:
+                parent_row = toggle.parent
+                fam_label = parent_row.children[0] if parent_row is not None else None
+                fam_text = getattr(fam_label, "renderable", None)
+                fam = str(fam_text).split(":", 1)[0].strip() if fam_text else ""
+                if self._enabled_sub_isas is not None:
+                    enabled = toggle.isa in self._enabled_sub_isas
+                else:
+                    defaults = DEFAULT_SUBS.get(fam, set())
+                    enabled = toggle.isa in defaults if defaults else True
+                toggle.set_enabled(enabled)
+            return
+
         container.remove_children()
 
         max_width = container.size.width or 120
@@ -950,21 +1001,44 @@ class SimdrefApp(App):
         if item.result in self._current_results:
             self._show_detail(item.result)
 
+    def _get_detail_record(self, kind: str, key: str):
+        """Fetch an intrinsic/instruction record with a small in-session LRU."""
+        assert self._conn is not None
+        cache_key = (kind, key)
+        cached = self._detail_cache.get(cache_key)
+        if cached is not None:
+            # Promote to most-recently-used.
+            try:
+                self._detail_cache_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._detail_cache_order.append(cache_key)
+            return cached
+        record = (
+            load_intrinsic_from_db(self._conn, key)
+            if kind == "intrinsic"
+            else load_instruction_from_db(self._conn, key)
+        )
+        if record is not None:
+            self._detail_cache[cache_key] = record
+            self._detail_cache_order.append(cache_key)
+            while len(self._detail_cache_order) > self._detail_cache_cap:
+                evict = self._detail_cache_order.pop(0)
+                self._detail_cache.pop(evict, None)
+        return record
+
     def _show_detail(self, result: SearchResult) -> None:
         detail = self.query_one("#detail-scroll", VerticalScroll)
         detail.remove_children()
-        assert self._conn is not None
 
+        record = self._get_detail_record(result.kind, result.key)
+        if record is None:
+            return
+        self._current_detail = record
         if result.kind == "intrinsic":
-            intrinsic = load_intrinsic_from_db(self._conn, result.key)
-            if intrinsic:
-                self._current_detail = intrinsic
-                self._render_intrinsic_detail(detail, intrinsic)
+            self._render_intrinsic_detail(detail, record)
         else:
-            instruction = load_instruction_from_db(self._conn, result.key)
-            if instruction:
-                self._current_detail = instruction
-                self._render_instruction_detail(detail, instruction)
+            self._render_instruction_detail(detail, record)
 
     # ------------------------------------------------------------------
     # Record lookups
