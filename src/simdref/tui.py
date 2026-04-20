@@ -559,9 +559,10 @@ class SimdrefApp(App):
         *[Binding(str(n), f"pick({n})", show=False) for n in range(1, 10)],
     ]
 
-    def __init__(self, initial_query: str = "") -> None:
+    def __init__(self, initial_query: str = "", initial_preset: str | None = None) -> None:
         super().__init__()
         self._initial_query = initial_query
+        self._initial_preset = initial_preset
         self._current_results: list[SearchResult] = []
         self._current_query: str = ""
         self._has_more_results = False
@@ -623,6 +624,8 @@ class SimdrefApp(App):
         self._needs_update = False
         self._conn = open_db()
         self._build_family_subs()
+        if self._initial_preset:
+            self._apply_initial_preset(self._initial_preset)
         # Defer until first layout pass so container width is known
         self.call_after_refresh(self._refresh_sub_isa_bar)
         if self._initial_query:
@@ -844,6 +847,30 @@ class SimdrefApp(App):
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
+
+    def _apply_initial_preset(self, name: str) -> None:
+        """Apply a named preset before first render (used for --preset CLI flag)."""
+        from simdref.filters import ARCH_PRESETS
+
+        preset = ARCH_PRESETS.get(name)
+        if preset is None:
+            return
+        if name == "all":
+            self._enabled_families = set(_ISA_FAMILIES)
+            self._enabled_sub_isas = None
+        else:
+            self._enabled_families = {f for f in _ISA_FAMILIES if f in preset.families}
+            preset_subs = set(preset.subs)
+            subs: set[str] = set()
+            for fam in self._enabled_families:
+                available = set(self._family_subs.get(fam, []))
+                subs.update(available & preset_subs)
+            self._enabled_sub_isas = subs if subs else set()
+        self._enabled_arm_arch = set(preset.arm_arch) if preset.arm_arch else None
+        self._enabled_kinds = set(preset.kind)
+        self._enabled_sub_isas = _normalize_sub_isa_selection(
+            self._enabled_families, self._enabled_sub_isas, self._family_subs
+        )
 
     @on(PresetButton.Clicked)
     def on_preset_clicked(self, event: PresetButton.Clicked) -> None:
@@ -1306,8 +1333,8 @@ class SimdrefApp(App):
         self.call_from_thread(_finish)
 
 
-def run_tui(initial_query: str = "") -> int:
+def run_tui(initial_query: str = "", initial_preset: str | None = None) -> int:
     """Launch the interactive Textual TUI."""
-    app = SimdrefApp(initial_query=initial_query)
+    app = SimdrefApp(initial_query=initial_query, initial_preset=initial_preset)
     app.run()
     return 0

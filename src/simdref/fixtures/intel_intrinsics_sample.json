@@ -40,6 +40,26 @@
     "notes": []
   },
   {
+    "name": "_mm_add_epi32",
+    "signature": "__m128i _mm_add_epi32(__m128i a, __m128i b)",
+    "description": "Add packed 32-bit integers in \"a\" and \"b\", and store the results in \"dst\".",
+    "header": "emmintrin.h",
+    "isa": ["SSE2"],
+    "category": "Arithmetic",
+    "instructions": ["PADDD"],
+    "notes": []
+  },
+  {
+    "name": "_mm256_fmadd_ps",
+    "signature": "__m256 _mm256_fmadd_ps(__m256 a, __m256 b, __m256 c)",
+    "description": "Multiply packed single-precision (32-bit) floating-point elements in a and b, add the intermediate result to packed elements in c, and store the results.",
+    "header": "immintrin.h",
+    "isa": ["FMA"],
+    "category": "Arithmetic",
+    "instructions": ["VFMADD132PS", "VFMADD213PS", "VFMADD231PS"],
+    "notes": []
+  },
+  {
     "name": "_mm512_maskz_expandloadu_epi32",
     "signature": "__m512i _mm512_maskz_expandloadu_epi32(__mmask16 k, void const* mem_addr)",
     "description": "Load packed 32-bit integers from memory into selected elements using zero-masking.",

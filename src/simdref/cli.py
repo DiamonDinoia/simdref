@@ -21,8 +21,13 @@ from pathlib import Path
 
 import httpx
 import typer
+from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from typer.core import TyperGroup
+
+# Stderr-only Console for bootstrap/download status. Must not share stdout with
+# `simdref llm` payloads, otherwise callers that json.loads(stdout) break.
+err_console = Console(stderr=True)
 
 from simdref.display import (
     console,
@@ -67,10 +72,10 @@ from simdref.storage import (
 from simdref.web import export_web
 
 
-def _run_tui(*, initial_query: str = ""):
+def _run_tui(*, initial_query: str = "", initial_preset: str | None = None):
     from simdref.tui import run_tui
 
-    return run_tui(initial_query=initial_query)
+    return run_tui(initial_query=initial_query, initial_preset=initial_preset)
 
 
 class SimdrefGroup(TyperGroup):
@@ -154,7 +159,7 @@ def _download_from_release() -> None:
         dest = DATA_DIR / asset
         for tag in _release_tag_candidates():
             url = _release_asset_url(tag, asset)
-            console.print(f"downloading {asset} from {tag}...", style="dim")
+            err_console.print(f"downloading {asset} from {tag}...", style="dim")
             try:
                 with httpx.stream("GET", url, follow_redirects=True, timeout=120) as resp:
                     resp.raise_for_status()
@@ -165,13 +170,13 @@ def _download_from_release() -> None:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
                     continue
-                console.print(f"failed to download {asset}: {exc.response.status_code}", style="red")
+                err_console.print(f"failed to download {asset}: {exc.response.status_code}", style="red")
                 raise typer.Exit(code=1) from exc
         else:
-            console.print(f"failed to download {asset}: no compatible release asset found", style="red")
-            console.print("try 'simdref update --build-local' to build locally", style="yellow")
+            err_console.print(f"failed to download {asset}: no compatible release asset found", style="red")
+            err_console.print("try 'simdref update --build-local' to build locally", style="yellow")
             raise typer.Exit(code=1)
-    console.print("download complete", style="green")
+    err_console.print("download complete", style="green")
 
 
 def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = False) -> None:
@@ -180,7 +185,7 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
 
     if not interactive_progress:
         def _status(msg: str) -> None:
-            console.print(msg, style="dim")
+            err_console.print(msg, style="dim")
 
         if not offline:
             _status("Refreshing local Arm intrinsics cache")
@@ -199,7 +204,7 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         write_manpages(catalog, man_dir)
         _status("Exporting static web bundle")
         export_web(catalog, WEB_DIR)
-        console.print(
+        err_console.print(
             f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
             style="green",
         )
@@ -211,7 +216,7 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         BarColumn(),
         TaskProgressColumn(),
         TimeElapsedColumn(),
-        console=console,
+        console=err_console,
     )
     with progress:
         task = progress.add_task("Building local catalog", total=4)
@@ -243,7 +248,7 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
 
         progress.update(task, description="Local build complete")
 
-    console.print(
+    err_console.print(
         f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
@@ -262,7 +267,7 @@ def _refresh_runtime_from_existing_catalog(*, man_dir: Path) -> None:
     build_sqlite(catalog)
     write_manpages(catalog, man_dir)
     export_web(catalog, WEB_DIR)
-    console.print(
+    err_console.print(
         f"refreshed runtime from existing catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
@@ -275,7 +280,7 @@ def _finalize_runtime_from_download(*, man_dir: Path) -> None:
     catalog = load_catalog()
     write_manpages(catalog, man_dir)
     export_web(catalog, WEB_DIR)
-    console.print(
+    err_console.print(
         f"refreshed local web/man assets from downloaded catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
@@ -289,18 +294,18 @@ def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = Tru
             _finalize_runtime_from_download(man_dir=man_dir)
             return
         if CATALOG_PATH.exists():
-            console.print("downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog", style="yellow")
+            err_console.print("downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog", style="yellow")
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
-        console.print("downloaded runtime schema is not current; falling back to bundled fixtures", style="yellow")
+        err_console.print("downloaded runtime schema is not current; falling back to bundled fixtures", style="yellow")
     except typer.Exit:
         if CATALOG_PATH.exists():
-            console.print("download failed; refreshing runtime from the existing local catalog", style="yellow")
+            err_console.print("download failed; refreshing runtime from the existing local catalog", style="yellow")
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
         if not fallback_offline:
             raise
-        console.print("falling back to bundled fixtures", style="yellow")
+        err_console.print("falling back to bundled fixtures", style="yellow")
 
     _build_runtime_locally(offline=True, man_dir=man_dir)
 
@@ -312,7 +317,7 @@ def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = Tru
 
 def _bootstrap_interactive() -> None:
     """Bootstrap runtime data with a lightweight default path."""
-    console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
+    err_console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
     _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR, fallback_offline=True)
 
 
@@ -329,7 +334,7 @@ def ensure_runtime() -> None:
         _bootstrap_interactive()
         return
     if not sqlite_schema_is_current():
-        console.print("runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog", style="yellow")
+        err_console.print("runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog", style="yellow")
         _refresh_runtime_from_existing_catalog(man_dir=DEFAULT_MAN_DIR)
 
 
@@ -559,10 +564,10 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _smart_lookup(query: str) -> int:
+def _smart_lookup(query: str, preset: str | None = None) -> int:
     """Open the TUI pre-filled with the given query."""
     ensure_runtime()
-    return _run_tui(initial_query=query)
+    return _run_tui(initial_query=query, initial_preset=preset)
 
 
 def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
@@ -620,6 +625,22 @@ LLM_EXIT_USAGE = 1
 LLM_EXIT_NO_MATCH = 2
 LLM_EXIT_AMBIGUOUS = 3
 LLM_EXIT_INTERNAL = 10
+
+
+def _resolve_preset_filters(preset: str | None) -> tuple[list[str] | None, list[str] | None]:
+    """Translate a preset name into (isa_families, categories) overrides.
+
+    Presets supply ISA-family + sub-ISA facets; we map them to the coarse
+    ISA-family list the llm filter uses. Categories are not implied by a
+    preset (they come from --filter / --category).
+    """
+    if not preset:
+        return None, None
+    from simdref.filters import ARCH_PRESETS
+    spec = ARCH_PRESETS.get(preset)
+    if spec is None:
+        return None, None
+    return sorted(spec.families), None
 
 
 def _llm_filter_records(records: list[dict], isa: list[str] | None, category: list[str] | None) -> list[dict]:
@@ -748,11 +769,21 @@ def _llm_query_impl(
     fmt: str,
     isa: list[str] | None,
     category: list[str] | None,
+    preset: str | None = None,
 ) -> None:
     fmt_lower = (fmt or "json").lower()
     if fmt_lower not in {"json", "ndjson", "markdown"}:
         typer.echo(f"error: unknown --format '{fmt}' (expected json|ndjson|markdown)", err=True)
         raise typer.Exit(code=LLM_EXIT_USAGE)
+    if preset:
+        from simdref.filters import ARCH_PRESETS
+        if preset not in ARCH_PRESETS:
+            known = ", ".join(sorted(ARCH_PRESETS))
+            typer.echo(f"error: unknown --preset '{preset}' (known: {known})", err=True)
+            raise typer.Exit(code=LLM_EXIT_USAGE)
+        preset_isa, _ = _resolve_preset_filters(preset)
+        if preset_isa and not isa:
+            isa = preset_isa
     if not query_tokens:
         typer.echo("error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True)
         raise typer.Exit(code=LLM_EXIT_USAGE)
@@ -803,13 +834,13 @@ def llm_query(
     limit: int = typer.Option(8, help="Maximum number of search results in search mode."),
     fmt: str = typer.Option("json", "--format", "-F", help="Output format: json, ndjson, or markdown."),
     isa: list[str] = typer.Option(None, "--isa", help="Filter by ISA family (repeatable)."),
-    category: list[str] = typer.Option(None, "--category", help="Filter by intrinsic category (repeatable)."),
+    preset: str = typer.Option(None, "--preset", help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all)."),
 ) -> None:
     """Resolve a query and emit an LLM-friendly payload.
 
     Exit codes: 0 match, 2 no-match, 3 ambiguous, 1 usage error, 10 internal.
     """
-    _llm_query_impl(query, limit, fmt, isa, category)
+    _llm_query_impl(query, limit, fmt, isa, None, preset=preset)
 
 
 @llm_app.command("list")
@@ -888,6 +919,7 @@ def serve_command(
     web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(8765),
+    preset: str = typer.Option(None, "--preset", help="Open URL with ?preset=NAME so the web UI applies it on load."),
 ) -> None:
     """Serve the exported web app with gzip support.
 
@@ -943,7 +975,13 @@ def serve_command(
         allow_reuse_address = True
 
     with _Server((host, port), Handler) as srv:
-        console.print(f"serving [cyan]{web_dir}[/cyan] at [cyan]http://{host}:{port}[/cyan] (gzip-aware)")
+        query_suffix = ""
+        if preset:
+            from urllib.parse import quote
+            query_suffix = f"?preset={quote(preset)}"
+        console.print(
+            f"serving [cyan]{web_dir}[/cyan] at [cyan]http://{host}:{port}/{query_suffix}[/cyan] (gzip-aware)"
+        )
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
@@ -971,6 +1009,32 @@ def main() -> int:
     if "--full" in argv or "-f" in argv:
         FULL_MODE = True
         argv = [arg for arg in argv if arg not in ("--full", "-f")]
+    # Pre-parse top-level --preset NAME / --preset=NAME for bare-query TUI mode.
+    # Subcommands (llm, etc.) handle their own --preset via Typer, so only
+    # strip it here when it would otherwise reach the smart-lookup dispatch.
+    initial_preset: str | None = None
+    _cleaned: list[str] = []
+    _i = 0
+    while _i < len(argv):
+        arg = argv[_i]
+        if arg == "--preset" and _i + 1 < len(argv):
+            initial_preset = argv[_i + 1]
+            _i += 2
+            continue
+        if arg.startswith("--preset="):
+            initial_preset = arg.split("=", 1)[1]
+            _i += 1
+            continue
+        _cleaned.append(arg)
+        _i += 1
+    # Only consume --preset at the top level when the remainder is a bare
+    # query or empty; otherwise leave it for the subcommand (e.g. `llm query`).
+    subcommand_consumers = {"llm"}
+    if _cleaned and _cleaned[0] in subcommand_consumers:
+        # Restore; let Typer subcommand parse it.
+        pass
+    else:
+        argv = _cleaned
     # Rewrite `llm <bare-query>` to `llm query <bare-query>` so Typer's
     # subcommand dispatch (list/schema) works without stealing bare queries.
     llm_subcommands = {"query", "list", "schema", "--help", "-h"}
@@ -979,9 +1043,9 @@ def main() -> int:
     sys.argv = [sys.argv[0], *argv]
     commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "serve", "llm", "complete", "shell-init", "--help", "-h"}
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
-        return _smart_lookup(" ".join(argv))
+        return _smart_lookup(" ".join(argv), preset=initial_preset)
     if not argv:
         ensure_runtime()
-        return _run_tui()
+        return _run_tui(initial_preset=initial_preset)
     app()
     return 0

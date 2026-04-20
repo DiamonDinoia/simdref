@@ -1445,6 +1445,15 @@ Promise.all([
     renderCategoryFilters();
     updateCategorySummary();
 
+    // Apply ?preset=NAME from URL, if provided and recognised.
+    try {
+      const params = new URLSearchParams(location.search);
+      const presetName = params.get("preset");
+      if (presetName && ARCH_PRESETS[presetName]) {
+        applyIsaPreset(presetName);
+      }
+    } catch (_) { /* ignore malformed URL */ }
+
     rebuildVisibleSet();
 
     // Build-stamp badge text is set above if a stamp is present; only fall

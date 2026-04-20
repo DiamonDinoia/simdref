@@ -32,6 +32,12 @@ jobs:
       - name: Install package and test dependencies
         run: uv pip install -e . pytest
 
+      - name: Prime catalog from bundled fixtures
+        # Build a small-but-complete offline catalog so tests exercise the
+        # freshly-ingested data (including Arm NEON) rather than whatever
+        # historical release catalog happens to be on GitHub.
+        run: python -m simdref update --offline --man-dir "$RUNNER_TEMP/man"
+
       - name: Run Python test suite
         run: python -m pytest tests
 
