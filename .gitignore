@@ -12,3 +12,5 @@ build/
 
 # Intel SDM PDF (downloaded during update, not redistributed)
 vendor/intel/*.pdf
+.codex
+.coverage
