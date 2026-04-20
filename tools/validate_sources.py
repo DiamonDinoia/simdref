@@ -297,7 +297,9 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
 def validate_intel_intrinsics(offline: bool) -> tuple[int, int]:
     text, _source = fetch_intel_data(offline=offline)
     parsed = parse_intel_payload(text)
-    parsed_by_name = {record.name: record for record in parsed}
+    parsed_by_name: dict[str, list] = {}
+    for record in parsed:
+        parsed_by_name.setdefault(record.name, []).append(record)
     raw_records = _raw_intel_intrinsic_records(text)
     failures = 0
     checked = 0
@@ -305,18 +307,25 @@ def validate_intel_intrinsics(offline: bool) -> tuple[int, int]:
     for raw in raw_records:
         name = raw["name"]
         checked += 1
-        record = parsed_by_name.get(name)
-        if record is None:
+        records = parsed_by_name.get(name) or []
+        if not records:
             print(f"FAIL intel intrinsics: missing {name}")
             failures += 1
             continue
+        # Upstream may list several intrinsics sharing one name (e.g. _mm_prefetch
+        # appears under SSE, KNC, and PREFETCHWT1 with different headers/categories).
+        # The parser preserves each as a distinct record; match the raw entry to the
+        # parsed record that agrees on header+category, falling back to the first one.
+        header_matches = [r for r in records if not raw["header"] or r.header == raw["header"]]
+        candidates = [r for r in header_matches if not raw["category"] or r.category == raw["category"]] or header_matches or records
+        record = candidates[0]
         if f"{name}(" not in record.signature:
             print(f"FAIL intel intrinsics: signature missing intrinsic name for {name}")
             failures += 1
-        if raw["header"] and record.header != raw["header"]:
+        if raw["header"] and not any(r.header == raw["header"] for r in records):
             print(f"FAIL intel intrinsics: header mismatch for {name}")
             failures += 1
-        if raw["category"] and record.category != raw["category"]:
+        if raw["category"] and not any(r.category == raw["category"] for r in records):
             print(f"FAIL intel intrinsics: category mismatch for {name}")
             failures += 1
         if raw["instructions"]:
