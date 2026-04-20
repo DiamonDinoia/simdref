@@ -25,7 +25,7 @@ from simdref.ingest_sources import (
     fetch_uops_xml,
     now_iso,
 )
-from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
+from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 from simdref.riscv import parse_riscv_instruction_payload, parse_riscv_intrinsics_payload
 
 _UOPS_METADATA_KEYS = frozenset({"category", "cpl", "extension", "iclass", "iform", "url", "url-ref"})
@@ -1075,6 +1075,81 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
         intrinsic.instruction_refs = resolved_refs
 
 
+def _ingest_perf_sources(
+    instructions: list[InstructionRecord],
+    *,
+    status: Callable[[str], None],
+) -> list[SourceVersion]:
+    """Run OSACA + rvv-bench + llvm-mca ingesters and merge rows into *instructions*.
+
+    Failures are logged and swallowed so a flaky upstream doesn't abort
+    the whole catalog build. Returns one :class:`SourceVersion` per
+    ingester that actually produced rows.
+    """
+    from simdref.perf_sources import (
+        LLVMMcaUnavailable,
+        ingest_llvm_mca,
+        ingest_osaca,
+        ingest_rvv_bench,
+        merge_perf_rows,
+    )
+
+    versions: list[SourceVersion] = []
+
+    status("Fetching OSACA measured overlays")
+    try:
+        osaca_rows = ingest_osaca()
+    except Exception as exc:
+        osaca_rows = []
+        status(f"OSACA ingestion skipped: {exc}")
+    if osaca_rows:
+        merge_perf_rows(instructions, osaca_rows)
+        versions.append(SourceVersion(
+            source="osaca", version="pinned-commit",
+            fetched_at=now_iso(), url="https://github.com/RRZE-HPC/OSACA",
+        ))
+
+    status("Fetching rvv-bench measured results")
+    try:
+        rvv_rows = ingest_rvv_bench()
+    except Exception as exc:
+        rvv_rows = []
+        status(f"rvv-bench ingestion skipped: {exc}")
+    if rvv_rows:
+        merge_perf_rows(instructions, rvv_rows)
+        versions.append(SourceVersion(
+            source="rvv-bench", version="pinned-commit",
+            fetched_at=now_iso(),
+            url="https://github.com/camel-cdr/rvv-bench-results",
+        ))
+
+    status("Driving llvm-mca across modeled cores")
+    try:
+        arm_mnemonics = sorted({i.mnemonic for i in instructions if i.architecture == "arm"})
+        riscv_mnemonics = sorted({i.mnemonic for i in instructions if i.architecture == "riscv"})
+        llvm_rows, llvm_version = ingest_llvm_mca({
+            "aarch64": arm_mnemonics,
+            "riscv": riscv_mnemonics,
+        })
+    except LLVMMcaUnavailable as exc:
+        llvm_rows = []
+        llvm_version = ""
+        status(f"llvm-mca modeled rows skipped: {exc}")
+    except Exception as exc:
+        llvm_rows = []
+        llvm_version = ""
+        status(f"llvm-mca ingestion failed: {exc}")
+    if llvm_rows:
+        merge_perf_rows(instructions, llvm_rows)
+        versions.append(SourceVersion(
+            source="llvm-mca", version=llvm_version or "unknown",
+            fetched_at=now_iso(),
+            url="https://llvm.org/docs/CommandGuide/llvm-mca.html",
+        ))
+
+    return versions
+
+
 def build_catalog(
     offline: bool = False,
     include_sdm: bool = False,
@@ -1115,6 +1190,12 @@ def build_catalog(
     link_records(intrinsics, instructions)
     emit("Linked intrinsics and instructions")
 
+    perf_sources_version: list[SourceVersion] = []
+    if not offline:
+        perf_sources_version.extend(
+            _ingest_perf_sources(instructions, status=emit)
+        )
+
     if include_sdm:
         sdm_path = find_pdf_source_path("intel-sdm", offline=offline)
         if sdm_path is not None:
@@ -1130,6 +1211,10 @@ def build_catalog(
     return Catalog(
         intrinsics=sorted(intrinsics, key=lambda item: item.name),
         instructions=sorted(instructions, key=lambda item: (item.architecture, item.mnemonic, item.form)),
-        sources=[intel_source, uops_source, arm_acle_source, arm_a64_source, riscv_intrinsics_source, riscv_instructions_source],
+        sources=[
+            intel_source, uops_source, arm_acle_source, arm_a64_source,
+            riscv_intrinsics_source, riscv_instructions_source,
+            *perf_sources_version,
+        ],
         generated_at=now_iso(),
     )

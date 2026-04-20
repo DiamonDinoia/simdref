@@ -313,8 +313,8 @@ class SearchTests(unittest.TestCase):
         self.assertIn("__riscv_vadd_vv_i32m1_m", masked.linked_intrinsics)
 
     def test_parse_riscv_fixture_payloads(self):
-        intrinsics = parse_riscv_intrinsics_payload(Path("src/simdref/fixtures/riscv_rvv_intrinsics_sample.json").read_text())
-        instructions = parse_riscv_instruction_payload(Path("src/simdref/fixtures/riscv_unified_db_sample.json").read_text())
+        intrinsics = parse_riscv_intrinsics_payload(Path("tests/fixtures/riscv_rvv_intrinsics_sample.json").read_text())
+        instructions = parse_riscv_instruction_payload(Path("tests/fixtures/riscv_unified_db_sample.json").read_text())
         self.assertTrue(any(item.name == "__riscv_vadd_vv_i32m1" for item in intrinsics))
         self.assertTrue(any(item.mnemonic == "vadd.vv" for item in instructions))
         self.assertTrue(any(item.mnemonic == "vsub.vv" for item in instructions))

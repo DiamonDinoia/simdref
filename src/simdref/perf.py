@@ -6,11 +6,36 @@ and other microarchitecture-level performance data from the nested
 
 They are consumed by the CLI, LSP, web-export, and man-page modules so
 that the extraction logic lives in exactly one place.
+
+Each ``arch_details[core]`` entry may carry provenance keys added by the
+ingesters (``source``, ``source_kind``, ``source_version``, ``applies_to``,
+``citation_url``). ``source_kind`` is either ``"measured"`` or
+``"modeled"``; when absent it defaults to ``"measured"`` for compatibility
+with the original uops.info rows which are measured.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class PerfValue(NamedTuple):
+    """A labeled performance value.
+
+    ``value`` is the cycle-count string (``"-"`` when missing).
+    ``source_kind`` is ``"measured"`` or ``"modeled"``.
+    ``core`` is the microarchitecture id the value came from (empty when none).
+    """
+
+    value: str
+    source_kind: str
+    core: str
+
+    def __str__(self) -> str:
+        return self.value
+
+
+MISSING_PERF = PerfValue("-", "", "")
 
 
 def _is_numeric(value: str) -> bool:
@@ -19,6 +44,18 @@ def _is_numeric(value: str) -> bool:
         return False
     parts = value.split(".", 1)
     return all(p.isdigit() for p in parts) and parts[0] != ""
+
+
+def _source_kind(details: dict[str, Any]) -> str:
+    """Return the provenance kind for an ``arch_details`` entry.
+
+    Defaults to ``"measured"`` when unset so legacy uops.info rows carry
+    the correct label without migration.
+    """
+    kind = details.get("source_kind")
+    if kind in ("measured", "modeled"):
+        return kind
+    return "measured"
 
 
 def latency_cycle_values(latencies: list[dict[str, Any]]) -> list[str]:
@@ -55,38 +92,129 @@ def best_numeric(values: list[str]) -> str:
     return values[0]
 
 
+def _cpi_values(details: dict[str, Any]) -> list[str]:
+    measurement = details.get("measurement") or {}
+    out: list[str] = []
+    for key in ("TP_unrolled", "TP_loop", "TP_ports", "TP"):
+        value = measurement.get(key)
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _best_labeled(
+    arch_details: dict[str, dict[str, Any]],
+    value_fn,
+    kind_filter: str | None = None,
+) -> PerfValue:
+    """Return the lowest numeric value across arch entries, with provenance.
+
+    *value_fn* is called on each ``details`` dict and must return a list of
+    candidate cycle-count strings. When *kind_filter* is ``"measured"`` or
+    ``"modeled"`` only entries with that ``source_kind`` are considered.
+    """
+    best: tuple[float, str, str, str] | None = None
+    first_non_numeric: PerfValue | None = None
+    for core, details in arch_details.items():
+        kind = _source_kind(details)
+        if kind_filter is not None and kind != kind_filter:
+            continue
+        for value in value_fn(details):
+            value_str = str(value)
+            if _is_numeric(value_str):
+                numeric = float(value_str)
+                if best is None or numeric < best[0]:
+                    best = (numeric, value_str, kind, core)
+            elif first_non_numeric is None:
+                first_non_numeric = PerfValue(value_str, kind, core)
+    if best is not None:
+        return PerfValue(best[1], best[2], best[3])
+    if first_non_numeric is not None:
+        return first_non_numeric
+    return MISSING_PERF
+
+
+def best_latency_labeled(
+    arch_details: dict[str, dict[str, Any]],
+    kind_filter: str | None = None,
+) -> PerfValue:
+    """Lowest latency across arch entries, as a :class:`PerfValue`.
+
+    Prefers measured rows: if any measured row exposes a numeric latency
+    it is picked over all modeled rows. Pass ``kind_filter="modeled"`` to
+    select only modeled data.
+    """
+    def lat_values(details: dict[str, Any]) -> list[str]:
+        return latency_cycle_values(details.get("latencies") or [])
+
+    if kind_filter is None:
+        measured = _best_labeled(arch_details, lat_values, kind_filter="measured")
+        if measured.value != "-":
+            return measured
+        return _best_labeled(arch_details, lat_values, kind_filter="modeled")
+    return _best_labeled(arch_details, lat_values, kind_filter=kind_filter)
+
+
+def best_cpi_labeled(
+    arch_details: dict[str, dict[str, Any]],
+    kind_filter: str | None = None,
+) -> PerfValue:
+    """Lowest cycles-per-instruction across arch entries, as a :class:`PerfValue`."""
+    if kind_filter is None:
+        measured = _best_labeled(arch_details, _cpi_values, kind_filter="measured")
+        if measured.value != "-":
+            return measured
+        return _best_labeled(arch_details, _cpi_values, kind_filter="modeled")
+    return _best_labeled(arch_details, _cpi_values, kind_filter=kind_filter)
+
+
 def best_latency(arch_details: dict[str, dict[str, Any]]) -> str:
     """Return the best (lowest) latency across all microarchitectures.
 
-    Iterates every architecture entry in *arch_details*, collects all
-    latency cycle values, and returns the smallest numeric one.
+    Prefers measured rows over modeled rows (see :func:`best_latency_labeled`).
     """
-    values: list[str] = []
-    for details in arch_details.values():
-        values.extend(latency_cycle_values(details.get("latencies") or []))
-    return best_numeric(values)
+    return best_latency_labeled(arch_details).value
 
 
 def best_cpi(arch_details: dict[str, dict[str, Any]]) -> str:
     """Return the best (lowest) cycles-per-instruction across all microarchitectures.
 
-    Looks at throughput fields (``TP_unrolled``, ``TP_loop``, ``TP_ports``,
-    ``TP``) inside each architecture's ``measurement`` block.
+    Prefers measured rows over modeled rows (see :func:`best_cpi_labeled`).
     """
-    values: list[str] = []
-    for details in arch_details.values():
-        measurement = details.get("measurement") or {}
-        for key in ("TP_unrolled", "TP_loop", "TP_ports", "TP"):
-            value = measurement.get(key)
-            if value and value not in values:
-                values.append(value)
-    return best_numeric(values)
+    return best_cpi_labeled(arch_details).value
+
+
+def best_latency_measured(arch_details: dict[str, dict[str, Any]]) -> PerfValue:
+    """Lowest latency drawn exclusively from ``source_kind="measured"`` rows."""
+    return best_latency_labeled(arch_details, kind_filter="measured")
+
+
+def best_latency_modeled(arch_details: dict[str, dict[str, Any]]) -> PerfValue:
+    """Lowest latency drawn exclusively from ``source_kind="modeled"`` rows."""
+    return best_latency_labeled(arch_details, kind_filter="modeled")
+
+
+def best_cpi_measured(arch_details: dict[str, dict[str, Any]]) -> PerfValue:
+    """Lowest CPI drawn exclusively from ``source_kind="measured"`` rows."""
+    return best_cpi_labeled(arch_details, kind_filter="measured")
+
+
+def best_cpi_modeled(arch_details: dict[str, dict[str, Any]]) -> PerfValue:
+    """Lowest CPI drawn exclusively from ``source_kind="modeled"`` rows."""
+    return best_cpi_labeled(arch_details, kind_filter="modeled")
 
 
 def variant_perf_summary(arch_details: dict[str, dict[str, Any]]) -> tuple[str, str]:
-    """Return ``(best_latency, best_cpi)`` for a single instruction variant.
-
-    This is a convenience wrapper combining :func:`best_latency` and
-    :func:`best_cpi` into a single call, returning a ``(latency, cpi)`` pair.
-    """
+    """Return ``(best_latency, best_cpi)`` strings for a single variant."""
     return best_latency(arch_details), best_cpi(arch_details)
+
+
+def variant_perf_summary_labeled(
+    arch_details: dict[str, dict[str, Any]],
+) -> tuple[PerfValue, PerfValue]:
+    """Return labeled ``(latency, cpi)`` for a single variant.
+
+    Each element carries its ``source_kind`` and originating ``core`` so
+    renderers can show "(measured, SKL)" / "(modeled, neoverse-n1)" suffixes.
+    """
+    return best_latency_labeled(arch_details), best_cpi_labeled(arch_details)

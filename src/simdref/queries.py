@@ -14,6 +14,28 @@ from typing import TYPE_CHECKING
 from simdref.perf import variant_perf_summary
 from simdref.storage import load_instruction_from_db
 
+SOURCE_KINDS: tuple[str, ...] = ("measured", "modeled", "any")
+
+
+def filter_arch_details_by_source_kind(
+    arch_details: dict[str, dict[str, object]],
+    source_kind: str,
+) -> dict[str, dict[str, object]]:
+    """Drop ``arch_details`` entries whose provenance does not match.
+
+    ``"any"`` (or empty) keeps everything; ``"measured"`` / ``"modeled"``
+    keep only entries whose ``source_kind`` field matches (legacy entries
+    without a ``source_kind`` key are treated as measured).
+    """
+    if source_kind in ("", "any"):
+        return arch_details
+    kept: dict[str, dict[str, object]] = {}
+    for core, details in arch_details.items():
+        kind = details.get("source_kind") or "measured"
+        if kind == source_kind:
+            kept[core] = details
+    return kept
+
 if TYPE_CHECKING:
     from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 

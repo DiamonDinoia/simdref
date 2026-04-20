@@ -16,7 +16,11 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 
-from simdref.perf import latency_cycle_values, variant_perf_summary
+from simdref.perf import (
+    latency_cycle_values,
+    variant_perf_summary,
+    variant_perf_summary_labeled,
+)
 from simdref.pdfrefs import normalize_pdf_refs, pdf_ref_label
 from simdref.queries import linked_instruction_records
 
@@ -487,7 +491,12 @@ def normalized_sentence(text: str) -> str:
 
 
 def measurement_rows(item) -> list[dict]:
-    """Extract per-microarchitecture measurement rows from an instruction."""
+    """Extract per-microarchitecture measurement rows from an instruction.
+
+    Each row carries a ``source`` column (``measured`` / ``modeled``) so
+    downstream renderers can show provenance without re-reading the
+    ``arch_details`` entry.
+    """
     rows: list[dict] = []
     for arch, details in item.arch_details.items():
         measurement = details.get("measurement") or {}
@@ -496,6 +505,7 @@ def measurement_rows(item) -> list[dict]:
             values = latency_cycle_values(details.get("latencies") or [])
             if values:
                 row["latency"] = values[0]
+            row["source"] = details.get("source_kind") or "measured"
             rows.append(row)
     return rows
 
@@ -538,6 +548,7 @@ _GENERIC_TABLE_LABEL_MAP = {
     "TP_ports": "CPI ports",
     "TP": "CPI",
     "TP_no_interiteration": "cycle/instr (no interiteration)",
+    "source": "source",
 }
 
 
@@ -841,16 +852,32 @@ def render_instruction_variants(query: str, items, show_fp16: bool = False) -> N
     table.add_column("cpi", width=5)
     table.add_column("summary")
     for index, item in enumerate(items, start=1):
-        lat, cpi = variant_perf_summary(item.arch_details)
+        lat, cpi = variant_perf_summary_labeled(item.arch_details)
         table.add_row(
             str(index),
             instruction_query_text(item),
             display_architecture(item.architecture),
             display_isa(item.isa),
-            lat,
-            cpi,
+            _label_perf(lat),
+            _label_perf(cpi),
             item.summary or "-",
         )
+
+
+def _label_perf(value) -> str:
+    """Render a :class:`PerfValue` as ``"val (measured, core)"`` for tables.
+
+    Empty / missing values render as ``"-"`` to match the legacy behaviour
+    the unit tests depend on.
+    """
+    raw = getattr(value, "value", value)
+    if not raw or raw == "-":
+        return "-"
+    kind = getattr(value, "source_kind", "")
+    core = getattr(value, "core", "")
+    if kind and core:
+        return f"{raw} ({kind[0]}, {core})"
+    return str(raw)
     console.print(Panel(table, title=f"instruction variants: {query}", border_style="magenta"))
     base_query = query.split()[0] if query.split() else query
     if items:

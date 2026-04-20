@@ -8,12 +8,13 @@ import re
 import tarfile
 import zipfile
 from datetime import UTC, datetime
-from importlib import resources
 from pathlib import Path
 
 import httpx
 
 from simdref.models import SourceVersion
+
+_TEST_FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures"
 
 UOPS_XML_URL = "https://uops.info/instructions.xml"
 INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
@@ -98,7 +99,18 @@ def now_iso() -> str:
 
 
 def _fixture_text(name: str) -> str:
-    return resources.files("simdref.fixtures").joinpath(name).read_text()
+    """Read a test fixture from the repo's ``tests/fixtures/`` directory.
+
+    Test-only. Fixtures are intentionally not shipped with the wheel so
+    end users never see a near-empty placeholder catalog.
+    """
+    path = _TEST_FIXTURES_DIR / name
+    if not path.exists():
+        raise FileNotFoundError(
+            f"test fixture {name!r} not found at {path}. "
+            "Fixtures only ship with the source tree, not the wheel."
+        )
+    return path.read_text()
 
 
 def _fetch_text(url: str) -> str:

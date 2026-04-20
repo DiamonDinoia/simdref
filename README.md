@@ -15,9 +15,17 @@ manpages, and a static web app.
 
 ```bash
 pip install simdref
-simdref update          # download pre-built GitHub release data; falls back to local rebuild/fixtures if needed
+simdref update          # download the pre-built GitHub release catalog
 simdref doctor          # verify installation
 ```
+
+The default `simdref update` downloads the combined derived catalog
+(x86 measured + ARM/RISC-V measured & modeled) — `llvm-mca` is **not**
+required. Users who rebuild locally with `simdref update --build-local`
+need `llvm-mca` 18+ on PATH; see `docs/SOURCES.md` for the full source
+map and the `source_kind` labelling scheme. Every rendered latency/CPI
+is tagged `(measured, <core>)` or `(modeled, <core>)` so measured and
+modeled data never get mixed up.
 
 Or from [TestPyPI](https://test.pypi.org/project/simdref/) (pre-release):
 

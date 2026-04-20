@@ -91,8 +91,8 @@ app = typer.Typer(
         "Local SIMD reference across Intel intrinsics, instruction data, performance measurements, and SDM-derived descriptions.\n\n"
         "Run without arguments to open the TUI. Pass a bare query to search or open matching results directly.\n\n"
         "Common rebuild commands:\n"
-        "  simdref update --build-local    Full local rebuild from upstream sources.\n"
-        "  simdref update --offline        Local rebuild from bundled fixtures only.\n"
+        "  simdref update                  Download the pre-built release catalog (no llvm-mca required).\n"
+        "  simdref update --build-local    Full local rebuild from upstream sources (requires llvm-mca).\n"
         "  simdref update --build-local --with-sdm\n"
         "                                  Heaviest local rebuild, including Intel SDM parsing."
     ),
@@ -589,7 +589,7 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 
 @app.command()
 def update(
-    offline: bool = typer.Option(False, help="Build locally from bundled fixtures instead of downloading pre-built data."),
+    offline: bool = typer.Option(False, hidden=True, help="[deprecated; test-only] Build from bundled fixtures."),
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
     build_local: bool = typer.Option(False, "--build-local", help="Build locally from upstream sources. This uses substantially more RAM than the default download path."),
     with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. This is the heaviest local-build path and is mainly intended for CI/release generation."),
@@ -597,14 +597,14 @@ def update(
 ) -> None:
     """Refresh runtime data.
 
-    Default behavior downloads the pre-built release assets. Use
-    ``--build-local`` for a full local rebuild, or ``--offline`` for the
-    bundled fixture dataset.
+    Default behavior downloads the pre-built release catalog. Use
+    ``--build-local`` for a full local rebuild (requires ``llvm-mca`` on
+    PATH for modeled ARM/RISC-V perf rows).
     """
     if offline and from_release:
         raise typer.BadParameter("--offline cannot be combined with --from-release")
     if offline and build_local:
-        raise typer.BadParameter("--offline already implies a local fixture build; do not combine it with --build-local")
+        raise typer.BadParameter("--offline and --build-local are mutually exclusive")
     if with_sdm and not build_local:
         raise typer.BadParameter("--with-sdm requires --build-local")
 
@@ -613,11 +613,31 @@ def update(
         _finalize_runtime_from_download(man_dir=man_dir)
         return
 
+    if build_local:
+        _require_llvm_mca_or_hint()
+
     if not offline and not build_local:
         _download_release_or_fallback(man_dir=man_dir, fallback_offline=True)
         return
 
     _build_runtime_locally(offline=offline, man_dir=man_dir, include_sdm=with_sdm)
+
+
+def _require_llvm_mca_or_hint() -> None:
+    """Abort with an install hint when ``llvm-mca`` is missing on PATH.
+
+    ``--build-local`` needs it to generate modeled ARM/RISC-V perf rows.
+    Users who only want pre-built data can drop the flag.
+    """
+    from simdref.perf_sources.llvm_mca import LLVMMcaUnavailable, detect_llvm_mca_version
+    try:
+        detect_llvm_mca_version()
+    except LLVMMcaUnavailable as exc:
+        err_console.print(
+            f"[bold red]llvm-mca is required for --build-local[/bold red]: {exc}",
+        )
+        err_console.print(LLVMMcaUnavailable.install_hint)
+        raise typer.Exit(code=1) from exc
 
 
 LLM_EXIT_MATCH = 0
@@ -643,10 +663,18 @@ def _resolve_preset_filters(preset: str | None) -> tuple[list[str] | None, list[
     return sorted(spec.families), None
 
 
-def _llm_filter_records(records: list[dict], isa: list[str] | None, category: list[str] | None) -> list[dict]:
-    """Filter llm payload dicts by ISA family and category facets."""
+def _llm_filter_records(
+    records: list[dict],
+    isa: list[str] | None,
+    category: list[str] | None,
+    source_kind: str | None = None,
+) -> list[dict]:
+    """Filter llm payload dicts by ISA family, category, and source-kind."""
     from simdref.display import isa_family as _isa_family
-    if not isa and not category:
+    source_kind = (source_kind or "").strip().lower()
+    if source_kind in ("", "any"):
+        source_kind = ""
+    if not isa and not category and not source_kind:
         return records
     isa_set = {f.strip() for f in (isa or []) if f and f.strip()}
     cat_set = {c.strip() for c in (category or []) if c and c.strip()}
@@ -663,8 +691,31 @@ def _llm_filter_records(records: list[dict], isa: list[str] | None, category: li
             rec_cat = rec.get("category", "")
             if rec_cat not in cat_set:
                 continue
+        if source_kind:
+            if not _record_has_source_kind(rec, source_kind):
+                continue
         kept.append(rec)
     return kept
+
+
+def _record_has_source_kind(rec: dict, wanted: str) -> bool:
+    """Check whether an llm payload dict carries at least one entry with *wanted* provenance."""
+    arch_details = rec.get("arch_details") or {}
+    if isinstance(arch_details, dict):
+        for details in arch_details.values():
+            if isinstance(details, dict):
+                kind = details.get("source_kind") or "measured"
+                if kind == wanted:
+                    return True
+    for nested_key in ("instruction", "instructions", "results"):
+        nested = rec.get(nested_key)
+        if isinstance(nested, dict):
+            if _record_has_source_kind(nested, wanted):
+                return True
+        elif isinstance(nested, list):
+            if any(_record_has_source_kind(n, wanted) for n in nested if isinstance(n, dict)):
+                return True
+    return False
 
 
 def _llm_format_markdown(payload: dict) -> str:
@@ -770,6 +821,7 @@ def _llm_query_impl(
     isa: list[str] | None,
     category: list[str] | None,
     preset: str | None = None,
+    source_kind: str | None = None,
 ) -> None:
     fmt_lower = (fmt or "json").lower()
     if fmt_lower not in {"json", "ndjson", "markdown"}:
@@ -794,7 +846,7 @@ def _llm_query_impl(
             intrinsic = load_intrinsic_from_db(conn, query_str)
             if intrinsic is not None:
                 result = _llm_intrinsic_payload(conn, intrinsic)
-                kept = _llm_filter_records([result], isa, category)
+                kept = _llm_filter_records([result], isa, category, source_kind=source_kind)
                 payload = {
                     "query": query_str, "mode": "exact",
                     "match_kind": "intrinsic" if kept else None,
@@ -804,7 +856,7 @@ def _llm_query_impl(
                 instructions = _find_instructions_fast(query_str)
                 if instructions:
                     items = [_llm_instruction_payload(item) for item in instructions]
-                    items = _llm_filter_records(items, isa, category)
+                    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
                     payload = {
                         "query": query_str, "mode": "exact",
                         "match_kind": "instruction",
@@ -813,7 +865,7 @@ def _llm_query_impl(
                 else:
                     results, intrinsic_map, instruction_map = _search_runtime(conn, query_str, limit=limit)
                     items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
-                    items = _llm_filter_records(items, isa, category)
+                    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
                     payload = {
                         "query": query_str, "mode": "search",
                         "match_kind": None,
@@ -835,12 +887,13 @@ def llm_query(
     fmt: str = typer.Option("json", "--format", "-F", help="Output format: json, ndjson, or markdown."),
     isa: list[str] = typer.Option(None, "--isa", help="Filter by ISA family (repeatable)."),
     preset: str = typer.Option(None, "--preset", help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all)."),
+    source_kind: str = typer.Option("any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."),
 ) -> None:
     """Resolve a query and emit an LLM-friendly payload.
 
     Exit codes: 0 match, 2 no-match, 3 ambiguous, 1 usage error, 10 internal.
     """
-    _llm_query_impl(query, limit, fmt, isa, None, preset=preset)
+    _llm_query_impl(query, limit, fmt, isa, None, preset=preset, source_kind=source_kind)
 
 
 @llm_app.command("list")

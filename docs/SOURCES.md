@@ -1,6 +1,6 @@
 # Upstream sources
 
-simdref's catalog is built from six upstream feeds. This document records
+simdref's catalog is built from nine upstream feeds. This document records
 where each lives, how it's licensed, how often it's refreshed, and what's
 currently missing — measured by `tools/audit_coverage.py` against a local
 catalog build.
@@ -89,14 +89,75 @@ summary. Snapshot at `docs/coverage/summary.json`.
 
 ---
 
+## Microarchitectural perf data
+
+simdref labels every perf row with a ``source_kind`` so users never
+confuse modeled numbers for measurements.
+
+### uops.info (x86, measured)
+
+See above. All rows are ``source_kind="measured"``.
+
+### LLVM scheduling models via llvm-mca (ARM + RISC-V, modeled)
+
+- **Binary:** ``llvm-mca`` from LLVM 18+.
+- **Driver:** `src/simdref/perf_sources/llvm_mca.py` runs
+  ``llvm-mca --json --mtriple <t> --mcpu <c>`` per ``(triple, cpu)`` and
+  parses per-instruction ``Latency`` + region ``IPC`` into rows with
+  ``source_kind="modeled"``.
+- **Coverage:** ~13 AArch64 cores (Cortex-A72/76/78, Neoverse-N1/N2/V1/V2,
+  Apple M1/M2, A64FX, ThunderX2) and ~7 RISC-V cores (SiFive U74/X280/P400/P600,
+  XiangShan/C908/C910, Spacemit-X60).
+- **License:** Apache-2.0 with LLVM exception.
+- **Build-time requirement:** The ``--build-local`` pipeline aborts with
+  an install hint when ``llvm-mca`` is missing. End users who run
+  ``simdref update`` without ``--build-local`` get the pre-built release
+  catalog and do **not** need ``llvm-mca``.
+
+### OSACA YAML (AArch64, measured)
+
+- **Upstream:** <https://github.com/RRZE-HPC/OSACA>, pinned by commit SHA.
+- **Driver:** `src/simdref/perf_sources/osaca.py` fetches the YAML in
+  memory, parses it, and emits perf rows with ``source_kind="measured"``.
+- **License boundary:** OSACA is AGPL-3.0. simdref **never vendors** the
+  YAML or ships it in the wheel. Only our derived perf rows are
+  serialized into the catalog — the AGPL scope stops at the build host.
+- **Coverage:** Cortex-A72, Neoverse-N1, A64FX, ThunderX2.
+
+### rvv-bench-results (RISC-V RVV, measured)
+
+- **Upstream:** <https://github.com/camel-cdr/rvv-bench-results>, pinned
+  by commit SHA.
+- **Driver:** `src/simdref/perf_sources/rvv_bench.py` fetches the results
+  JSON, joins on mnemonic × LMUL, and emits ``source_kind="measured"``
+  rows citing <https://camel-cdr.github.io/rvv-bench-results/>.
+- **Coverage:** C908, C910, Spacemit-X60 as of the pinned commit.
+- **License:** MIT.
+
+---
+
+## Deferred sources
+
+- **dougallj/applecpu** — Apple-Silicon measured perf. Deferred pending
+  license clarification.
+- **Arm SWOGs (Software Optimization Guides)** — redistribution
+  restricted; surfaced as `pdf_refs` citation links only, never reparsed.
+- **Full RISC-V scalar measured perf** — no public source exists;
+  remains modeled-only via LLVM.
+
+---
+
 ## How refresh works
 
 1. Edit `src/simdref/ingest_sources.py` candidate-URL lists when upstreams
    move.
-2. `python -m simdref update` runs ingestion using a live network fetch,
-   with fallback to `vendor/` archives, then to bundled offline fixtures.
-3. `python tools/audit_coverage.py fetch` re-runs extraction, compares
+2. `python -m simdref update` downloads the pre-built release catalog —
+   no `llvm-mca` required.
+3. `python -m simdref update --build-local` rebuilds from live sources,
+   requires `llvm-mca` on PATH, and runs OSACA/rvv-bench fetchers for
+   measured ARM/RISC-V overlays.
+4. `python tools/audit_coverage.py fetch` re-runs extraction, compares
    against the freshly-built catalog, and rewrites
    `docs/coverage/summary.json`.
-4. Commit the updated summary; `tests/test_coverage_parity.py` enforces
+5. Commit the updated summary; `tests/test_coverage_parity.py` enforces
    the floors in `docs/coverage/thresholds.toml` on every CI run.

@@ -22,8 +22,9 @@ class CliHelpTests(unittest.TestCase):
         )
         output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
         self.assertIn("simdref update --build-local", output)
-        self.assertIn("simdref update --offline", output)
         self.assertIn("--with-sdm", output)
+        # --offline is deprecated and hidden from public help.
+        self.assertNotIn("simdref update --offline", output)
 
     def test_completion_invocation_detection(self):
         self.assertTrue(_is_completion_invocation({"_SIMDREF_COMPLETE": "complete_bash"}))
