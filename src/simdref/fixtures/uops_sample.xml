@@ -181,4 +181,47 @@
       </measurement>
     </architecture>
   </instruction>
+  <instruction asm="PADDD" category="SSE" cpl="3" extension="SSE2" iclass="PADDD" iform="PADDD_XMMdq_XMMdq" isa-set="SSE2" opcode="660FFE" string="PADDD (XMM, XMM)" summary="Add packed doubleword integers." url="uops.info/html-instr/PADDD_XMM_XMM.html" url-ref="felixcloutier.com/x86/paddb:paddw:paddd:paddq">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="128" xtype="i32">XMM0,XMM1,XMM2,XMM3,XMM4,XMM5,XMM6,XMM7</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="128" xtype="i32">XMM0,XMM1,XMM2,XMM3,XMM4,XMM5,XMM6,XMM7</operand>
+    <architecture name="SKL">
+      <measurement TP_loop="0.33" TP_unrolled="0.33" uops="1" ports="1*p015" TP_ports="0.33" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="1"/>
+      </measurement>
+      <doc latency="1" TP="0.33" uops="1" ports="p015"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VFMADD132PS" category="VFMA" cpl="3" extension="FMA" iclass="VFMADD132PS" iform="VFMADD132PS_YMMqq_YMMqq_YMMqq" isa-set="FMA" opcode="VEX.256.66.0F38.W0 98 /r" string="VFMADD132PS (YMM, YMM, YMM)" summary="Fused multiply-add of packed single-precision floating-point values." url="uops.info/html-instr/VFMADD132PS_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/vfmadd132ps:vfmadd213ps:vfmadd231ps">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VFMADD213PS" category="VFMA" cpl="3" extension="FMA" iclass="VFMADD213PS" iform="VFMADD213PS_YMMqq_YMMqq_YMMqq" isa-set="FMA" opcode="VEX.256.66.0F38.W0 A8 /r" string="VFMADD213PS (YMM, YMM, YMM)" summary="Fused multiply-add of packed single-precision floating-point values." url="uops.info/html-instr/VFMADD213PS_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/vfmadd132ps:vfmadd213ps:vfmadd231ps">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+  </instruction>
+  <instruction asm="VFMADD231PS" category="VFMA" cpl="3" extension="FMA" iclass="VFMADD231PS" iform="VFMADD231PS_YMMqq_YMMqq_YMMqq" isa-set="FMA" opcode="VEX.256.66.0F38.W0 B8 /r" string="VFMADD231PS (YMM, YMM, YMM)" summary="Fused multiply-add of packed single-precision floating-point values." url="uops.info/html-instr/VFMADD231PS_YMM_YMM_YMM.html" url-ref="felixcloutier.com/x86/vfmadd132ps:vfmadd213ps:vfmadd231ps">
+    <operand idx="1" name="REG0" r="1" w="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="2" name="REG1" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <operand idx="3" name="REG2" r="1" type="reg" width="256" xtype="f32">YMM0,YMM1,YMM2,YMM3</operand>
+    <architecture name="SKL">
+      <measurement TP_loop="0.50" TP_unrolled="0.50" uops="1" ports="1*p01" TP_ports="0.50" uops_MITE="1" uops_MS="0" uops_retire_slots="1">
+        <latency start_op="2" target_op="1" cycles="4"/>
+      </measurement>
+      <doc latency="4" TP="0.50" uops="1" ports="p01"/>
+    </architecture>
+  </instruction>
 </root>
