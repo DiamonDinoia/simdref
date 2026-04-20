@@ -45,20 +45,19 @@ jobs:
         run: node --check src/simdref/templates/app.js
 
   runtime-build:
-    name: Runtime Validation (${{ matrix.label }})
+    name: Runtime Validation
     needs: tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        label: [release-assets, local-sdm]
         include:
-          - id: release-assets
-            label: Release asset refresh
+          - label: release-assets
             build_command: simdref update --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 1000
             instructions_min: 1000
-          - id: local-sdm
-            label: Full local build with Intel SDM
+          - label: local-sdm
             build_command: simdref update --build-local --with-sdm --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 7000
             instructions_min: 20000
@@ -82,7 +81,7 @@ jobs:
         run: ${{ matrix.build_command }}
 
       - name: Validate upstream source ingestion (${{ matrix.label }})
-        if: matrix.id == 'local-sdm'
+        if: matrix.label == 'local-sdm'
         run: python tools/validate_sources.py --require-sdm
 
       - name: Inspect runtime (${{ matrix.label }})

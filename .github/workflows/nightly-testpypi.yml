@@ -11,12 +11,13 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check-activity:
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.check.outputs.changed }}
+      proceed: ${{ steps.check.outputs.proceed }}
       stamp: ${{ steps.check.outputs.stamp }}
     steps:
       - uses: actions/checkout@v6
@@ -25,7 +26,7 @@ jobs:
           ref: main
 
       - name: Detect new commits on main in last 24h
-        id: check
+        id: activity
         run: |
           since=$(date -u -d "24 hours ago" +%Y-%m-%dT%H:%M:%SZ)
           count=$(git log --since="$since" --pretty=oneline main | wc -l)
@@ -35,11 +36,37 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require latest CI run on main to be green
+        id: ci_status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          conclusion=$(gh run list \
+            --workflow=ci.yml \
+            --branch=main \
+            --status=completed \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion // "missing"')
+          echo "latest CI conclusion on main: $conclusion"
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to proceed
+        id: check
+        run: |
+          if [ "${{ steps.activity.outputs.changed }}" = "true" ] \
+             && [ "${{ steps.ci_status.outputs.conclusion }}" = "success" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "skipping: activity=${{ steps.activity.outputs.changed }} ci=${{ steps.ci_status.outputs.conclusion }}"
+          fi
           echo "stamp=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: check-activity
-    if: needs.check-activity.outputs.changed == 'true'
+    if: needs.check-activity.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write

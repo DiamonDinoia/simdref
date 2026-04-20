@@ -1,0 +1,76 @@
+name: Deploy Pages
+
+# Publishes the static web bundle to GitHub Pages every time main receives
+# a green CI run. Uses the catalog assets from the most recent
+# "data-latest" GitHub Release, which Build Data & Deploy refreshes weekly.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - run: uv pip install -e .
+
+      - name: Download published catalog from data-latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data/derived
+          gh release download data-latest \
+            --repo "${{ github.repository }}" \
+            --pattern 'catalog.msgpack' \
+            --pattern 'catalog.db' \
+            --dir data/derived \
+            --clobber
+
+      - name: Rebuild static web bundle from published catalog
+        run: |
+          python - <<'PY'
+          from simdref.storage import WEB_DIR, load_catalog
+          from simdref.web import export_web
+          catalog = load_catalog()
+          export_web(catalog, WEB_DIR)
+          print(f"exported {len(catalog.intrinsics)} intrinsics, {len(catalog.instructions)} instructions")
+          PY
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
