@@ -1,8 +1,10 @@
 """Unit tests for simdref.ingest_sources.
 
-Covers offline fixture fallback, URL candidate-fallback loops, zip/tar
-archive extraction helpers, and malformed-input handling. Network is
-never exercised — every outbound call is monkeypatched.
+Covers URL candidate-fallback loops, zip/tar archive extraction helpers,
+and malformed-input handling. Network is never exercised — every
+outbound call is monkeypatched. The fetchers now raise
+:class:`~simdref.ingest_sources.SourceUnavailableError` when every
+candidate source fails (no bundled-fixture fallback).
 """
 
 from __future__ import annotations
@@ -39,30 +41,6 @@ def test_derive_arm_arch_classifies_supported_architectures(supported, isa, expe
 def test_derive_arm_arch_none_for_non_arm():
     assert derive_arm_arch(["SSE"], {}) is None
     assert derive_arm_arch(["AVX512F"], None) is None
-
-
-# ---------------------------------------------------------------------------
-# Offline fixture paths
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "fn, fixture_marker",
-    [
-        (src.fetch_uops_xml, "uops_sample.xml"),
-        (src.fetch_intel_data, "intel_intrinsics_sample.json"),
-        (src.fetch_arm_acle_data, "arm_acle_intrinsics_sample.json"),
-        (src.fetch_arm_a64_data, "arm_a64_instructions_sample.json"),
-        (src.fetch_riscv_unified_db_data, "riscv_unified_db_sample.json"),
-        (src.fetch_riscv_rvv_intrinsics_data, "riscv_rvv_intrinsics_sample.json"),
-    ],
-)
-def test_offline_returns_fixture(fn, fixture_marker):
-    payload, version = fn(offline=True)
-    assert version.used_fixture is True
-    assert fixture_marker in version.url
-    # All fixtures are non-empty.
-    if isinstance(payload, str):
-        assert payload.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +90,7 @@ def test_riscv_rvv_candidate_fallback(monkeypatch):
         raise_on_urls=(urls[0],),
         responses={urls[1]: payload},
     )
-    text, version = src.fetch_riscv_rvv_intrinsics_data(offline=False)
+    text, version = src.fetch_riscv_rvv_intrinsics_data()
     assert text == payload
     assert version.url == urls[1]
     assert version.version == "live"
@@ -127,7 +105,7 @@ def test_riscv_unified_db_candidate_fallback(monkeypatch):
         raise_on_urls=tuple(urls[:-1]),
         responses={urls[-1]: payload},
     )
-    text, version = src.fetch_riscv_unified_db_data(offline=False)
+    text, version = src.fetch_riscv_unified_db_data()
     assert json.loads(text) == {"instructions": []}
     assert version.url == urls[-1]
 
@@ -143,37 +121,37 @@ def test_intel_data_candidate_fallback(monkeypatch):
     )
     # Intel has zip-download fallback; blocked client makes it fail cleanly.
     if len(urls) > 1:
-        text, version = src.fetch_intel_data(offline=False)
+        text, version = src.fetch_intel_data()
         assert text == payload
         assert version.url in urls
 
 
 # ---------------------------------------------------------------------------
-# Full-offline fallback (every URL raises → fixture)
+# Full-unavailable path raises SourceUnavailableError (no fixture fallback)
 # ---------------------------------------------------------------------------
 
-def test_rvv_full_offline_fallback(monkeypatch):
+def test_rvv_all_sources_unreachable_raises(monkeypatch):
     _isolate_network(
         monkeypatch,
         raise_on_urls=tuple(src.RISCV_RVV_INTRINSICS_CANDIDATE_URLS),
     )
-    text, version = src.fetch_riscv_rvv_intrinsics_data(offline=False)
-    assert version.used_fixture is True
+    with pytest.raises(src.SourceUnavailableError):
+        src.fetch_riscv_rvv_intrinsics_data()
 
 
-def test_unified_db_full_offline_fallback(monkeypatch):
+def test_unified_db_all_sources_unreachable_raises(monkeypatch):
     _isolate_network(
         monkeypatch,
         raise_on_urls=tuple(src.RISCV_UNIFIED_DB_CANDIDATE_URLS),
     )
-    text, version = src.fetch_riscv_unified_db_data(offline=False)
-    assert version.used_fixture is True
+    with pytest.raises(src.SourceUnavailableError):
+        src.fetch_riscv_unified_db_data()
 
 
-def test_uops_full_offline_fallback(monkeypatch):
+def test_uops_all_sources_unreachable_raises(monkeypatch):
     _isolate_network(monkeypatch, raise_on_urls=(src.UOPS_XML_URL,))
-    text, version = src.fetch_uops_xml(offline=False)
-    assert version.used_fixture is True
+    with pytest.raises(src.SourceUnavailableError):
+        src.fetch_uops_xml()
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +376,7 @@ def test_fetch_uops_xml_uses_local_file(tmp_path, monkeypatch):
     xml_path = tmp_path / "instructions.xml"
     xml_path.write_text("<root/>")
     monkeypatch.setattr(src, "LOCAL_UOPS_XMLS", [xml_path])
-    path_or_text, version = src.fetch_uops_xml(offline=False)
+    path_or_text, version = src.fetch_uops_xml()
     assert path_or_text == xml_path
     assert version.source == "uops.info"
     assert version.version.startswith("local-xml:")

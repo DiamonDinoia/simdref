@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 import tempfile
 
+from conftest import build_fixture_catalog
 from simdref.cli import _resolve_query_payload
 from simdref.display import (
     display_instruction_form,
@@ -25,7 +26,7 @@ from simdref.tui import _fts_search, _normalize_sub_isa_selection
 
 class SearchTests(unittest.TestCase):
     def test_intrinsic_lookup(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         record = find_intrinsic(catalog, "_mm256_add_epi32")
         self.assertIsNotNone(record)
         self.assertIn("VPADDD", " ".join(record.instructions))
@@ -48,7 +49,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(riscv_record.url, "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
 
     def test_instruction_lookup(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         record = find_instruction(catalog, "ADDPS")
         self.assertIsNotNone(record)
         self.assertIn("_mm_add_ps", record.linked_intrinsics)
@@ -65,13 +66,13 @@ class SearchTests(unittest.TestCase):
         self.assertIn("__riscv_vadd_vv_i32m1", riscv_record.linked_intrinsics)
 
     def test_instruction_lookup_accepts_tokenized_form(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         record = find_instruction(catalog, "VADDPS YMM YMM YMM")
         self.assertIsNotNone(record)
         self.assertEqual(record.key, "VADDPS (YMM, YMM, YMM)")
 
     def test_search(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "expandload")
         self.assertTrue(any(result.kind == "intrinsic" for result in results))
         arm_results = search_catalog(catalog, "svadd")
@@ -88,7 +89,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(riscv_extension[0].title, "vaesdf.vv")
 
     def test_llm_exact_intrinsic_payload(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         payload = _resolve_query_payload(catalog, "_mm_add_ps")
         self.assertEqual(payload["mode"], "exact")
         self.assertEqual(payload["match_kind"], "intrinsic")
@@ -96,29 +97,29 @@ class SearchTests(unittest.TestCase):
         self.assertTrue(payload["performance"])
 
     def test_llm_search_payload(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         payload = _resolve_query_payload(catalog, "_mm_add")
         self.assertEqual(payload["mode"], "search")
         self.assertTrue(payload["results"])
 
     def test_intrinsic_prefers_intrinsic_results(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "_mm_add")
         self.assertEqual(results[0].kind, "intrinsic")
 
     def test_mm_add_prefers_intrinsic_results(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "mm add")
         self.assertEqual(results[0].kind, "intrinsic")
         self.assertNotIn("_mm512_maskz_expandloadu_epi32", [result.title for result in results])
 
     def test_add_prefers_instruction_results(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "ADD")
         self.assertEqual(results[0].kind, "instruction")
 
     def test_mm256_add_prefers_mm256_family(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "_mm256_add")
         titles = [result.title for result in results[:3]]
         self.assertIn("_mm256_add_ps", titles)
@@ -126,7 +127,7 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("_mm512_maskz_expandloadu_epi32", [result.title for result in results])
 
     def test_intrinsic_performance_rows(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         intrinsic = find_intrinsic(catalog, "_mm_add_ps")
         rows = instruction_rows_for_intrinsic(catalog, intrinsic)
         self.assertTrue(any(row["uarch"] == "SKL" for row in rows))
@@ -150,15 +151,13 @@ class SearchTests(unittest.TestCase):
 
     def test_build_catalog_emits_status_messages(self):
         messages: list[str] = []
-        catalog = build_catalog(offline=True, status=messages.append)
+        catalog = build_fixture_catalog(status=messages.append)
         self.assertTrue(catalog.intrinsics)
         self.assertTrue(catalog.instructions)
-        self.assertTrue(any("Fetching Intel intrinsics data" in msg for msg in messages))
-        self.assertTrue(any("Parsing intrinsic catalog" in msg for msg in messages))
+        self.assertTrue(any("Loading Intel fixture" in msg for msg in messages))
         self.assertTrue(any("Linking intrinsics to instructions" in msg for msg in messages))
-        self.assertTrue(any("Assembling final catalog" in msg for msg in messages))
-        self.assertTrue(any("Fetching Arm ACLE intrinsic data" in msg for msg in messages))
-        self.assertTrue(any("Fetching Arm A64 instruction data" in msg for msg in messages))
+        self.assertTrue(any("Loading Arm ACLE fixture" in msg for msg in messages))
+        self.assertTrue(any("Loading Arm A64" in msg for msg in messages))
 
     def test_masked_summary_prefix(self):
         summary = _instruction_summary(
@@ -179,7 +178,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(_infer_intrinsic_policy("__riscv_vadd_vv_i32m1_tumu"), ("tumu", "masked"))
 
     def test_maskz_query_prefers_maskz_intrinsic(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         results = search_catalog(catalog, "_mm512_maskz_expandloadu_epi32")
         self.assertEqual(results[0].kind, "intrinsic")
         self.assertEqual(results[0].title, "_mm512_maskz_expandloadu_epi32")
@@ -291,7 +290,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(instruction_query_text(item), "ADD R64 R64")
 
     def test_mixed_catalog_keeps_arm_and_x86_instruction_keys_separate(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         arm_records = [item for item in catalog.instructions if item.architecture == "arm" and item.mnemonic == "ADD"]
         self.assertEqual(len(arm_records), 2)
         self.assertEqual(len({item.db_key for item in arm_records}), 2)
@@ -302,7 +301,7 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("vaddq_u8", sve_add.linked_intrinsics)
 
     def test_mixed_catalog_keeps_riscv_keys_separate(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         riscv_records = [item for item in catalog.instructions if item.architecture == "riscv" and item.mnemonic == "vadd.vv"]
         self.assertGreaterEqual(len(riscv_records), 4)
         self.assertEqual(len({item.db_key for item in riscv_records}), len(riscv_records))
@@ -323,7 +322,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(crypto.isa, ["Zvkned"])
 
     def test_riscv_policy_variants_do_not_cross_link(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         plain = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1")
         masked = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1_m")
         tu = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1_tu")
@@ -334,7 +333,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(tumu.instructions, ["vadd.vv [tumu]"])
 
     def test_riscv_vsub_variants_link_without_crossing_masking(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         plain = find_intrinsic(catalog, "__riscv_vsub_vv_i32m1")
         masked = find_intrinsic(catalog, "__riscv_vsub_vv_i32m1_m")
         self.assertEqual(plain.instructions, ["vsub.vv"])
@@ -367,7 +366,7 @@ class SearchTests(unittest.TestCase):
         self.assertIn("vd[i + offset] = vs2[i]", records[0].description["Operation"])
 
     def test_generic_sve_mapping_links_to_sve_form_only(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         intrinsic = find_intrinsic(catalog, "svadd")
         self.assertIsNotNone(intrinsic)
         self.assertIn("ADD (Zd.S, Pg/M, Zn.S, Zm.S)", intrinsic.instructions)
@@ -438,7 +437,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(sve.metadata["supported_architectures"], "A64")
 
     def test_x86_linked_instruction_refs_include_resolution_metadata(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         intrinsic = find_intrinsic(catalog, "_mm_add_ps")
         self.assertIsNotNone(intrinsic)
         ref = intrinsic.instruction_refs[0]
@@ -496,7 +495,7 @@ class TuiSearchFilterTests(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = TemporaryDirectory()
         tmp_path = Path(cls._tmpdir.name)
-        cls._catalog = build_catalog(offline=True)
+        cls._catalog = build_fixture_catalog()
         cls._catalog_path = tmp_path / "catalog.msgpack"
         cls._db_path = tmp_path / "catalog.db"
         save_catalog(cls._catalog, path=cls._catalog_path)
@@ -632,7 +631,7 @@ class TuiSearchFilterTests(unittest.TestCase):
         self.assertEqual(normalized, {"V"})
 
     def test_fts_search_add_can_reach_riscv_after_many_x86_matches(self):
-        noisy_catalog = build_catalog(offline=True)
+        noisy_catalog = build_fixture_catalog()
         for index in range(250):
             noisy_catalog.instructions.append(
                 InstructionRecord(

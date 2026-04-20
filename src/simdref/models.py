@@ -20,7 +20,6 @@ class SourceVersion:
     version: str
     fetched_at: str
     url: str
-    used_fixture: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +27,6 @@ class SourceVersion:
             "version": self.version,
             "fetched_at": self.fetched_at,
             "url": self.url,
-            "used_fixture": self.used_fixture,
         }
 
 
@@ -214,6 +212,14 @@ class Catalog:
                 for item in payload.get("intrinsics", [])
             ],
             instructions=[InstructionRecord.from_dict(item) for item in payload.get("instructions", [])],
-            sources=[SourceVersion(**item) for item in payload.get("sources", [])],
+            sources=[
+                SourceVersion(
+                    source=item.get("source", ""),
+                    version=item.get("version", ""),
+                    fetched_at=item.get("fetched_at", ""),
+                    url=item.get("url", ""),
+                )
+                for item in payload.get("sources", [])
+            ],
             generated_at=payload["generated_at"],
         )

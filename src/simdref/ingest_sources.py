@@ -14,7 +14,13 @@ import httpx
 
 from simdref.models import SourceVersion
 
-_TEST_FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures"
+
+class SourceUnavailableError(RuntimeError):
+    """Raised when every candidate source for a feed is unreachable.
+
+    The installer / CI surfaces this with a hint to use the pre-built
+    release catalog via ``simdref update`` instead of ``--build``.
+    """
 
 UOPS_XML_URL = "https://uops.info/instructions.xml"
 INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
@@ -98,21 +104,6 @@ def now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def _fixture_text(name: str) -> str:
-    """Read a test fixture from the repo's ``tests/fixtures/`` directory.
-
-    Test-only. Fixtures are intentionally not shipped with the wheel so
-    end users never see a near-empty placeholder catalog.
-    """
-    path = _TEST_FIXTURES_DIR / name
-    if not path.exists():
-        raise FileNotFoundError(
-            f"test fixture {name!r} not found at {path}. "
-            "Fixtures only ship with the source tree, not the wheel."
-        )
-    return path.read_text()
-
-
 def _fetch_text(url: str) -> str:
     with httpx.Client(follow_redirects=True, timeout=20.0) as client:
         response = client.get(url)
@@ -135,15 +126,7 @@ def _read_local_intel_archive() -> tuple[str, SourceVersion] | None:
     return None
 
 
-def fetch_uops_xml(offline: bool = False) -> tuple[str | Path, SourceVersion]:
-    if offline:
-        return _fixture_text("uops_sample.xml"), SourceVersion(
-            source="uops.info",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:uops_sample.xml",
-            used_fixture=True,
-        )
+def fetch_uops_xml() -> tuple[str | Path, SourceVersion]:
     for xml_path in LOCAL_UOPS_XMLS:
         if xml_path.exists():
             return xml_path, SourceVersion(
@@ -154,26 +137,19 @@ def fetch_uops_xml(offline: bool = False) -> tuple[str | Path, SourceVersion]:
             )
     try:
         text = _fetch_text(UOPS_XML_URL)
-        return text, SourceVersion(
-            source="uops.info",
-            version="live",
-            fetched_at=now_iso(),
-            url=UOPS_XML_URL,
-        )
-    except Exception:
-        return fetch_uops_xml(offline=True)
+    except Exception as exc:
+        raise SourceUnavailableError(
+            f"uops.info instruction XML is unreachable at {UOPS_XML_URL}"
+        ) from exc
+    return text, SourceVersion(
+        source="uops.info",
+        version="live",
+        fetched_at=now_iso(),
+        url=UOPS_XML_URL,
+    )
 
 
-def fetch_intel_data(offline: bool = False) -> tuple[str, SourceVersion]:
-    if offline:
-        return _fixture_text("intel_intrinsics_sample.json"), SourceVersion(
-            source="intel-intrinsics-guide",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:intel_intrinsics_sample.json",
-            used_fixture=True,
-        )
-
+def fetch_intel_data() -> tuple[str, SourceVersion]:
     local_archive = _read_local_intel_archive()
     if local_archive is not None:
         return local_archive
@@ -224,7 +200,11 @@ def fetch_intel_data(offline: bool = False) -> tuple[str, SourceVersion]:
     except Exception:
         pass
 
-    return fetch_intel_data(offline=True)
+    raise SourceUnavailableError(
+        "Intel intrinsics data is unreachable (network + local archives all failed). "
+        "Install llvm-mca + a working network, or run `simdref update` (no --build) to "
+        "use the pre-built release catalog."
+    )
 
 
 def _read_local_text(paths: list[Path], source: str, version_prefix: str) -> tuple[str, SourceVersion] | None:
@@ -453,15 +433,7 @@ def refresh_local_arm_intrinsics_bundle() -> list[Path]:
     return written
 
 
-def fetch_arm_acle_data(offline: bool = False) -> tuple[str, SourceVersion]:
-    if offline:
-        return _fixture_text("arm_acle_intrinsics_sample.json"), SourceVersion(
-            source="arm-acle",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:arm_acle_intrinsics_sample.json",
-            used_fixture=True,
-        )
+def fetch_arm_acle_data() -> tuple[str, SourceVersion]:
     local_intrinsics_bundle = _read_local_arm_intrinsics_bundle()
     if local_intrinsics_bundle is not None:
         return local_intrinsics_bundle
@@ -504,36 +476,20 @@ def fetch_arm_acle_data(offline: bool = False) -> tuple[str, SourceVersion]:
             )
     except Exception:
         pass
-    return fetch_arm_acle_data(offline=True)
+    raise SourceUnavailableError("Arm ACLE intrinsics data is unreachable.")
 
 
-def fetch_arm_a64_data(offline: bool = False) -> tuple[str, SourceVersion]:
-    if offline:
-        return _fixture_text("arm_a64_instructions_sample.json"), SourceVersion(
-            source="arm-a64",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:arm_a64_instructions_sample.json",
-            used_fixture=True,
-        )
+def fetch_arm_a64_data() -> tuple[str, SourceVersion]:
     local = _read_local_text(LOCAL_ARM_A64_JSONS, "arm-a64", "local-json")
     if local is not None:
         return local
     archive = _read_local_arm_instruction_archive()
     if archive is not None:
         return archive
-    return fetch_arm_a64_data(offline=True)
+    raise SourceUnavailableError("Arm A64 instruction data is unreachable.")
 
 
-def fetch_riscv_unified_db_data(offline: bool = False) -> tuple[str, SourceVersion]:
-    if offline:
-        return _fixture_text("riscv_unified_db_sample.json"), SourceVersion(
-            source="riscv-unified-db",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:riscv_unified_db_sample.json",
-            used_fixture=True,
-        )
+def fetch_riscv_unified_db_data() -> tuple[str, SourceVersion]:
     local = _read_local_text(LOCAL_RISCV_UNIFIED_DB_JSONS, "riscv-unified-db", "local-json")
     if local is not None:
         return _augment_riscv_unified_db_payload_with_docs(local[0]), local[1]
@@ -548,18 +504,10 @@ def fetch_riscv_unified_db_data(offline: bool = False) -> tuple[str, SourceVersi
             )
         except Exception:
             pass
-    return fetch_riscv_unified_db_data(offline=True)
+    raise SourceUnavailableError("RISC-V unified-db data is unreachable.")
 
 
-def fetch_riscv_rvv_intrinsics_data(offline: bool = False) -> tuple[str, SourceVersion]:
-    if offline:
-        return _fixture_text("riscv_rvv_intrinsics_sample.json"), SourceVersion(
-            source="rvv-intrinsic-doc",
-            version="fixture",
-            fetched_at=now_iso(),
-            url="fixture:riscv_rvv_intrinsics_sample.json",
-            used_fixture=True,
-        )
+def fetch_riscv_rvv_intrinsics_data() -> tuple[str, SourceVersion]:
     local = _read_local_text(LOCAL_RISCV_RVV_INTRINSICS_JSONS, "rvv-intrinsic-doc", "local-json")
     if local is not None:
         return local
@@ -574,4 +522,4 @@ def fetch_riscv_rvv_intrinsics_data(offline: bool = False) -> tuple[str, SourceV
             )
         except Exception:
             pass
-    return fetch_riscv_rvv_intrinsics_data(offline=True)
+    raise SourceUnavailableError("RISC-V RVV intrinsics data is unreachable.")

@@ -294,8 +294,8 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
     return records
 
 
-def validate_intel_intrinsics(offline: bool) -> tuple[int, int]:
-    text, _source = fetch_intel_data(offline=offline)
+def validate_intel_intrinsics() -> tuple[int, int]:
+    text, _source = fetch_intel_data()
     parsed = parse_intel_payload(text)
     parsed_by_name: dict[str, list] = {}
     for record in parsed:
@@ -367,8 +367,8 @@ def _raw_uops_instructions(source: str | Path) -> list[dict[str, Any]]:
     return raw_records
 
 
-def validate_uops_instructions(offline: bool) -> tuple[int, int]:
-    source, _source = fetch_uops_xml(offline=offline)
+def validate_uops_instructions() -> tuple[int, int]:
+    source, _source = fetch_uops_xml()
     parsed = parse_uops_xml(source)
     by_iform: dict[str, list[Any]] = {}
     by_key: dict[tuple[str, str], list[Any]] = {}
@@ -432,8 +432,8 @@ def validate_uops_instructions(offline: bool) -> tuple[int, int]:
     return checked, failures
 
 
-def validate_arm_intrinsics(offline: bool) -> tuple[int, int]:
-    text, _source = fetch_arm_acle_data(offline=offline)
+def validate_arm_intrinsics() -> tuple[int, int]:
+    text, _source = fetch_arm_acle_data()
     parsed = parse_arm_intrinsics_payload(text)
     parsed_by_name = {record.name: record for record in parsed}
     payload = json.loads(text)
@@ -505,11 +505,9 @@ def _instruction_candidates(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def validate_arm_instructions(offline: bool, require_authoritative: bool) -> tuple[int, int]:
-    text, source = fetch_arm_a64_data(offline=offline)
-    if source.used_fixture and require_authoritative:
-        _fail("authoritative Arm instruction source is required, but only the bundled fixture is available")
-
+def validate_arm_instructions(require_authoritative: bool) -> tuple[int, int]:
+    text, _source = fetch_arm_a64_data()
+    # Fixture-only path was dropped: fetch now raises on total failure.
     payload = json.loads(text)
     parsed = parse_arm_instruction_payload(text)
     parsed_by_mnemonic: dict[str, list[Any]] = {}
@@ -557,13 +555,12 @@ def validate_arm_instructions(offline: bool, require_authoritative: bool) -> tup
             print(f"FAIL arm instructions: empty summary for {mnemonic}")
             failures += 1
 
-    suffix = "authoritative" if not source.used_fixture else "fixture-only"
-    print(f"validated Arm instructions: checked={checked} parsed={len(parsed)} failures={failures} ({suffix})")
+    print(f"validated Arm instructions: checked={checked} parsed={len(parsed)} failures={failures}")
     return checked, failures
 
 
-def validate_riscv_intrinsics(offline: bool) -> tuple[int, int]:
-    text, _source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+def validate_riscv_intrinsics() -> tuple[int, int]:
+    text, _source = fetch_riscv_rvv_intrinsics_data()
     parsed = parse_riscv_intrinsics_payload(text)
     payload = json.loads(text)
     raw_records = payload.get("intrinsics") or []
@@ -600,8 +597,8 @@ def validate_riscv_intrinsics(offline: bool) -> tuple[int, int]:
     return checked, failures
 
 
-def validate_riscv_instructions(offline: bool) -> tuple[int, int]:
-    text, _source = fetch_riscv_unified_db_data(offline=offline)
+def validate_riscv_instructions() -> tuple[int, int]:
+    text, _source = fetch_riscv_unified_db_data()
     parsed = parse_riscv_instruction_payload(text)
     payload = json.loads(text)
     raw_records = payload.get("instructions") or []
@@ -629,9 +626,9 @@ def validate_riscv_instructions(offline: bool) -> tuple[int, int]:
     return checked, failures
 
 
-def validate_riscv_intrinsic_links(offline: bool) -> tuple[int, int]:
-    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
-    instruction_text, _instruction_source = fetch_riscv_unified_db_data(offline=offline)
+def validate_riscv_intrinsic_links() -> tuple[int, int]:
+    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data()
+    instruction_text, _instruction_source = fetch_riscv_unified_db_data()
     intrinsics = parse_riscv_intrinsics_payload(intrinsic_text)
     instructions = parse_riscv_instruction_payload(instruction_text)
     checked = sum(len(item.instruction_refs) for item in intrinsics)
@@ -659,9 +656,9 @@ def validate_riscv_intrinsic_links(offline: bool) -> tuple[int, int]:
     return checked, failures
 
 
-def validate_riscv_semantics_and_coverage(offline: bool) -> tuple[int, int]:
-    instruction_text, _instruction_source = fetch_riscv_unified_db_data(offline=offline)
-    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+def validate_riscv_semantics_and_coverage() -> tuple[int, int]:
+    instruction_text, _instruction_source = fetch_riscv_unified_db_data()
+    intrinsic_text, _intrinsic_source = fetch_riscv_rvv_intrinsics_data()
     instructions = parse_riscv_instruction_payload(instruction_text)
     intrinsics = parse_riscv_intrinsics_payload(intrinsic_text)
     link_records(intrinsics, instructions)
@@ -721,7 +718,7 @@ def validate_riscv_semantics_and_coverage(offline: bool) -> tuple[int, int]:
 
 
 def _load_sdm_descriptions() -> dict[str, dict[str, Any]] | None:
-    pdf_path = find_pdf_source_path("intel-sdm", offline=False)
+    pdf_path = find_pdf_source_path("intel-sdm")
     if pdf_path is not None and pdf_path.exists():
         return load_or_parse_intel_sdm(pdf_path)
     if INTEL_SDM_CACHE_PATH.exists():
@@ -759,9 +756,9 @@ def _x86_instruction_indexes(instructions: list[Any]) -> tuple[dict[tuple[str, s
     return by_mnemonic, by_key, by_iform
 
 
-def validate_x86_intrinsic_links(offline: bool) -> tuple[int, int]:
-    intel_text, _intel_source = fetch_intel_data(offline=offline)
-    uops_text, _uops_source = fetch_uops_xml(offline=offline)
+def validate_x86_intrinsic_links() -> tuple[int, int]:
+    intel_text, _intel_source = fetch_intel_data()
+    uops_text, _uops_source = fetch_uops_xml()
     intrinsics = parse_intel_payload(intel_text)
     instructions = parse_uops_xml(uops_text)
     by_mnemonic, by_key, by_iform = _x86_instruction_indexes(instructions)
@@ -840,7 +837,7 @@ def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
     return checked, failures
 
 
-def validate_x86_sdm_coverage(offline: bool, *, require_sdm: bool) -> tuple[int, int]:
+def validate_x86_sdm_coverage(*, require_sdm: bool) -> tuple[int, int]:
     descriptions = _load_sdm_descriptions()
     if descriptions is None:
         if require_sdm:
@@ -848,7 +845,7 @@ def validate_x86_sdm_coverage(offline: bool, *, require_sdm: bool) -> tuple[int,
         print("validated Intel SDM coverage: skipped (no PDF/cache available)")
         return 0, 0
 
-    uops_text, _uops_source = fetch_uops_xml(offline=offline)
+    uops_text, _uops_source = fetch_uops_xml()
     instructions = [record for record in parse_uops_xml(uops_text) if record.architecture == "x86"]
     if not instructions:
         _fail("no x86 instructions were parsed for SDM coverage validation")
@@ -893,11 +890,10 @@ def validate_x86_sdm_coverage(offline: bool, *, require_sdm: bool) -> tuple[int,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Developer-only source validation for simdref")
-    parser.add_argument("--offline", action="store_true", help="Validate bundled fixture sources only.")
     parser.add_argument(
         "--require-authoritative-arm-instructions",
         action="store_true",
-        help="Fail if the Arm instruction source falls back to the bundled fixture.",
+        help="Fail if the Arm instruction source cannot be fetched.",
     )
     parser.add_argument(
         "--require-sdm",
@@ -910,17 +906,17 @@ def main() -> int:
     totals_failed = 0
 
     for checked, failed in (
-        validate_intel_intrinsics(args.offline),
-        validate_uops_instructions(args.offline),
-        validate_arm_intrinsics(args.offline),
-        validate_arm_instructions(args.offline, args.require_authoritative_arm_instructions),
-        validate_riscv_intrinsics(args.offline),
-        validate_riscv_instructions(args.offline),
-        validate_riscv_intrinsic_links(args.offline),
-        validate_riscv_semantics_and_coverage(args.offline),
-        validate_x86_intrinsic_links(args.offline),
-        validate_x86_sdm_semantics(require_sdm=args.require_sdm and not args.offline),
-        validate_x86_sdm_coverage(args.offline, require_sdm=args.require_sdm and not args.offline),
+        validate_intel_intrinsics(),
+        validate_uops_instructions(),
+        validate_arm_intrinsics(),
+        validate_arm_instructions(args.require_authoritative_arm_instructions),
+        validate_riscv_intrinsics(),
+        validate_riscv_instructions(),
+        validate_riscv_intrinsic_links(),
+        validate_riscv_semantics_and_coverage(),
+        validate_x86_intrinsic_links(),
+        validate_x86_sdm_semantics(require_sdm=args.require_sdm),
+        validate_x86_sdm_coverage(require_sdm=args.require_sdm),
     ):
         totals_checked += checked
         totals_failed += failed

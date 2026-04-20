@@ -8,6 +8,7 @@ from simdref.ingest import build_catalog
 from simdref.lsp import _completion_candidates, _hover_markdown
 from simdref.storage import build_sqlite, save_catalog, open_db
 from simdref.web import export_web
+from conftest import build_fixture_catalog
 
 
 class LspWebTests(unittest.TestCase):
@@ -15,7 +16,7 @@ class LspWebTests(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_path = Path(cls._tmpdir.name)
-        cls._catalog = build_catalog(offline=True)
+        cls._catalog = build_fixture_catalog()
         save_catalog(cls._catalog, path=tmp_path / "catalog.msgpack")
         build_sqlite(cls._catalog, path=tmp_path / "catalog.db")
         cls._conn = open_db(path=tmp_path / "catalog.db")
@@ -80,7 +81,7 @@ class LspWebTests(unittest.TestCase):
         self.assertIn("_mm256_add_ps", labels)
 
     def test_export_web_produces_expected_files(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         catalog.instructions[0].pdf_refs = [{
             "source_id": "intel-sdm",
             "label": "Intel SDM",
@@ -180,7 +181,7 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("ACLE Documentation", intr_details["vaddq_u8"]["doc_sections"])
 
     def test_export_web_preserves_x86_detail_sections_for_rendering(self):
-        catalog = build_catalog(offline=True)
+        catalog = build_fixture_catalog()
         x86_instruction = next(item for item in catalog.instructions if item.architecture == "x86" and item.mnemonic == "VPEXPANDD")
         x86_instruction.description = {
             "Description": "Expand packed integers under writemask control.",

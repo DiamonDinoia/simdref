@@ -92,8 +92,8 @@ app = typer.Typer(
         "Run without arguments to open the TUI. Pass a bare query to search or open matching results directly.\n\n"
         "Common rebuild commands:\n"
         "  simdref update                  Download the pre-built release catalog (no llvm-mca required).\n"
-        "  simdref update --build-local    Full local rebuild from upstream sources (requires llvm-mca).\n"
-        "  simdref update --build-local --with-sdm\n"
+        "  simdref update --build          Full local rebuild from upstream sources (requires llvm-mca).\n"
+        "  simdref update --build --with-sdm\n"
         "                                  Heaviest local rebuild, including Intel SDM parsing."
     ),
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -179,7 +179,7 @@ def _download_from_release() -> None:
     err_console.print("download complete", style="green")
 
 
-def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = False) -> None:
+def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
     """Build catalog, SQLite, manpages, and web bundle locally."""
     interactive_progress = console.is_terminal and os.environ.get("GITHUB_ACTIONS") != "true"
 
@@ -187,15 +187,14 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         def _status(msg: str) -> None:
             err_console.print(msg, style="dim")
 
-        if not offline:
-            _status("Refreshing local Arm intrinsics cache")
-            try:
-                written = refresh_local_arm_intrinsics_bundle()
-                _status(f"Refreshed {len(written)} Arm JSON files in {written[0].parent}")
-            except Exception as exc:
-                _status(f"Arm JSON refresh failed, using cached local files: {exc}")
+        _status("Refreshing local Arm intrinsics cache")
+        try:
+            written = refresh_local_arm_intrinsics_bundle()
+            _status(f"Refreshed {len(written)} Arm JSON files in {written[0].parent}")
+        except Exception as exc:
+            _status(f"Arm JSON refresh failed, using cached local files: {exc}")
         _status("Building local catalog")
-        catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
+        catalog = build_catalog(include_sdm=include_sdm, status=_status)
         _status("Saving catalog snapshot")
         save_catalog(catalog)
         _status("Building SQLite search database")
@@ -224,13 +223,12 @@ def _build_runtime_locally(*, offline: bool, man_dir: Path, include_sdm: bool = 
         def _status(msg: str) -> None:
             progress.update(task, description=msg)
 
-        if not offline:
-            progress.update(task, description="Refreshing local Arm intrinsics cache")
-            try:
-                refresh_local_arm_intrinsics_bundle()
-            except Exception as exc:
-                progress.update(task, description=f"Arm JSON refresh failed, using cached files: {exc}")
-        catalog = build_catalog(offline=offline, include_sdm=include_sdm, status=_status)
+        progress.update(task, description="Refreshing local Arm intrinsics cache")
+        try:
+            refresh_local_arm_intrinsics_bundle()
+        except Exception as exc:
+            progress.update(task, description=f"Arm JSON refresh failed, using cached files: {exc}")
+        catalog = build_catalog(include_sdm=include_sdm, status=_status)
         progress.advance(task, 1)
 
         progress.update(task, description="Saving catalog snapshot")
@@ -286,8 +284,13 @@ def _finalize_runtime_from_download(*, man_dir: Path) -> None:
     )
 
 
-def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = True) -> None:
-    """Prefer pre-built assets; optionally fall back to fixtures."""
+def _download_release_or_fallback(*, man_dir: Path) -> None:
+    """Prefer pre-built assets. Fall back to the existing on-disk catalog.
+
+    When the download fails and no catalog is cached, the caller must
+    run ``simdref update --build`` — there is no longer a bundled-fixture
+    fallback.
+    """
     try:
         _download_from_release()
         if sqlite_schema_is_current():
@@ -297,17 +300,17 @@ def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = Tru
             err_console.print("downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog", style="yellow")
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
-        err_console.print("downloaded runtime schema is not current; falling back to bundled fixtures", style="yellow")
+        err_console.print("[bold red]downloaded runtime schema is not current[/bold red] and no local catalog exists", style="yellow")
+        err_console.print("run `simdref update --build` to build from upstream sources (requires llvm-mca)")
+        raise typer.Exit(code=1)
     except typer.Exit:
         if CATALOG_PATH.exists():
             err_console.print("download failed; refreshing runtime from the existing local catalog", style="yellow")
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
-        if not fallback_offline:
-            raise
-        err_console.print("falling back to bundled fixtures", style="yellow")
-
-    _build_runtime_locally(offline=True, man_dir=man_dir)
+        err_console.print("[bold red]no pre-built catalog available and no local cache[/bold red]", style="yellow")
+        err_console.print("run `simdref update --build` to build from upstream sources (requires llvm-mca)")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +321,7 @@ def _download_release_or_fallback(*, man_dir: Path, fallback_offline: bool = Tru
 def _bootstrap_interactive() -> None:
     """Bootstrap runtime data with a lightweight default path."""
     err_console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
-    _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR, fallback_offline=True)
+    _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
 
 
 def ensure_catalog():
@@ -589,44 +592,37 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 
 @app.command()
 def update(
-    offline: bool = typer.Option(False, hidden=True, help="[deprecated; test-only] Build from bundled fixtures."),
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
-    build_local: bool = typer.Option(False, "--build-local", help="Build locally from upstream sources. This uses substantially more RAM than the default download path."),
-    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. This is the heaviest local-build path and is mainly intended for CI/release generation."),
+    build: bool = typer.Option(False, "--build", help="Build locally from upstream sources (requires llvm-mca on PATH). Uses substantially more RAM than the default download path."),
+    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. Heaviest local-build path; intended for CI/release generation."),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
     """Refresh runtime data.
 
     Default behavior downloads the pre-built release catalog. Use
-    ``--build-local`` for a full local rebuild (requires ``llvm-mca`` on
-    PATH for modeled ARM/RISC-V perf rows).
+    ``--build`` for a full local rebuild (requires ``llvm-mca`` on PATH
+    for modeled ARM/RISC-V perf rows).
     """
-    if offline and from_release:
-        raise typer.BadParameter("--offline cannot be combined with --from-release")
-    if offline and build_local:
-        raise typer.BadParameter("--offline and --build-local are mutually exclusive")
-    if with_sdm and not build_local:
-        raise typer.BadParameter("--with-sdm requires --build-local")
+    if with_sdm and not build:
+        raise typer.BadParameter("--with-sdm requires --build")
 
     if from_release:
         _download_from_release()
         _finalize_runtime_from_download(man_dir=man_dir)
         return
 
-    if build_local:
+    if build:
         _require_llvm_mca_or_hint()
-
-    if not offline and not build_local:
-        _download_release_or_fallback(man_dir=man_dir, fallback_offline=True)
+        _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
         return
 
-    _build_runtime_locally(offline=offline, man_dir=man_dir, include_sdm=with_sdm)
+    _download_release_or_fallback(man_dir=man_dir)
 
 
 def _require_llvm_mca_or_hint() -> None:
     """Abort with an install hint when ``llvm-mca`` is missing on PATH.
 
-    ``--build-local`` needs it to generate modeled ARM/RISC-V perf rows.
+    ``--build`` needs it to generate modeled ARM/RISC-V perf rows.
     Users who only want pre-built data can drop the flag.
     """
     from simdref.perf_sources.llvm_mca import LLVMMcaUnavailable, detect_llvm_mca_version
@@ -634,7 +630,7 @@ def _require_llvm_mca_or_hint() -> None:
         detect_llvm_mca_version()
     except LLVMMcaUnavailable as exc:
         err_console.print(
-            f"[bold red]llvm-mca is required for --build-local[/bold red]: {exc}",
+            f"[bold red]llvm-mca is required for --build[/bold red]: {exc}",
         )
         err_console.print(LLVMMcaUnavailable.install_hint)
         raise typer.Exit(code=1) from exc
@@ -944,7 +940,7 @@ def doctor() -> None:
     for source in catalog.sources:
         table.add_row(
             f"source {source.source}",
-            f"version={source.version} url={source.url} fixture={source.used_fixture}",
+            f"version={source.version} url={source.url}",
         )
     console.print(table)
 

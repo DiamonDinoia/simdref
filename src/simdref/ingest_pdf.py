@@ -101,9 +101,9 @@ def load_or_parse_pdf_source(
     return result
 
 
-def find_pdf_source_path(source_id: str, *, offline: bool = False) -> Path | None:
+def find_pdf_source_path(source_id: str) -> Path | None:
     spec = get_pdf_source(source_id)
-    return spec.find_source(offline=offline)
+    return spec.find_source()
 
 
 def merge_pdf_enrichment(

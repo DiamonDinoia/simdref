@@ -1151,29 +1151,28 @@ def _ingest_perf_sources(
 
 
 def build_catalog(
-    offline: bool = False,
     include_sdm: bool = False,
     *,
     status: Callable[[str], None] | None = None,
 ) -> Catalog:
     emit = status or (lambda _msg: None)
     emit("Fetching Intel intrinsics data")
-    intel_text, intel_source = fetch_intel_data(offline=offline)
+    intel_text, intel_source = fetch_intel_data()
     emit(f"Fetched Intel intrinsics data from {intel_source.url}")
     emit("Fetching uops.info instruction data")
-    uops_text, uops_source = fetch_uops_xml(offline=offline)
+    uops_text, uops_source = fetch_uops_xml()
     emit(f"Fetched uops.info instruction data from {uops_source.url}")
     emit("Fetching Arm ACLE intrinsic data")
-    arm_acle_text, arm_acle_source = fetch_arm_acle_data(offline=offline)
+    arm_acle_text, arm_acle_source = fetch_arm_acle_data()
     emit(f"Fetched Arm ACLE intrinsic data from {arm_acle_source.url}")
     emit("Fetching Arm A64 instruction data")
-    arm_a64_text, arm_a64_source = fetch_arm_a64_data(offline=offline)
+    arm_a64_text, arm_a64_source = fetch_arm_a64_data()
     emit(f"Fetched Arm A64 instruction data from {arm_a64_source.url}")
     emit("Fetching RISC-V RVV intrinsic data")
-    riscv_intrinsics_text, riscv_intrinsics_source = fetch_riscv_rvv_intrinsics_data(offline=offline)
+    riscv_intrinsics_text, riscv_intrinsics_source = fetch_riscv_rvv_intrinsics_data()
     emit(f"Fetched RISC-V RVV intrinsic data from {riscv_intrinsics_source.url}")
     emit("Fetching RISC-V unified-db instruction data")
-    riscv_instructions_text, riscv_instructions_source = fetch_riscv_unified_db_data(offline=offline)
+    riscv_instructions_text, riscv_instructions_source = fetch_riscv_unified_db_data()
     emit(f"Fetched RISC-V unified-db instruction data from {riscv_instructions_source.url}")
     emit("Parsing intrinsic catalog")
     intrinsics = parse_intel_payload(intel_text)
@@ -1190,14 +1189,10 @@ def build_catalog(
     link_records(intrinsics, instructions)
     emit("Linked intrinsics and instructions")
 
-    perf_sources_version: list[SourceVersion] = []
-    if not offline:
-        perf_sources_version.extend(
-            _ingest_perf_sources(instructions, status=emit)
-        )
+    perf_sources_version = list(_ingest_perf_sources(instructions, status=emit))
 
     if include_sdm:
-        sdm_path = find_pdf_source_path("intel-sdm", offline=offline)
+        sdm_path = find_pdf_source_path("intel-sdm")
         if sdm_path is not None:
             try:
                 emit(f"Preparing Intel SDM descriptions from {sdm_path}")

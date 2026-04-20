@@ -569,10 +569,8 @@ def parse_intel_sdm(
     )
 
 
-def find_intel_sdm_pdf(*, offline: bool = False) -> Path | None:
+def find_intel_sdm_pdf() -> Path | None:
     """Locate or download the Intel SDM PDF."""
-    if offline:
-        return None
     for pdf_path in LOCAL_INTEL_SDM_PDFS:
         if pdf_path.exists():
             return pdf_path
