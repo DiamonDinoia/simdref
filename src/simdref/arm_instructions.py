@@ -238,12 +238,178 @@ def _records_from_payload(payload: Any) -> list[InstructionRecord]:
     if isinstance(payload, dict) and payload.get("format") == "arm-instructions-fixture-v1":
         return _records_from_payload(payload.get("instructions") or [])
 
+    aarchmrs = _records_from_aarchmrs_tree(payload)
+    if aarchmrs:
+        return aarchmrs
+
     for candidates in _candidate_instruction_lists(payload):
         records = [_normalize_instruction_item(item) for item in candidates]
         normalized = [record for record in records if record is not None]
         if normalized:
             return normalized
     return []
+
+
+# ---------------------------------------------------------------------------
+# AARCHMRS (official Arm machine-readable spec) tree walker
+# ---------------------------------------------------------------------------
+
+_RULE_PLACEHOLDER: dict[str, str] = {
+    # Scalar
+    "Xd": "x0", "Xn": "x1", "Xm": "x2", "Xa": "x3", "Xt": "x0", "Xt2": "x1",
+    "Xs": "x1", "Xt1": "x0",
+    "Wd": "w0", "Wn": "w1", "Wm": "w2", "Wa": "w3", "Wt": "w0", "Wt2": "w1",
+    "Ws": "w1", "Wt1": "w0",
+    # Advanced SIMD vector registers
+    "Vd": "v0", "Vn": "v1", "Vm": "v2", "Va": "v3", "Vt": "v0", "Vt2": "v1",
+    "Vt3": "v2", "Vt4": "v3",
+    "Dd": "d0", "Dn": "d1", "Dm": "d2", "Da": "d3",
+    "Sd": "s0", "Sn": "s1", "Sm": "s2", "Sa": "s3",
+    "Hd": "h0", "Hn": "h1", "Hm": "h2", "Ha": "h3",
+    "Bd": "b0", "Bn": "b1", "Bm": "b2",
+    "Qd": "q0", "Qn": "q1", "Qm": "q2", "Qt": "q0", "Qt2": "q1",
+    # SVE predicate / vector
+    "Zd": "z0", "Zn": "z1", "Zm": "z2", "Za": "z3", "Zdn": "z0", "Zt": "z0",
+    "Pd": "p0", "Pn": "p1", "Pm": "p2", "Pg": "p0", "Pt": "p0",
+    # SME
+    "ZAd": "za0", "ZAn": "za0", "ZAt": "za0",
+    # Stack pointer / zero register
+    "SP": "sp", "XZR": "xzr", "WZR": "wzr", "XSP": "sp", "WSP": "wsp",
+    # Condition codes / misc commonly referenced
+    "cond": "eq", "nzcv": "0",
+    # Arrangement specifiers and element size hints
+    "T": "4S", "Ta": "4S", "Tb": "4S", "Ts": "4S",
+    "T__1": "4S", "T__2": "4S", "T__3": "4S", "T__4": "4S",
+    "size": "4S", "size__1": "4S",
+}
+
+_LITERAL_KEEP = {"COMMA": ",", "SPACE": " ", "LBRACKET": "[", "RBRACKET": "]",
+                 "LBRACE": "{", "RBRACE": "}", "HASH": "#", "EXCLAM": "!"}
+
+
+def _render_assembly(assembly: dict[str, Any]) -> str:
+    """Render an AARCHMRS ``assembly.symbols`` list to a concrete asm string.
+
+    Literals are kept verbatim; RuleReferences substitute from
+    ``_RULE_PLACEHOLDER`` when known, fall back to ``#0`` for numeric rules
+    (imm / off / lsb / width / shift) and to a neutral token otherwise.
+    """
+    symbols = assembly.get("symbols") if isinstance(assembly, dict) else None
+    if not isinstance(symbols, list):
+        return ""
+    parts: list[str] = []
+    for sym in symbols:
+        if not isinstance(sym, dict):
+            continue
+        sym_type = str(sym.get("_type", ""))
+        if sym_type.endswith("Literal"):
+            parts.append(str(sym.get("value", "")))
+            continue
+        if sym_type.endswith("RuleReference"):
+            rule = str(sym.get("rule_id", ""))
+            if rule in _LITERAL_KEEP:
+                parts.append(_LITERAL_KEEP[rule])
+                continue
+            base = re.sub(r"__\d+$", "", rule)
+            if rule in _RULE_PLACEHOLDER:
+                parts.append(_RULE_PLACEHOLDER[rule])
+            elif base in _RULE_PLACEHOLDER:
+                parts.append(_RULE_PLACEHOLDER[base])
+            elif re.search(r"imm|offset|off|lsb|width|shift|amount|rot", rule, re.IGNORECASE):
+                parts.append("#0")
+            elif re.search(r"label|addr", rule, re.IGNORECASE):
+                parts.append(".")
+            else:
+                parts.append(f"<{rule}>")
+            continue
+    return "".join(parts).strip()
+
+
+def _infer_aarchmrs_isa(group_path: list[str]) -> list[str]:
+    joined = " ".join(group_path).lower()
+    isa: list[str] = []
+    if "sme" in joined:
+        isa.append("SME2" if "sme2" in joined else "SME")
+    if "sve2" in joined:
+        isa.append("SVE2")
+    elif "sve" in joined:
+        isa.append("SVE")
+    if "advsimd" in joined or "asimd" in joined or "neon" in joined or "fp_" in joined or "simd" in joined:
+        isa.append("NEON")
+    if "mve" in joined:
+        isa.append("MVE")
+    return isa or ["A64"]
+
+
+def _records_from_aarchmrs_tree(payload: Any) -> list[InstructionRecord]:
+    if not isinstance(payload, dict):
+        return []
+    top = payload.get("instructions")
+    if not isinstance(top, list) or not top:
+        return []
+    # Detect AARCHMRS: top-level entries are InstructionSet nodes with children.
+    if not all(
+        isinstance(node, dict) and str(node.get("_type", "")).endswith("InstructionSet")
+        for node in top
+    ):
+        return []
+
+    records: list[InstructionRecord] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    def walk(node: dict[str, Any], group_path: list[str]) -> None:
+        node_type = str(node.get("_type", ""))
+        if node_type.endswith("Instruction"):
+            assembly = node.get("assembly")
+            if not isinstance(assembly, dict):
+                return
+            rendered = _render_assembly(assembly)
+            if not rendered:
+                return
+            head, _, tail = rendered.partition(" ")
+            mnemonic = head.strip().upper()
+            if not mnemonic or not re.match(r"^[A-Z][A-Z0-9]*$", mnemonic):
+                return
+            operand_form = tail.strip()
+            form = _canonical_instruction_key(mnemonic, operand_form) if operand_form else mnemonic
+            key = (mnemonic, form.casefold())
+            if key in seen_keys:
+                return
+            seen_keys.add(key)
+            summary = _generated_summary(mnemonic)
+            if not summary.endswith("."):
+                summary += "."
+            metadata = {
+                "operation_id": str(node.get("operation_id") or "").strip(),
+                "instruction_set": group_path[0] if group_path else "A64",
+                "group": group_path[-1] if group_path else "",
+            }
+            metadata = {k: v for k, v in metadata.items() if v}
+            records.append(
+                InstructionRecord(
+                    mnemonic=mnemonic,
+                    form=form,
+                    summary=summary,
+                    architecture="arm",
+                    isa=_infer_aarchmrs_isa(group_path),
+                    metadata=metadata,
+                    source="arm-a64",
+                )
+            )
+            return
+        if node_type.endswith("InstructionAlias"):
+            # Skip aliases — they resolve to another instruction we already parse.
+            return
+        name = str(node.get("name") or "").strip()
+        next_path = group_path + [name] if name else group_path
+        for child in node.get("children", []) or []:
+            if isinstance(child, dict):
+                walk(child, next_path)
+
+    for top_node in top:
+        if isinstance(top_node, dict):
+            walk(top_node, [str(top_node.get("name") or "")])
+    return records
 
 
 def parse_arm_instruction_payload(text: str) -> list[InstructionRecord]:

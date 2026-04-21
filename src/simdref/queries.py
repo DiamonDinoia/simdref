@@ -72,6 +72,51 @@ def linked_instruction_records(
     ]
 
 
+def build_intrinsic_instruction_index(
+    catalog: Catalog,
+) -> dict[str, list[InstructionRecord]]:
+    """Invert ``catalog.instructions`` into an ``intrinsic name → instructions`` map.
+
+    One linear pass replaces the quadratic per-intrinsic scan performed by
+    :func:`instruction_rows_for_intrinsic`, turning ``O(intrinsics × instructions)``
+    into ``O(intrinsics + instructions)``.
+    """
+    index: dict[str, list[InstructionRecord]] = {}
+    for instruction in catalog.instructions:
+        for name in instruction.linked_intrinsics:
+            index.setdefault(name, []).append(instruction)
+    return index
+
+
+def _rows_from_linked_instructions(
+    linked: list[InstructionRecord],
+) -> list[dict]:
+    rows: list[dict] = []
+    for instruction in linked:
+        if instruction.metrics:
+            for arch, values in sorted(instruction.metrics.items()):
+                row = {"instruction": instruction.key, "uarch": arch}
+                row.update(values)
+                rows.append(row)
+        else:
+            rows.append({
+                "instruction": instruction.key,
+                "uarch": "-",
+                "latency": "-",
+                "throughput": "-",
+                "uops": "-",
+                "ports": "-",
+            })
+    return rows
+
+
+def instruction_rows_for_intrinsic_indexed(
+    linked: list[InstructionRecord],
+) -> list[dict]:
+    """Variant of :func:`instruction_rows_for_intrinsic` that takes a prebuilt list."""
+    return _rows_from_linked_instructions(linked)
+
+
 def instruction_rows_for_intrinsic(
     catalog: Catalog,
     intrinsic: IntrinsicRecord,

@@ -22,7 +22,18 @@ from pathlib import Path
 import httpx
 import typer
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from typer.core import TyperGroup
 
 # Stderr-only Console for bootstrap/download status. Must not share stdout with
@@ -45,7 +56,11 @@ from simdref.display import (
 )
 from simdref import __version__
 from simdref.ingest import build_catalog
-from simdref.ingest_sources import refresh_local_arm_intrinsics_bundle
+from simdref.ingest_sources import (
+    ARM_A64_ARCHIVE_CACHE,
+    refresh_local_arm_a64_archive,
+    refresh_local_arm_intrinsics_bundle,
+)
 from simdref.manpages import open_manpage, write_manpages
 from simdref.perf import variant_perf_summary
 from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
@@ -180,7 +195,12 @@ def _download_from_release() -> None:
 
 
 def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
-    """Build catalog, SQLite, manpages, and web bundle locally."""
+    """Build catalog, SQLite, manpages, and web bundle locally.
+
+    Renders a single rich.progress.Progress that shows a per-phase ETA.
+    Download phases render bytes + transfer speed; processing phases
+    render item counts + remaining time.
+    """
     interactive_progress = console.is_terminal and os.environ.get("GITHUB_ACTIONS") != "true"
 
     if not interactive_progress:
@@ -190,9 +210,17 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         _status("Refreshing local Arm intrinsics cache")
         try:
             written = refresh_local_arm_intrinsics_bundle()
-            _status(f"Refreshed {len(written)} Arm JSON files in {written[0].parent}")
         except Exception as exc:
-            _status(f"Arm JSON refresh failed, using cached local files: {exc}")
+            err_console.print(f"Arm intrinsics download failed: {exc}", style="red")
+            raise typer.Exit(code=1) from exc
+        _status(f"Refreshed {len(written)} Arm JSON files in {written[0].parent}")
+        _status("Fetching Arm A64 AARCHMRS archive (large, one-time download)")
+        try:
+            archive_path = refresh_local_arm_a64_archive()
+        except Exception as exc:
+            err_console.print(f"AARCHMRS download failed: {exc}", style="red")
+            raise typer.Exit(code=1) from exc
+        _status(f"AARCHMRS archive ready at {archive_path}")
         _status("Building local catalog")
         catalog = build_catalog(include_sdm=include_sdm, status=_status)
         _status("Saving catalog snapshot")
@@ -209,42 +237,89 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         )
         return
 
-    progress = Progress(
+    download_progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=err_console,
+        transient=True,
+    )
+    count_progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
         TaskProgressColumn(),
         TimeElapsedColumn(),
+        TimeRemainingColumn(),
         console=err_console,
+        transient=True,
     )
-    with progress:
-        task = progress.add_task("Building local catalog", total=4)
 
-        def _status(msg: str) -> None:
-            progress.update(task, description=msg)
+    from rich.live import Live
+    from rich.console import Group
 
-        progress.update(task, description="Refreshing local Arm intrinsics cache")
+    with Live(Group(download_progress, count_progress), console=err_console, refresh_per_second=10):
+        arm_task = count_progress.add_task("Arm intrinsics JSON bundle", total=3)
         try:
-            refresh_local_arm_intrinsics_bundle()
+            refresh_local_arm_intrinsics_bundle(
+                on_progress=lambda done, total: count_progress.update(arm_task, completed=done, total=total),
+            )
         except Exception as exc:
-            progress.update(task, description=f"Arm JSON refresh failed, using cached files: {exc}")
-        catalog = build_catalog(include_sdm=include_sdm, status=_status)
-        progress.advance(task, 1)
+            count_progress.update(arm_task, description=f"Arm intrinsics download failed: {exc}")
+            raise typer.Exit(code=1) from exc
+        count_progress.update(arm_task, description="Arm intrinsics JSON bundle \u2713")
 
-        progress.update(task, description="Saving catalog snapshot")
+        if ARM_A64_ARCHIVE_CACHE.exists() and ARM_A64_ARCHIVE_CACHE.stat().st_size > 0:
+            cached_task = count_progress.add_task(
+                f"Arm A64 AARCHMRS archive \u2713 ({ARM_A64_ARCHIVE_CACHE.name}, cached)",
+                total=1,
+            )
+            count_progress.update(cached_task, completed=1)
+        else:
+            a64_task = download_progress.add_task("Arm A64 AARCHMRS archive", total=None)
+
+            def _a64_progress(done: int, total: int | None) -> None:
+                download_progress.update(a64_task, completed=done, total=total)
+
+            try:
+                archive_path = refresh_local_arm_a64_archive(on_progress=_a64_progress)
+            except Exception as exc:
+                download_progress.update(a64_task, description=f"AARCHMRS download failed: {exc}")
+                raise typer.Exit(code=1) from exc
+            download_progress.update(a64_task, description=f"Arm A64 AARCHMRS archive \u2713 ({archive_path.name})")
+
+        build_task = count_progress.add_task("Building catalog from sources", total=None)
+
+        def _build_status(msg: str) -> None:
+            count_progress.update(build_task, description=f"Building catalog: {msg}")
+
+        catalog = build_catalog(include_sdm=include_sdm, status=_build_status)
+        count_progress.update(build_task, description="Building catalog \u2713", completed=1, total=1)
+
+        save_task = count_progress.add_task("Saving catalog snapshot", total=1)
         save_catalog(catalog)
-        progress.advance(task, 1)
+        count_progress.update(save_task, completed=1, description="Saving catalog snapshot \u2713")
 
-        progress.update(task, description="Building SQLite search database")
+        sqlite_task = count_progress.add_task("Building SQLite search database", total=1)
         build_sqlite(catalog)
-        progress.advance(task, 1)
+        count_progress.update(sqlite_task, completed=1, description="Building SQLite search database \u2713")
 
-        progress.update(task, description="Writing manpages and exporting static web bundle")
-        write_manpages(catalog, man_dir)
+        man_total = len(catalog.intrinsics) + len(catalog.instructions)
+        man_task = count_progress.add_task("Writing manpages", total=man_total)
+        write_manpages(
+            catalog,
+            man_dir,
+            on_progress=lambda done, total: count_progress.update(man_task, completed=done, total=total),
+        )
+        count_progress.update(man_task, description="Writing manpages \u2713")
+
+        web_task = count_progress.add_task("Exporting static web bundle", total=1)
         export_web(catalog, WEB_DIR)
-        progress.advance(task, 1)
-
-        progress.update(task, description="Local build complete")
+        count_progress.update(web_task, completed=1, description="Exporting static web bundle \u2713")
 
     err_console.print(
         f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",

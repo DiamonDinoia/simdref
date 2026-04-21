@@ -6,11 +6,16 @@ Generates man7 pages that can be viewed with ``man -M share/man <name>``.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from simdref.display import display_architecture
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
-from simdref.queries import instruction_rows_for_intrinsic
+from simdref.queries import (
+    build_intrinsic_instruction_index,
+    instruction_rows_for_intrinsic,
+    instruction_rows_for_intrinsic_indexed,
+)
 
 
 def _roff_escape(text: str) -> str:
@@ -29,10 +34,10 @@ def _metric_lines(record: InstructionRecord) -> list[str]:
     return lines
 
 
-def _instruction_perf_lines(catalog: Catalog, intrinsic: IntrinsicRecord) -> list[str]:
+def _instruction_perf_lines(linked: list[InstructionRecord]) -> list[str]:
     """Format linked instruction performance data as text lines for man pages."""
     lines = []
-    for row in instruction_rows_for_intrinsic(catalog, intrinsic):
+    for row in instruction_rows_for_intrinsic_indexed(linked):
         instruction = row.get("instruction", "-")
         uarch = row.get("uarch", "-")
         metrics = {k: v for k, v in row.items() if k not in {"instruction", "uarch"}}
@@ -44,7 +49,17 @@ def _instruction_perf_lines(catalog: Catalog, intrinsic: IntrinsicRecord) -> lis
     return lines
 
 
-def intrinsic_page(record: IntrinsicRecord, catalog: Catalog) -> str:
+def intrinsic_page(
+    record: IntrinsicRecord,
+    catalog: Catalog,
+    linked_instructions: list[InstructionRecord] | None = None,
+) -> str:
+    if linked_instructions is None:
+        linked_instructions = [
+            instruction
+            for instruction in catalog.instructions
+            if record.name in instruction.linked_intrinsics
+        ]
     parts = [f'.TH "{record.name}" "7" "simdref" "simdref" "SIMD Intrinsic Reference"\n']
     parts.append(_section("NAME", f"{_roff_escape(record.name)} \\- {_roff_escape(record.description or 'intrinsic')}"))
     parts.append(_section("SYNOPSIS", f".nf\n{_roff_escape(record.signature)}\n.fi"))
@@ -56,8 +71,9 @@ def intrinsic_page(record: IntrinsicRecord, catalog: Catalog) -> str:
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("CATEGORY", _roff_escape(record.category or "Unknown")))
     parts.append(_section("INSTRUCTIONS", _roff_escape(", ".join(record.instructions) or "None linked")))
-    parts.append(_section("PERFORMANCE SUMMARY", _roff_escape("\n".join(_instruction_perf_lines(catalog, record)) or "No performance metrics available.")))
-    parts.append(_section("PERFORMANCE DETAILS", _roff_escape("\n".join(_instruction_perf_lines(catalog, record)) or "No performance metrics available.")))
+    perf_text = _roff_escape("\n".join(_instruction_perf_lines(linked_instructions)) or "No performance metrics available.")
+    parts.append(_section("PERFORMANCE SUMMARY", perf_text))
+    parts.append(_section("PERFORMANCE DETAILS", perf_text))
     parts.append(_section("NOTES", _roff_escape("; ".join(record.notes) or "None")))
     parts.append(_section("SEE ALSO", _roff_escape(", ".join(record.instructions) or "simdref-search(7)")))
     return "".join(parts)
@@ -85,17 +101,31 @@ def instruction_page(record: InstructionRecord) -> str:
     return "".join(parts)
 
 
-def write_manpages(catalog: Catalog, man_dir: Path) -> None:
+def write_manpages(
+    catalog: Catalog,
+    man_dir: Path,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> None:
     section_dir = man_dir / "man7"
     section_dir.mkdir(parents=True, exist_ok=True)
+    index = build_intrinsic_instruction_index(catalog)
+    total = len(catalog.intrinsics) + len(catalog.instructions)
+    done = 0
     for intrinsic in catalog.intrinsics:
-        (section_dir / f"{intrinsic.name}.7").write_text(intrinsic_page(intrinsic, catalog))
+        linked = index.get(intrinsic.name, [])
+        (section_dir / f"{intrinsic.name}.7").write_text(intrinsic_page(intrinsic, catalog, linked))
+        done += 1
+        if on_progress is not None:
+            on_progress(done, total)
     for instruction in catalog.instructions:
         filename = f"instruction-{record_slug(instruction.architecture)}-{record_slug(instruction.key)}.7"
         (section_dir / filename).write_text(instruction_page(instruction))
         if instruction.architecture == "x86":
             (section_dir / f"{instruction.mnemonic}.7").write_text(instruction_page(instruction))
         (section_dir / f"{record_slug(instruction.architecture)}-{instruction.mnemonic}.7").write_text(instruction_page(instruction))
+        done += 1
+        if on_progress is not None:
+            on_progress(done, total)
 
 
 def record_slug(value: str) -> str:

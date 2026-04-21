@@ -7,6 +7,7 @@ import io
 import re
 import tarfile
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -33,6 +34,10 @@ ARM_ACLE_REPO_URL = "https://github.com/ARM-software/acle"
 ARM_ACLE_DOC_URL = "https://arm-software.github.io/acle/main/"
 ARM_NEON_DOC_URL = "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html"
 ARM_A64_DOC_URL = "https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions"
+ARM_A64_ARCHIVE_URL = (
+    "https://developer.arm.com/-/cdn-downloads/permalink/Exploration-Tools-OS-Machine-Readable-Data/"
+    "AARCHMRS_BSD/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz"
+)
 ARM_ACLE_ARCHIVE_URL = "https://codeload.github.com/ARM-software/acle/zip/refs/heads/main"
 ARM_INTRINSICS_DATA_BASE_URL = "https://developer.arm.com/architectures/instruction-sets/intrinsics/data/"
 ARM_INTRINSICS_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "intrinsics.json"
@@ -80,7 +85,9 @@ LOCAL_ARM_ACLE_ARCHIVES = [
 LOCAL_ARM_A64_JSONS = [
     _REPO_ROOT / "vendor" / "arm" / "a64_instructions.json",
 ]
+ARM_A64_ARCHIVE_CACHE = _REPO_ROOT / "vendor" / "arm" / Path(ARM_A64_ARCHIVE_URL).name
 LOCAL_ARM_A64_ARCHIVES = [
+    ARM_A64_ARCHIVE_CACHE,
     _REPO_ROOT / "vendor" / "arm" / "AARCHMRS_BSD.tar.gz",
     _REPO_ROOT / "vendor" / "arm" / "aarchmrs_bsd.tar.gz",
     _REPO_ROOT / "vendor" / "arm" / "aarchmrs-bsd.tar.gz",
@@ -379,12 +386,12 @@ def _looks_like_arm_instruction_json(path: str) -> bool:
     lowered = path.casefold()
     if not lowered.endswith(".json"):
         return False
-    return (
-        "instruction" in lowered
-        and "a64" in lowered
-        and "register" not in lowered
-        and "system" not in lowered
-    )
+    basename = lowered.rsplit("/", 1)[-1]
+    if basename == "instructions.json" and "/" not in lowered.strip("/"):
+        return True
+    if "schema" in lowered or "register" in lowered or "system" in lowered:
+        return False
+    return "instruction" in lowered and ("a64" in lowered or basename == "instructions.json")
 
 
 def _arm_instruction_bundle_payload(instructions_json: str) -> str:
@@ -415,7 +422,43 @@ def _read_local_arm_instruction_archive() -> tuple[str, SourceVersion] | None:
     return None
 
 
-def refresh_local_arm_intrinsics_bundle() -> list[Path]:
+def refresh_local_arm_a64_archive(
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> Path:
+    """Download the AARCHMRS BSD archive into ``vendor/arm/`` if not already present.
+
+    The archive is large (~hundreds of MB) and pinned to a specific
+    release via its URL. The cache filename is derived from the URL's
+    basename, so bumping ``ARM_A64_ARCHIVE_URL`` automatically triggers a
+    fresh download without requiring the user to clean ``vendor/arm/``.
+
+    ``on_progress(bytes_downloaded, total_bytes)`` fires on each chunk;
+    ``total_bytes`` is ``None`` if the server omits ``Content-Length``.
+    """
+    target = ARM_A64_ARCHIVE_CACHE
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".part")
+    with httpx.Client(follow_redirects=True, timeout=600.0) as client:
+        with client.stream("GET", ARM_A64_ARCHIVE_URL) as response:
+            response.raise_for_status()
+            total_header = response.headers.get("Content-Length")
+            total = int(total_header) if total_header and total_header.isdigit() else None
+            downloaded = 0
+            with tmp.open("wb") as fh:
+                for chunk in response.iter_bytes(chunk_size=1 << 20):
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress is not None:
+                        on_progress(downloaded, total)
+    tmp.replace(target)
+    return target
+
+
+def refresh_local_arm_intrinsics_bundle(
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[Path]:
     target_dir = LOCAL_ARM_INTRINSICS_JSONS[0].parent
     target_dir.mkdir(parents=True, exist_ok=True)
     downloads = [
@@ -424,12 +467,15 @@ def refresh_local_arm_intrinsics_bundle() -> list[Path]:
         (ARM_INTRINSICS_EXAMPLES_JSON_URL, LOCAL_ARM_EXAMPLES_JSONS[0]),
     ]
     written: list[Path] = []
+    total = len(downloads)
     with httpx.Client(follow_redirects=True, timeout=120.0) as client:
         for url, path in downloads:
             response = client.get(url)
             response.raise_for_status()
             path.write_text(response.text)
             written.append(path)
+            if on_progress is not None:
+                on_progress(len(written), total)
     return written
 
 
@@ -483,6 +529,15 @@ def fetch_arm_a64_data() -> tuple[str, SourceVersion]:
     local = _read_local_text(LOCAL_ARM_A64_JSONS, "arm-a64", "local-json")
     if local is not None:
         return local
+    archive = _read_local_arm_instruction_archive()
+    if archive is not None:
+        return archive
+    try:
+        refresh_local_arm_a64_archive()
+    except Exception as exc:
+        raise SourceUnavailableError(
+            f"Arm A64 instruction data is unreachable: {exc}"
+        ) from exc
     archive = _read_local_arm_instruction_archive()
     if archive is not None:
         return archive

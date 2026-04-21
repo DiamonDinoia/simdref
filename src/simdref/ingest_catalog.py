@@ -1080,65 +1080,22 @@ def _ingest_perf_sources(
     *,
     status: Callable[[str], None],
 ) -> list[SourceVersion]:
-    """Run OSACA + rvv-bench + llvm-mca ingesters and merge rows into *instructions*.
+    """Run the llvm scheduling pipeline and merge rows into *instructions*.
 
-    Failures are logged and swallowed so a flaky upstream doesn't abort
-    the whole catalog build. Returns one :class:`SourceVersion` per
-    ingester that actually produced rows.
+    Any ingester failure propagates so silent breakage (missing LLVM
+    binary, empty exegesis output, scheduler-model mismatch) surfaces at
+    build time instead of producing a silently empty catalog.
     """
     from simdref.perf_sources import (
-        LLVMMcaUnavailable,
         ingest_llvm_mca,
-        ingest_osaca,
-        ingest_rvv_bench,
         merge_perf_rows,
     )
 
     versions: list[SourceVersion] = []
 
-    status("Fetching OSACA measured overlays")
-    try:
-        osaca_rows = ingest_osaca()
-    except Exception as exc:
-        osaca_rows = []
-        status(f"OSACA ingestion skipped: {exc}")
-    if osaca_rows:
-        merge_perf_rows(instructions, osaca_rows)
-        versions.append(SourceVersion(
-            source="osaca", version="pinned-commit",
-            fetched_at=now_iso(), url="https://github.com/RRZE-HPC/OSACA",
-        ))
-
-    status("Fetching rvv-bench measured results")
-    try:
-        rvv_rows = ingest_rvv_bench()
-    except Exception as exc:
-        rvv_rows = []
-        status(f"rvv-bench ingestion skipped: {exc}")
-    if rvv_rows:
-        merge_perf_rows(instructions, rvv_rows)
-        versions.append(SourceVersion(
-            source="rvv-bench", version="pinned-commit",
-            fetched_at=now_iso(),
-            url="https://github.com/camel-cdr/rvv-bench-results",
-        ))
-
-    status("Driving llvm-mca across modeled cores")
-    try:
-        arm_mnemonics = sorted({i.mnemonic for i in instructions if i.architecture == "arm"})
-        riscv_mnemonics = sorted({i.mnemonic for i in instructions if i.architecture == "riscv"})
-        llvm_rows, llvm_version = ingest_llvm_mca({
-            "aarch64": arm_mnemonics,
-            "riscv": riscv_mnemonics,
-        })
-    except LLVMMcaUnavailable as exc:
-        llvm_rows = []
-        llvm_version = ""
-        status(f"llvm-mca modeled rows skipped: {exc}")
-    except Exception as exc:
-        llvm_rows = []
-        llvm_version = ""
-        status(f"llvm-mca ingestion failed: {exc}")
+    status("Driving llvm-exegesis + llvm-mca across modeled cores")
+    llvm_rows, llvm_version = ingest_llvm_mca(instructions)
+    status(f"Collected {len(llvm_rows)} llvm-mca perf rows")
     if llvm_rows:
         merge_perf_rows(instructions, llvm_rows)
         versions.append(SourceVersion(

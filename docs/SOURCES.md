@@ -1,6 +1,6 @@
 # Upstream sources
 
-simdref's catalog is built from nine upstream feeds. This document records
+simdref's catalog is built from eight upstream feeds. This document records
 where each lives, how it's licensed, how often it's refreshed, and what's
 currently missing — measured by `tools/audit_coverage.py` against a local
 catalog build.
@@ -98,41 +98,47 @@ confuse modeled numbers for measurements.
 
 See above. All rows are ``source_kind="measured"``.
 
-### LLVM scheduling models via llvm-mca (ARM + RISC-V, modeled)
+### LLVM scheduling models via llvm-exegesis → llvm-mc → llvm-mca (ARM + RISC-V, modeled)
 
-- **Binary:** ``llvm-mca`` from LLVM 18+.
-- **Driver:** `src/simdref/perf_sources/llvm_mca.py` runs
-  ``llvm-mca --json --mtriple <t> --mcpu <c>`` per ``(triple, cpu)`` and
-  parses per-instruction ``Latency`` + region ``IPC`` into rows with
-  ``source_kind="modeled"``.
-- **Coverage:** ~13 AArch64 cores (Cortex-A72/76/78, Neoverse-N1/N2/V1/V2,
-  Apple M1/M2, A64FX, ThunderX2) and ~7 RISC-V cores (SiFive U74/X280/P400/P600,
-  XiangShan/C908/C910, Spacemit-X60).
+- **Binaries:** ``llvm-exegesis``, ``llvm-mc``, and ``llvm-mca`` from
+  LLVM 18+. All three live in the standard LLVM package.
+- **Driver:** `src/simdref/perf_sources/llvm_scheduling.py` implements
+  a three-stage structured pipeline per canonical core:
+  1. ``llvm-exegesis --benchmark-phase=prepare-and-assemble-snippet``
+     walks LLVM's own target-instruction table and emits a YAML
+     document per schedulable opcode with an ``assembled_snippet`` hex
+     stream (prologue + N × target + epilogue, or with a dependency-
+     breaker interleaved when the opcode consumes its own output).
+  2. The snippet's repeated instruction bytes are recovered by
+     frequency-counting fixed-width chunks at natural ISA alignment —
+     no regex, no asm-template synthesis.
+  3. ``llvm-mc --disassemble`` turns the bytes into canonical
+     assembly; ``llvm-mca --instruction-tables=full --json`` then
+     measures ``Latency`` and ``RThroughput`` per line. The join key is
+     the assembly mnemonic.
+- **Runtime:** ~3 subprocess invocations per core (≈60 total for the
+  13 AArch64 + 6 RISC-V cores) instead of ~55 000 one-snippet
+  invocations; cold-cache end-to-end is well under a minute.
+- **Cache:** intermediate artifacts under
+  ``vendor/perf-cache/<triple>/<cpu>/{exegesis.yaml, disassembly.s,
+  mca.json}``; rerunning on the same host short-circuits.
+- **Coverage:** 13 AArch64 cores (Cortex-A72/76/78, Cortex-X1/X2,
+  Neoverse-N1/N2/V1/V2, Apple M1/M2, A64FX, ThunderX2) and 6 RISC-V
+  cores (SiFive U74/X280/P400/P600, XiangShan C908/C910, Spacemit X60).
 - **License:** Apache-2.0 with LLVM exception.
-- **Build-time requirement:** The ``--build-local`` pipeline aborts with
-  an install hint when ``llvm-mca`` is missing. End users who run
-  ``simdref update`` without ``--build-local`` get the pre-built release
-  catalog and do **not** need ``llvm-mca``.
+- **Build-time requirement:** The ``--build`` pipeline aborts with an
+  install hint when any of the three LLVM binaries is missing. End
+  users who run ``simdref update`` without ``--build`` get the
+  pre-built release catalog and do **not** need LLVM on PATH.
 
-### OSACA YAML (AArch64, measured)
+### RISC-V measured per-instruction perf (not available)
 
-- **Upstream:** <https://github.com/RRZE-HPC/OSACA>, pinned by commit SHA.
-- **Driver:** `src/simdref/perf_sources/osaca.py` fetches the YAML in
-  memory, parses it, and emits perf rows with ``source_kind="measured"``.
-- **License boundary:** OSACA is AGPL-3.0. simdref **never vendors** the
-  YAML or ships it in the wheel. Only our derived perf rows are
-  serialized into the catalog — the AGPL scope stops at the build host.
-- **Coverage:** Cortex-A72, Neoverse-N1, A64FX, ThunderX2.
-
-### rvv-bench-results (RISC-V RVV, measured)
-
-- **Upstream:** <https://github.com/camel-cdr/rvv-bench-results>, pinned
-  by commit SHA.
-- **Driver:** `src/simdref/perf_sources/rvv_bench.py` fetches the results
-  JSON, joins on mnemonic × LMUL, and emits ``source_kind="measured"``
-  rows citing <https://camel-cdr.github.io/rvv-bench-results/>.
-- **Coverage:** C908, C910, Spacemit-X60 as of the pinned commit.
-- **License:** MIT.
+No public upstream publishes per-mnemonic measured RVV latency or
+throughput. `camel-cdr/rvv-bench-results` — the only candidate that
+was evaluated — publishes *kernel-level* benchmarks (memcpy, chacha20,
+mandelbrot, etc.) with cycle counts per kernel variant, not tables per
+RVV mnemonic. RISC-V per-core rows therefore come only from the
+`llvm-mca` modeled pipeline.
 
 ---
 
@@ -153,9 +159,11 @@ See above. All rows are ``source_kind="measured"``.
    move.
 2. `python -m simdref update` downloads the pre-built release catalog —
    no `llvm-mca` required.
-3. `python -m simdref update --build-local` rebuilds from live sources,
-   requires `llvm-mca` on PATH, and runs OSACA/rvv-bench fetchers for
-   measured ARM/RISC-V overlays.
+3. `python -m simdref update --build` rebuilds from live sources and
+   requires `llvm-exegesis`, `llvm-mc`, and `llvm-mca` on PATH. ARM and
+   RISC-V per-core rows come from the three-stage scheduling pipeline
+   (see **LLVM scheduling models** above); no regex-based asm synthesis
+   is involved.
 4. `python tools/audit_coverage.py fetch` re-runs extraction, compares
    against the freshly-built catalog, and rewrites
    `docs/coverage/summary.json`.
