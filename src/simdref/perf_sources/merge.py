@@ -42,6 +42,12 @@ class PerfRow:
             entry["latencies"] = [{"cycles": self.latency}]
         measurement: dict[str, str] = dict(self.extra_measurement)
         if self.cpi:
+            # ``TP_loop`` is the column the TUI and CLI measurement tables
+            # already render under the "CPI" header, so modeled rows must
+            # land there to surface at all. ``TP`` is retained as a
+            # duplicate for any downstream consumer that still reads the
+            # legacy key.
+            measurement.setdefault("TP_loop", self.cpi)
             measurement.setdefault("TP", self.cpi)
         if measurement:
             entry["measurement"] = measurement

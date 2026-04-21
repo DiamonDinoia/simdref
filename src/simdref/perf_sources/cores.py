@@ -1,7 +1,7 @@
 """Canonical core-id table.
 
 Upstream sources disagree about core naming: LLVM uses ``neoverse-n1``,
-OSACA uses ``N1``, rvv-bench labels its rows ``c908``/``c910``. This module
+rvv-bench labels its rows ``c908``/``c910``. This module
 maps every upstream alias to a single canonical id used inside
 ``InstructionRecord.arch_details`` so lookups and filters are deterministic.
 """
@@ -22,8 +22,8 @@ class CoreSpec:
     aliases: frozenset[str]
 
 
-# AArch64 cores covered by LLVM scheduling models + OSACA YAML overlays where
-# available. Aliases include the exact strings emitted by the upstream sources.
+# AArch64 cores covered by LLVM scheduling models. Aliases include the
+# exact strings emitted by the upstream sources.
 AARCH64_CORES: tuple[CoreSpec, ...] = (
     CoreSpec("cortex-a72", "aarch64", "aarch64-unknown-linux-gnu", "cortex-a72",
              frozenset({"cortex-a72", "A72"})),
@@ -45,9 +45,12 @@ AARCH64_CORES: tuple[CoreSpec, ...] = (
              frozenset({"neoverse-v2", "V2", "Neoverse-V2"})),
     CoreSpec("a64fx", "aarch64", "aarch64-unknown-linux-gnu", "a64fx",
              frozenset({"a64fx", "A64FX"})),
-    CoreSpec("apple-m1", "aarch64", "arm64-apple-darwin", "apple-m1",
+    # Apple cores reuse the Linux AArch64 triple so llvm-exegesis can
+    # assemble on a non-Darwin host. The scheduling data we consume is
+    # keyed off --mcpu, not --mtriple, so the numbers are identical.
+    CoreSpec("apple-m1", "aarch64", "aarch64-unknown-linux-gnu", "apple-m1",
              frozenset({"apple-m1", "M1"})),
-    CoreSpec("apple-m2", "aarch64", "arm64-apple-darwin", "apple-m2",
+    CoreSpec("apple-m2", "aarch64", "aarch64-unknown-linux-gnu", "apple-m2",
              frozenset({"apple-m2", "M2"})),
     CoreSpec("thunderx2t99", "aarch64", "aarch64-unknown-linux-gnu", "thunderx2t99",
              frozenset({"thunderx2t99", "ThunderX2"})),
@@ -59,10 +62,14 @@ RISCV_CORES: tuple[CoreSpec, ...] = (
              frozenset({"sifive-u74", "U74"})),
     CoreSpec("sifive-x280", "riscv", "riscv64-unknown-linux-gnu", "sifive-x280",
              frozenset({"sifive-x280", "X280"})),
-    CoreSpec("sifive-p400", "riscv", "riscv64-unknown-linux-gnu", "sifive-p400",
-             frozenset({"sifive-p400", "P400"})),
-    CoreSpec("sifive-p600", "riscv", "riscv64-unknown-linux-gnu", "sifive-p600",
-             frozenset({"sifive-p600", "P600"})),
+    # LLVM 22 exposes the sifive-p400 and sifive-p600 *families* under the
+    # specific part names p450 and p670 (the default LLVM CPU names for
+    # those families). The canonical id is kept generic so catalog
+    # consumers can filter by family rather than part.
+    CoreSpec("sifive-p400", "riscv", "riscv64-unknown-linux-gnu", "sifive-p450",
+             frozenset({"sifive-p400", "sifive-p450", "P400", "P450"})),
+    CoreSpec("sifive-p600", "riscv", "riscv64-unknown-linux-gnu", "sifive-p670",
+             frozenset({"sifive-p600", "sifive-p670", "P600", "P670"})),
     CoreSpec("c908", "riscv", "riscv64-unknown-linux-gnu", "xiangshan-nanhu",
              frozenset({"c908", "C908"})),
     CoreSpec("c910", "riscv", "riscv64-unknown-linux-gnu", "xiangshan-nanhu",

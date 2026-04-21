@@ -1,12 +1,11 @@
-"""Tests for the new perf_sources ingesters + canonical core table.
-
-All network interactions are stubbed via injected ``fetch`` callables so
-the tests stay deterministic and run offline.
-"""
+"""Tests for the perf_sources ingesters + canonical core table."""
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from simdref.models import InstructionRecord
 from simdref.perf_sources import (
@@ -14,14 +13,20 @@ from simdref.perf_sources import (
     PerfRow,
     canonical_core_id,
     core_architecture,
-    ingest_osaca,
-    ingest_rvv_bench,
     merge_perf_rows,
     parse_llvm_mca_json,
-    parse_osaca_yaml,
-    parse_rvv_bench_json,
 )
 from simdref.perf_sources.cores import CoreSpec
+from simdref.perf_sources.llvm_mca import LLVMMcaError
+from simdref.perf_sources.llvm_scheduling import (
+    LLVMSchedulingError,
+    _build_perf_rows,
+    _extract_repeated_chunks,
+    _filter_disassembly,
+    _parse_exegesis_yaml,
+    build_byte_lines,
+    collect_core_schedule,
+)
 
 
 class CoresTests(unittest.TestCase):
@@ -73,7 +78,7 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(entry["source"], "llvm-mca")
         self.assertEqual(entry["source_kind"], "modeled")
         self.assertEqual(entry["latencies"], [{"cycles": "4"}])
-        self.assertEqual(entry["measurement"], {"TP": "0.5"})
+        self.assertEqual(entry["measurement"], {"TP": "0.5", "TP_loop": "0.5"})
         self.assertEqual(entry["citation_url"], "https://example/cite")
 
     def test_does_not_overwrite_existing_by_default(self):
@@ -94,8 +99,8 @@ class MergeTests(unittest.TestCase):
         record = self._record("arm", "FMLA")
         record.arch_details["neoverse-n1"] = {"source_kind": "modeled"}
         row = PerfRow(
-            mnemonic="FMLA", core="neoverse-n1", source="osaca",
-            source_kind="measured", source_version="osaca@abc",
+            mnemonic="FMLA", core="neoverse-n1", source="llvm-mca",
+            source_kind="measured", source_version="llvm-mca@abc",
             architecture="arm", latency="3",
         )
         merge_perf_rows([record], [row], overwrite=True)
@@ -105,8 +110,8 @@ class MergeTests(unittest.TestCase):
         a = self._record("arm", "FMLA", form="FMLA V0.4S, V1.4S, V2.4S")
         b = self._record("arm", "FMLA", form="FMLA V0.2D, V1.2D, V2.2D")
         row = PerfRow(
-            mnemonic="FMLA", core="neoverse-n1", source="osaca",
-            source_kind="measured", source_version="osaca@abc",
+            mnemonic="FMLA", core="neoverse-n1", source="llvm-mca",
+            source_kind="measured", source_version="llvm-mca@abc",
             architecture="arm",
             form="FMLA V0.4S, V1.4S, V2.4S",
             latency="4",
@@ -159,89 +164,343 @@ class LLVMMcaParseTests(unittest.TestCase):
         )
 
 
-class OSACAParseTests(unittest.TestCase):
-    SAMPLE = """\
-- name: FMLA
-  latency: 4
-  throughput: 0.5
-  operands: V0.4S, V1.4S, V2.4S
-- name: FADD
-  latency: 3
-  throughput: 1
-"""
+class LLVMSchedulingTests(unittest.TestCase):
+    """Tests the structured exegesis → mc → mca pipeline."""
 
-    def test_parse_yaml_subset(self):
-        entries = parse_osaca_yaml(self.SAMPLE)
-        self.assertEqual(len(entries), 2)
-        self.assertEqual(entries[0].mnemonic, "FMLA")
-        self.assertEqual(entries[0].latency, "4")
-        self.assertEqual(entries[0].cpi, "0.5")
-        self.assertEqual(entries[0].operands, "V0.4S, V1.4S, V2.4S")
-        self.assertEqual(entries[1].mnemonic, "FADD")
-        self.assertEqual(entries[1].operands, "")
+    def _core(self, canonical: str = "neoverse-n1") -> CoreSpec:
+        return next(c for c in CANONICAL_CORES if c.canonical_id == canonical)
 
-    def test_ingest_uses_injected_fetch(self):
-        captured: list[str] = []
+    def test_parse_exegesis_yaml_extracts_opcode_and_snippet(self):
+        yaml_text = (
+            "---\n"
+            "key:\n"
+            "  instructions:\n"
+            "    - 'FADDv4f32 Q0 Q1 Q2'\n"
+            "assembled_snippet: AABBCCDDDEADBEEFDEADBEEFDEADBEEFDEADBEEFCAFEBABE\n"
+            "...\n"
+        )
+        entries = _parse_exegesis_yaml(yaml_text)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["opcode"], "FADDv4f32")
+        self.assertIn("DEADBEEF", entries[0]["snippet"])
 
-        def fake_fetch(url: str) -> str:
-            captured.append(url)
-            return self.SAMPLE
+    def test_build_byte_lines_extracts_opcode_from_entries(self):
+        entries = [
+            {
+                "opcode": "FADDv4f32",
+                "snippet": "AABBCCDD" + "DEADBEEF" * 4 + "CAFEBABE",
+            }
+        ]
+        lines = build_byte_lines(entries, "aarch64")
+        self.assertEqual(lines, ["0xDE 0xAD 0xBE 0xEF"])
 
-        rows = ingest_osaca(fetch=fake_fetch)
-        self.assertTrue(captured)
-        self.assertTrue(rows)
-        self.assertTrue(all(r.source_kind == "measured" for r in rows))
-        self.assertTrue(all(r.source == "osaca" for r in rows))
+    def test_extract_repeated_chunks_consecutive(self):
+        snippet = "AABBCCDD" + "DEADBEEF" * 4 + "CAFEBABE"
+        chunks = {c.hex().upper() for c in _extract_repeated_chunks(snippet, "aarch64")}
+        self.assertIn("DEADBEEF", chunks)
 
-    def test_ingest_fetch_failure_yields_no_rows(self):
-        def broken(url: str) -> str:
-            raise RuntimeError("network down")
+    def test_extract_repeated_chunks_alternating_dep_breaker(self):
+        # Prologue + (target, breaker) × 4 + epilogue. Neither pattern
+        # repeats *consecutively* but both repeat by total count.
+        snippet = (
+            "EA0F1FFC05008052"
+            + ("AA0C014E" + "4C2D010E") * 4
+            + "EA0741FCC0035FD6"
+        )
+        chunks = {c.hex().upper() for c in _extract_repeated_chunks(snippet, "aarch64")}
+        self.assertIn("AA0C014E", chunks)  # dup v10.16b, w5 (target)
+        self.assertIn("4C2D010E", chunks)  # smov w12, v10.b[0] (breaker)
 
-        rows = ingest_osaca(fetch=broken)
-        self.assertEqual(rows, [])
+    def test_extract_repeated_chunks_riscv(self):
+        snippet = "57730018" + "D79B734F" * 4 + "8280"
+        chunks = {c.hex().upper() for c in _extract_repeated_chunks(snippet, "riscv")}
+        self.assertIn("D79B734F", chunks)
 
+    def test_extract_repeated_chunks_empty_when_nothing_repeats(self):
+        self.assertEqual(_extract_repeated_chunks("AABBCCDD", "aarch64"), [])
 
-class RVVBenchParseTests(unittest.TestCase):
-    PAYLOAD = {
-        "cores": {
-            "c908": {
-                "vfadd.vv": {"m1": 4.0, "m2": 8.0},
-                "vmul.vv": {"m1": 5},
-            },
-            "unknown-cpu": {"vfadd.vv": {"m1": 99}},
+    def test_filter_disassembly_drops_directives_and_comments(self):
+        raw = "\t.text\n\tfadd\tv0.4s, v1.4s, v2.4s\n\t# comment\n\tadd\tx0, x1, x2\n"
+        filtered = _filter_disassembly(raw)
+        self.assertIn("fadd", filtered)
+        self.assertIn("add", filtered)
+        self.assertNotIn(".text", filtered)
+        self.assertNotIn("# comment", filtered)
+
+    def test_build_perf_rows_joins_asm_and_info(self):
+        payload = {
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {"Latency": 2, "RThroughput": 0.5},
+                            {"Latency": 1, "RThroughput": 0.333},
+                            {"Latency": 4, "RThroughput": 0.5},
+                        ]
+                    },
+                }
+            ]
         }
-    }
+        asm_lines = [
+            "\tfadd\tv0.4s, v1.4s, v2.4s",
+            "\tadd\tx0, x1, x2",
+            "\tfmla\tv0.4s, v1.4s, v2.4s",
+        ]
+        rows = _build_perf_rows(
+            payload, asm_lines, core=self._core(), mca_version="22.1.3"
+        )
+        self.assertEqual(len(rows), 3)
+        mnemonics = {row.mnemonic for row in rows}
+        self.assertEqual(mnemonics, {"FADD", "ADD", "FMLA"})
+        fadd = next(r for r in rows if r.mnemonic == "FADD")
+        self.assertEqual(fadd.latency, "2")
+        self.assertEqual(fadd.cpi, "0.5")
+        self.assertEqual(fadd.core, "neoverse-n1")
+        self.assertEqual(fadd.source_kind, "modeled")
+        self.assertEqual(fadd.architecture, "arm")
 
-    def test_parse_produces_measured_rows(self):
-        import json as _json
+    def test_build_perf_rows_populates_uops_ports_and_kind(self):
+        payload = {
+            "TargetInfo": {
+                "Resources": [
+                    "N1UnitV0",
+                    "N1UnitV1",
+                    "N1UnitV01",
+                    "N1UnitL01",
+                ]
+            },
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {
+                                "Latency": 3,
+                                "RThroughput": 0.5,
+                                "NumMicroOpcodes": 1,
+                                "mayLoad": False,
+                                "mayStore": False,
+                            },
+                            {
+                                "Latency": 4,
+                                "RThroughput": 1.0,
+                                "NumMicroOpcodes": 2,
+                                "mayLoad": True,
+                                "mayStore": False,
+                            },
+                        ]
+                    },
+                    "ResourcePressureView": {
+                        "ResourcePressureInfo": [
+                            {"InstructionIndex": 0, "ResourceIndex": 0, "ResourceUsage": 0.5},
+                            {"InstructionIndex": 0, "ResourceIndex": 1, "ResourceUsage": 0.5},
+                            {"InstructionIndex": 0, "ResourceIndex": 2, "ResourceUsage": 0.0},
+                            {"InstructionIndex": 1, "ResourceIndex": 3, "ResourceUsage": 1.0},
+                        ]
+                    },
+                }
+            ]
+        }
+        asm_lines = [
+            "\tfadd\tv0.4s, v1.4s, v2.4s",
+            "\tldr\tq0, [x1]",
+        ]
+        rows = _build_perf_rows(
+            payload, asm_lines, core=self._core(), mca_version="22.1.3"
+        )
+        self.assertEqual(len(rows), 2)
+        fadd = next(r for r in rows if r.mnemonic == "FADD")
+        self.assertEqual(fadd.extra_measurement["uops"], "1")
+        self.assertEqual(fadd.extra_measurement["ports"], "0.50*V0 0.50*V1")
+        self.assertNotIn("kind", fadd.extra_measurement)
+        ldr = next(r for r in rows if r.mnemonic == "LDR")
+        self.assertEqual(ldr.extra_measurement["uops"], "2")
+        self.assertEqual(ldr.extra_measurement["ports"], "1.00*L01")
+        self.assertEqual(ldr.extra_measurement["kind"], "load")
 
-        rows = parse_rvv_bench_json(_json.dumps(self.PAYLOAD))
-        canonical_c908 = canonical_core_id("c908")
-        self.assertIsNotNone(canonical_c908)
-        cores = {r.core for r in rows}
-        self.assertEqual(cores, {canonical_c908})
-        mnemonics = {r.mnemonic for r in rows}
-        self.assertEqual(mnemonics, {"vfadd.vv", "vmul.vv"})
-        for row in rows:
-            self.assertEqual(row.source_kind, "measured")
-            self.assertEqual(row.source, "rvv-bench")
-            self.assertEqual(row.architecture, "riscv")
-            self.assertEqual(row.applies_to, "mnemonic+lmul")
+    def test_build_perf_rows_risc_v_passes_through_resource_names(self):
+        payload = {
+            "TargetInfo": {"Resources": ["SiFive7ALU"]},
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {"Latency": 1, "RThroughput": 1.0, "NumMicroOpcodes": 1},
+                        ]
+                    },
+                    "ResourcePressureView": {
+                        "ResourcePressureInfo": [
+                            {"InstructionIndex": 0, "ResourceIndex": 0, "ResourceUsage": 1.0},
+                        ]
+                    },
+                }
+            ]
+        }
+        rows = _build_perf_rows(
+            payload,
+            ["\tadd\tx1, x1, x2"],
+            core=self._core(),
+            mca_version="22",
+        )
+        self.assertEqual(rows[0].extra_measurement["ports"], "1.00*SiFive7ALU")
 
-    def test_ingest_uses_injected_fetch(self):
-        import json as _json
+    def test_build_perf_rows_normalises_sub_unit_resource_names(self):
+        # llvm-mca encodes sub-units of a replicated resource with
+        # non-printable suffix bytes (``N1UnitD.\x00``); these must
+        # become ``D0`` / ``D1`` so the port column stays readable.
+        payload = {
+            "TargetInfo": {
+                "Resources": [
+                    "N1UnitD.\x00",
+                    "N1UnitD.\x01",
+                ]
+            },
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {"Latency": 1, "RThroughput": 1.0, "NumMicroOpcodes": 2},
+                        ]
+                    },
+                    "ResourcePressureView": {
+                        "ResourcePressureInfo": [
+                            {"InstructionIndex": 0, "ResourceIndex": 0, "ResourceUsage": 1.0},
+                            {"InstructionIndex": 0, "ResourceIndex": 1, "ResourceUsage": 1.0},
+                        ]
+                    },
+                }
+            ]
+        }
+        rows = _build_perf_rows(
+            payload,
+            ["\tadd\tx1, x1, x2"],
+            core=self._core(),
+            mca_version="22",
+        )
+        self.assertEqual(rows[0].extra_measurement["ports"], "1.00*D0 1.00*D1")
 
-        def fake_fetch(url: str) -> str:
-            return _json.dumps(self.PAYLOAD)
+    def test_build_perf_rows_writes_tp_loop_into_arch_details(self):
+        payload = {
+            "TargetInfo": {"Resources": ["N1UnitV0"]},
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {"Latency": 2, "RThroughput": 0.5, "NumMicroOpcodes": 1},
+                        ]
+                    },
+                    "ResourcePressureView": {
+                        "ResourcePressureInfo": [
+                            {"InstructionIndex": 0, "ResourceIndex": 0, "ResourceUsage": 0.5},
+                        ]
+                    },
+                }
+            ]
+        }
+        rows = _build_perf_rows(
+            payload,
+            ["\tfadd\tv0.4s, v1.4s, v2.4s"],
+            core=self._core(),
+            mca_version="22",
+        )
+        entry = rows[0].as_arch_details_entry()
+        # CPI must land under ``TP_loop`` (the key the measurement table
+        # renders as the "CPI" column); ``TP`` stays as a compatibility
+        # duplicate for older consumers.
+        self.assertEqual(entry["measurement"]["TP_loop"], "0.5")
+        self.assertEqual(entry["measurement"]["TP"], "0.5")
+        self.assertEqual(entry["measurement"]["uops"], "1")
+        self.assertEqual(entry["measurement"]["ports"], "0.50*V0")
+        self.assertEqual(entry["source_kind"], "modeled")
 
-        rows = ingest_rvv_bench(fetch=fake_fetch)
-        self.assertTrue(rows)
+    def test_build_perf_rows_dedupes_by_mnemonic(self):
+        payload = {
+            "CodeRegions": [
+                {
+                    "InstructionInfoView": {
+                        "InstructionList": [
+                            {"Latency": 2, "RThroughput": 0.5},
+                            {"Latency": 3, "RThroughput": 0.5},
+                        ]
+                    }
+                }
+            ]
+        }
+        asm_lines = [
+            "\tfadd\tv0.4s, v1.4s, v2.4s",
+            "\tfadd\tv0.2d, v1.2d, v2.2d",
+        ]
+        rows = _build_perf_rows(
+            payload, asm_lines, core=self._core(), mca_version="v"
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].mnemonic, "FADD")
 
-    def test_ingest_network_failure_returns_empty(self):
-        def broken(url: str) -> str:
-            raise RuntimeError("offline")
+    def test_collect_core_schedule_uses_cache_when_present(self):
+        core = self._core()
+        import tempfile
 
-        self.assertEqual(ingest_rvv_bench(fetch=broken), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp)
+            cache_dir = cache_root / core.llvm_triple / core.llvm_cpu
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "exegesis.yaml").write_text(
+                "---\n"
+                "key:\n"
+                "  instructions:\n"
+                "    - 'FADDv4f32 Q0 Q1 Q2'\n"
+                "assembled_snippet: "
+                + "AABBCCDD" + "DEADBEEF" * 4 + "CAFEBABE\n"
+                + "...\n"
+            )
+            (cache_dir / "disassembly.s").write_text(
+                "\tfadd\tv0.4s, v1.4s, v2.4s\n"
+            )
+            # payload below — the mca.json cache file
+            (cache_dir / "mca.json").write_text(
+                json.dumps(
+                    {
+                        "CodeRegions": [
+                            {
+                                "Instructions": [
+                                    "\tfadd\tv0.4s, v1.4s, v2.4s"
+                                ],
+                                "InstructionInfoView": {
+                                    "InstructionList": [
+                                        {"Latency": 3, "RThroughput": 0.5}
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+            # All three cache files exist, so no subprocess should run.
+            with mock.patch(
+                "subprocess.run", side_effect=AssertionError("no subprocess expected")
+            ):
+                rows = collect_core_schedule(
+                    core, cache_root=cache_root, mca_version="22.1.3"
+                )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].mnemonic, "FADD")
+        self.assertEqual(rows[0].latency, "3")
+
+    def test_collect_core_schedule_raises_on_empty_exegesis(self):
+        core = self._core()
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp)
+            cache_dir = cache_root / core.llvm_triple / core.llvm_cpu
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "exegesis.yaml").write_text("# empty file\n")
+            with self.assertRaises(LLVMSchedulingError):
+                collect_core_schedule(
+                    core, cache_root=cache_root, mca_version="22.1.3"
+                )
+
+    def test_llvm_mca_error_type_exists(self):
+        self.assertTrue(issubclass(LLVMMcaError, RuntimeError))
 
 
 if __name__ == "__main__":
