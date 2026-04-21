@@ -68,6 +68,16 @@ jobs:
 
       - run: uv pip install -e .
 
+      - name: Vendor RISC-V sources
+        # Upstream doesn't publish machine-readable JSON for either the
+        # unified-db instruction tables or the RVV intrinsic doc. Clone
+        # both repos and run the project's vendor script to build the
+        # JSON bundles under vendor/riscv/ that the ingester expects.
+        run: |
+          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
+          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
+          python tools/vendor_riscv_sources.py
+
       - name: Compute data release tags
         id: meta
         run: |
