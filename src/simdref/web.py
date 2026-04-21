@@ -68,6 +68,7 @@ def _web_measurements(item) -> list[dict]:
             "tpUnrolled": measurement.get("TP_unrolled", "-"),
             "tpPorts": measurement.get("TP_ports", "-"),
             "uops": measurement.get("uops", "-"),
+            "sourceKind": details.get("source_kind") or "measured",
         })
     return rows
 

@@ -64,6 +64,22 @@ let enabledCategories = null;
 /* Kind (intrinsic vs instruction/asm) filter — both enabled by default. */
 const enabledKinds = new Set(["intrinsic", "instruction"]);
 
+/* Perf source-kind filter — toggle modeled vs measured perf tables.
+   Persisted to localStorage like the theme so the choice survives reloads. */
+const _storedPerfKinds = (() => {
+  try {
+    const raw = localStorage.getItem("simdref-perf-kinds");
+    if (raw) return new Set(JSON.parse(raw));
+  } catch (_) { /* ignore */ }
+  return new Set(["measured", "modeled"]);
+})();
+const enabledPerfKinds = _storedPerfKinds;
+function persistPerfKinds() {
+  try {
+    localStorage.setItem("simdref-perf-kinds", JSON.stringify([...enabledPerfKinds]));
+  } catch (_) { /* ignore */ }
+}
+
 let FAMILY_SUB_ORDER = {};
 let DEFAULT_SUBS = {};
 let isaFamilyOrder = {};
@@ -581,12 +597,46 @@ const measHeaders = [
   {key: "ports", label: "ports"},
 ];
 
+function splitMeasurements(measurements) {
+  /* Bucket rows by sourceKind in a stable order (measured first).
+     Mirrors split_perf_rows in src/simdref/display.py. */
+  const buckets = new Map();
+  for (const row of measurements) {
+    const kind = row.sourceKind || "measured";
+    if (!buckets.has(kind)) buckets.set(kind, []);
+    buckets.get(kind).push(row);
+  }
+  const order = ["measured", "modeled"];
+  const out = [];
+  for (const kind of order) {
+    if (buckets.has(kind)) out.push([kind, buckets.get(kind)]);
+  }
+  for (const [kind, rows] of buckets) {
+    if (!order.includes(kind)) out.push([kind, rows]);
+  }
+  return out;
+}
+
+const perfKindLabels = {measured: "perf (measured)", modeled: "perf (modeled)"};
+const perfKindBorders = {measured: "var(--accent-green, #2ea043)", modeled: "var(--accent-yellow, #bf8700)"};
+
 function renderMeasurements(measurements) {
   if (!measurements || !measurements.length) return `<div style="color:var(--text-muted);font-size:0.82rem">No performance data.</div>`;
-  const groups = groupMeasurements(measurements);
+  const splits = splitMeasurements(measurements).filter(([kind]) => enabledPerfKinds.has(kind));
+  if (!splits.length) return `<div style="color:var(--text-muted);font-size:0.82rem">All perf sources disabled.</div>`;
   let html = "";
-  for (const [family, rows] of groups) {
-    html += `<details class="meas-group" open><summary>${esc(family)} (${rows.length})</summary>${renderTable(measHeaders, rows)}</details>`;
+  for (const [kind, rows] of splits) {
+    const label = perfKindLabels[kind] || `perf (${kind})`;
+    const color = perfKindBorders[kind] || "var(--accent-green, #2ea043)";
+    const groups = groupMeasurements(rows);
+    let inner = "";
+    for (const [family, frows] of groups) {
+      inner += `<details class="meas-group" open><summary>${esc(family)} (${frows.length})</summary>${renderTable(measHeaders, frows)}</details>`;
+    }
+    html += `<section class="perf-panel" style="border-left:3px solid ${color};padding-left:0.6rem;margin-bottom:0.8rem">
+      <h4 style="margin:0 0 0.3rem 0;color:${color};font-size:0.85rem">${esc(label)} (${rows.length})</h4>
+      ${inner}
+    </section>`;
   }
   return html;
 }
@@ -1321,6 +1371,20 @@ for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
     cb.parentElement.classList.toggle("active", cb.checked);
     visibleSet = null;
     scheduleFilterRender();
+  });
+}
+
+/* Perf-kind filter — measured vs modeled perf tables (persisted). */
+for (const cb of document.querySelectorAll('#kind-bar input[data-perf-kind]')) {
+  cb.checked = enabledPerfKinds.has(cb.dataset.perfKind);
+  cb.parentElement.classList.toggle("active", cb.checked);
+  cb.addEventListener("change", () => {
+    const kind = cb.dataset.perfKind;
+    if (cb.checked) enabledPerfKinds.add(kind); else enabledPerfKinds.delete(kind);
+    cb.parentElement.classList.toggle("active", cb.checked);
+    persistPerfKinds();
+    const selected = resultPool.find(e => e.key === activeKey);
+    if (selected) renderDetail(selected);
   });
 }
 
