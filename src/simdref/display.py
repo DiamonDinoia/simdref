@@ -776,7 +776,7 @@ _DESCRIPTION_ORDER = [
 ]
 
 # Sections that are always shown expanded.
-_EXPANDED_SECTIONS = {"Description", "Flags Affected"}
+_EXPANDED_SECTIONS = {"Description", "Flags Affected", "Operation"}
 
 # Syntax language per code section.
 _CODE_SECTION_LANG = {

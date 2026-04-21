@@ -87,6 +87,7 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
 from simdref.display import (
     _CODE_SECTION_LANG,
     _DESCRIPTION_ORDER,
+    _EXPANDED_SECTIONS,
     _MEASUREMENT_EXCLUDE_KEYS,
     _MEASUREMENT_PREFERRED_ORDER,
     DEFAULT_ENABLED_ISAS,
@@ -1224,8 +1225,9 @@ class SimdrefApp(App):
             content = Static(Syntax(body, lang, theme="monokai", word_wrap=True))
         else:
             content = Static(body)
+        expanded = title in _EXPANDED_SECTIONS or self._all_expanded
         container.mount(
-            Collapsible(content, title=title, collapsed=not self._all_expanded)
+            Collapsible(content, title=title, collapsed=not expanded)
         )
 
     # ------------------------------------------------------------------
