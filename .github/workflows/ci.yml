@@ -81,12 +81,9 @@ jobs:
 
       - name: Install LLVM toolchain (for --build matrix)
         if: matrix.label == 'local-sdm'
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh
-          installed=$(ls -d /usr/lib/llvm-* | sort -V | tail -1)
-          echo "$installed/bin" >> "$GITHUB_PATH"
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "22"
 
       - name: Install package
         run: uv pip install -e .

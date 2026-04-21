@@ -45,16 +45,9 @@ jobs:
       - name: Install LLVM toolchain
         # Ubuntu 24.04 only ships llvm-18; the scheduling pipeline needs
         # ``llvm-mca --instruction-tables=full`` which landed in LLVM 19.
-        # Use apt.llvm.org to get the current stable (LLVM 20 at time of
-        # writing).
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh
-          # Determine the version that was installed and point the
-          # unversioned binaries at it.
-          installed=$(ls -d /usr/lib/llvm-* | sort -V | tail -1)
-          echo "$installed/bin" >> "$GITHUB_PATH"
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "22"
 
       - name: Verify LLVM binaries
         run: |
