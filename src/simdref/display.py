@@ -548,8 +548,52 @@ _GENERIC_TABLE_LABEL_MAP = {
     "TP_ports": "CPI ports",
     "TP": "CPI",
     "TP_no_interiteration": "cycle/instr (no interiteration)",
-    "source": "source",
+    "kind": "op",
 }
+
+
+_PERF_PANEL_ORDER = ("measured", "modeled")
+_PERF_PANEL_TITLES = {
+    "measured": "perf (measured)",
+    "modeled": "perf (modeled)",
+}
+_PERF_PANEL_BORDER = {
+    "measured": "green",
+    "modeled": "yellow",
+}
+
+
+def split_perf_rows(rows: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Group measurement rows by ``source`` kind in a stable order.
+
+    Returns ``[(kind, rows), ...]`` with measured first, then modeled, so
+    callers can render one panel per kind without re-sorting. Rows
+    missing a ``source`` field fall under ``"measured"`` for back-compat
+    with older arch_details entries.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for row in rows:
+        kind = row.get("source") or "measured"
+        buckets.setdefault(kind, []).append(row)
+    ordered = [(k, buckets[k]) for k in _PERF_PANEL_ORDER if k in buckets]
+    # Any unexpected kinds (e.g. a new source kind) appear after the
+    # known ones, sorted for determinism.
+    for kind in sorted(buckets):
+        if kind not in _PERF_PANEL_ORDER:
+            ordered.append((kind, buckets[kind]))
+    return ordered
+
+
+def perf_panel_title(kind: str) -> str:
+    """Human-readable panel title for a given source kind."""
+    return _PERF_PANEL_TITLES.get(kind, f"perf ({kind})")
+
+
+def perf_panel_border(kind: str) -> str:
+    """Rich border style that distinguishes measured from modeled panels."""
+    return _PERF_PANEL_BORDER.get(kind, "green")
+
+
 
 
 def print_generic_table(
@@ -587,9 +631,30 @@ def print_generic_table(
         rendered = []
         for column in columns:
             value = row.get(column, "-")
-            rendered.append(display_uarch(str(value), mode=uarch_mode) if column == "uarch" else str(value))
+            if column == "uarch":
+                rendered.append(display_uarch(str(value), mode=uarch_mode))
+            else:
+                rendered.append(str(value))
         table.add_row(*rendered)
     console.print(Panel(table, title=title, border_style=border_style))
+
+
+def print_perf_tables(rows: list[dict]) -> None:
+    """Render one Rich panel per source kind (measured vs modeled).
+
+    Splits *rows* on the ``source`` column and prints each group as its
+    own table with a distinct title and border — no ``source`` column
+    inside the table itself, since the panel header already names it.
+    """
+    for kind, group in split_perf_rows(rows):
+        print_generic_table(
+            group,
+            perf_panel_title(kind),
+            preferred_order=_MEASUREMENT_PREFERRED_ORDER,
+            border_style=perf_panel_border(kind),
+            exclude_keys=_MEASUREMENT_EXCLUDE_KEYS,
+            include_extras=False,
+        )
 
 
 def print_operand_block(item) -> None:
@@ -658,8 +723,12 @@ def print_intrinsic_mapping(catalog, item, conn=None, find_intrinsic_fn=None) ->
     console.print(table)
 
 
-_MEASUREMENT_PREFERRED_ORDER = ["uarch", "latency", "TP_loop", "TP_ports", "uops", "ports"]
-_MEASUREMENT_EXCLUDE_KEYS = {"uops_retire_slots", "uops_MITE", "uops_MS", "macro_fusible"}
+_MEASUREMENT_PREFERRED_ORDER = [
+    "uarch", "latency", "TP_loop", "TP_ports", "uops", "ports", "kind",
+]
+_MEASUREMENT_EXCLUDE_KEYS = {
+    "uops_retire_slots", "uops_MITE", "uops_MS", "macro_fusible", "source",
+}
 
 
 def print_instruction_metadata(item) -> None:
@@ -795,14 +864,7 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
         print_instruction_mapping(catalog, item, conn=conn)
         console.print(Rule(f"instruction details: {display_instruction_title(primary)}", style="magenta"))
         print_operand_block(primary)
-        print_generic_table(
-            measurement_rows(primary),
-            "measurements",
-            preferred_order=_MEASUREMENT_PREFERRED_ORDER,
-            border_style="green",
-            exclude_keys=_MEASUREMENT_EXCLUDE_KEYS,
-            include_extras=False,
-        )
+        print_perf_tables(measurement_rows(primary))
 
 
 def render_instruction_sections(catalog, item, include_title: bool = True, conn=None, short: bool = False, full: bool = False) -> None:
@@ -823,14 +885,7 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
     console.print(Rule("instruction to intrinsic mapping", style="cyan"))
     print_intrinsic_mapping(catalog, item, conn=conn)
     print_operand_block(item)
-    print_generic_table(
-        measurement_rows(item),
-        "measurements",
-        preferred_order=_MEASUREMENT_PREFERRED_ORDER,
-        border_style="green",
-        exclude_keys=_MEASUREMENT_EXCLUDE_KEYS,
-        include_extras=False,
-    )
+    print_perf_tables(measurement_rows(item))
 
 
 def render_instruction(catalog, item, conn=None, short: bool = False, full: bool = False) -> None:

@@ -16,9 +16,12 @@ from simdref.display import (
     instruction_variant_items,
     isa_sort_key,
     isa_visible,
+    measurement_rows,
     normalize_instruction_query,
     natural_query_sort_key,
+    perf_panel_title,
     render_instruction,
+    split_perf_rows,
     uarch_sort_key,
 )
 
@@ -195,6 +198,117 @@ class DisplayMiscTests(unittest.TestCase):
         self.assertIn("SIMD Floating-Point Exceptions", output)
         self.assertIn("instruction to intrinsic mapping", output)
         self.assertIn("Mask-zero expand load.", output)
+
+
+class PerfPanelTests(unittest.TestCase):
+    def test_perf_panel_title_named_kinds(self):
+        self.assertEqual(perf_panel_title("measured"), "perf (measured)")
+        self.assertEqual(perf_panel_title("modeled"), "perf (modeled)")
+
+    def test_split_perf_rows_orders_measured_before_modeled(self):
+        rows = [
+            {"uarch": "neoverse-n1", "source": "modeled"},
+            {"uarch": "SKL", "source": "measured"},
+            {"uarch": "apple-m1", "source": "modeled"},
+        ]
+        groups = split_perf_rows(rows)
+        self.assertEqual([kind for kind, _ in groups], ["measured", "modeled"])
+        self.assertEqual(len(groups[1][1]), 2)
+
+    def test_split_perf_rows_treats_missing_source_as_measured(self):
+        rows = [{"uarch": "SKL"}]
+        groups = split_perf_rows(rows)
+        self.assertEqual(groups, [("measured", rows)])
+
+    def test_measurement_rows_carries_source_kind(self):
+        item = InstructionRecord(
+            mnemonic="FMLA",
+            form="FMLA V0.4S, V1.4S, V2.4S",
+            summary="",
+            architecture="arm",
+            isa=[],
+            arch_details={
+                "neoverse-n1": {
+                    "source_kind": "modeled",
+                    "measurement": {"TP_loop": "0.5", "uops": "1", "ports": "0.50*V0"},
+                    "latencies": [{"cycles": "3"}],
+                },
+                "SKL": {
+                    "source_kind": "measured",
+                    "measurement": {"TP_loop": "1.0"},
+                    "latencies": [{"cycles": "4"}],
+                },
+            },
+        )
+        rows = measurement_rows(item)
+        by_uarch = {r["uarch"]: r for r in rows}
+        self.assertEqual(by_uarch["neoverse-n1"]["source"], "modeled")
+        self.assertEqual(by_uarch["SKL"]["source"], "measured")
+
+    def test_render_instruction_emits_separate_measured_and_modeled_panels(self):
+        instruction = InstructionRecord(
+            mnemonic="FMLA",
+            form="FMLA V0.4S, V1.4S, V2.4S",
+            summary="Fused multiply-add",
+            architecture="arm",
+            isa=["NEON"],
+            arch_details={
+                "neoverse-n1": {
+                    "source_kind": "modeled",
+                    "measurement": {
+                        "TP_loop": "0.5",
+                        "uops": "1",
+                        "ports": "0.50*V0 0.50*V1",
+                    },
+                    "latencies": [{"cycles": "4"}],
+                },
+                "SKL": {
+                    "source_kind": "measured",
+                    "measurement": {"TP_loop": "1.0", "uops": "1"},
+                    "latencies": [{"cycles": "4"}],
+                },
+            },
+        )
+        catalog = Catalog(
+            intrinsics=[],
+            instructions=[instruction],
+            sources=[],
+            generated_at="2026-01-01T00:00:00Z",
+        )
+        with console.capture() as capture:
+            render_instruction(catalog, instruction, short=True)
+        output = capture.get()
+        # Two separate panels, one per source kind.
+        self.assertIn("perf (measured)", output)
+        self.assertIn("perf (modeled)", output)
+        # No ``src`` column inside the tables — the panel title carries
+        # the provenance label now.
+        self.assertNotIn(" src ", output)
+
+    def test_render_instruction_modeled_only_has_no_measured_panel(self):
+        instruction = InstructionRecord(
+            mnemonic="FADD",
+            form="FADD (D0, D1, D2)",
+            summary="",
+            architecture="arm",
+            isa=["NEON"],
+            arch_details={
+                "neoverse-n1": {
+                    "source_kind": "modeled",
+                    "measurement": {"TP_loop": "0.5", "uops": "1"},
+                    "latencies": [{"cycles": "2"}],
+                }
+            },
+        )
+        catalog = Catalog(
+            intrinsics=[], instructions=[instruction], sources=[],
+            generated_at="2026-01-01T00:00:00Z",
+        )
+        with console.capture() as capture:
+            render_instruction(catalog, instruction, short=True)
+        output = capture.get()
+        self.assertIn("perf (modeled)", output)
+        self.assertNotIn("perf (measured)", output)
 
 
 if __name__ == "__main__":

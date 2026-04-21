@@ -87,6 +87,7 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
 from simdref.display import (
     _CODE_SECTION_LANG,
     _DESCRIPTION_ORDER,
+    _MEASUREMENT_EXCLUDE_KEYS,
     _MEASUREMENT_PREFERRED_ORDER,
     DEFAULT_ENABLED_ISAS,
     DEFAULT_SUBS,
@@ -97,6 +98,9 @@ from simdref.display import (
     display_instruction_form,
     display_uarch,
     isa_family,
+    perf_panel_border,
+    perf_panel_title,
+    split_perf_rows,
     isa_to_sub_isa,
     instruction_metadata_rows,
     normalize_isa_token,
@@ -1172,22 +1176,35 @@ class SimdrefApp(App):
             if lat != "-" or cpi != "-":
                 container.mount(Static(f"  [green]latency:[/] {lat}  [green]CPI:[/] {cpi}", markup=True))
             return
-        preferred = _MEASUREMENT_PREFERRED_ORDER
-        keys = [k for k in preferred if any(k in row for row in rows)]
-        columns = keys
-        if not columns:
-            return
-        table = Table(header_style="bold green", expand=True)
-        for col in columns:
-            label = {"uarch": "microarch", "latency": "LAT", "TP_loop": "CPI", "TP_unrolled": "CPI unroll", "TP_ports": "CPI ports", "TP": "CPI"}.get(col, col)
-            table.add_column(label, no_wrap=(col in ("uarch", "ports")))
-        for row in sorted(rows, key=lambda r: uarch_sort_key(r.get("uarch", ""))):
-            cells = []
+        label_map = {
+            "uarch": "microarch",
+            "latency": "LAT",
+            "TP_loop": "CPI",
+            "TP_unrolled": "CPI unroll",
+            "TP_ports": "CPI ports",
+            "TP": "CPI",
+            "kind": "op",
+        }
+        for kind, group in split_perf_rows(rows):
+            columns = [
+                k for k in _MEASUREMENT_PREFERRED_ORDER
+                if k not in _MEASUREMENT_EXCLUDE_KEYS
+                and any(k in row for row in group)
+            ]
+            if not columns:
+                continue
+            border = perf_panel_border(kind)
+            table = Table(header_style=f"bold {border}", expand=True)
             for col in columns:
-                val = row.get(col, "-")
-                cells.append(display_uarch(str(val)) if col == "uarch" else str(val))
-            table.add_row(*cells)
-        container.mount(Static(Panel(table, title="measurements", border_style="green")))
+                table.add_column(label_map.get(col, col), no_wrap=(col in ("uarch", "ports")))
+            for row in sorted(group, key=lambda r: uarch_sort_key(r.get("uarch", ""))):
+                cells = []
+                for col in columns:
+                    val = row.get(col, "-")
+                    cells.append(display_uarch(str(val)) if col == "uarch" else str(val))
+                table.add_row(*cells)
+            panel = Panel(table, title=perf_panel_title(kind), border_style=border)
+            container.mount(Collapsible(Static(panel), title=perf_panel_title(kind), collapsed=False))
 
     def _mount_description_sections(
         self, container, description: dict[str, str]
