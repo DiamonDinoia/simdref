@@ -42,11 +42,30 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
+      - name: Install LLVM 18 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-tools
+          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+
+      - name: Verify LLVM binaries
+        run: |
+          llvm-mca --version
+          llvm-mc --version
+          llvm-exegesis --version
+
       - name: Restore Intel SDM description cache
         uses: actions/cache@v5
         with:
           path: data/derived/intel-sdm-descriptions.msgpack
           key: intel-sdm-descriptions-${{ runner.os }}-${{ hashFiles('src/simdref/ingest.py', 'src/simdref/pdfparse/*.py') }}
+
+      - name: Restore modeled-perf cache
+        id: perf-cache
+        uses: actions/cache@v5
+        with:
+          path: vendor/perf-cache
+          key: perf-cache-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'src/simdref/perf_sources/llvm_scheduling.py', 'src/simdref/perf_sources/cores.py') }}
 
       - run: uv pip install -e .
 
@@ -84,10 +103,40 @@ jobs:
           fi
 
       - name: Build catalog from upstream
-        run: python -u -m simdref update --build-local --with-sdm
+        run: python -u -m simdref update --build --with-sdm
 
       - name: Validate upstream source ingestion
         run: python tools/validate_sources.py --require-sdm
+
+      - name: Assert catalog carries measured + modeled perf rows
+        run: |
+          python - <<'PY'
+          import msgpack
+          from pathlib import Path
+          data = msgpack.unpackb(Path("data/derived/catalog.msgpack").read_bytes(), raw=False)
+          instructions = data.get("instructions") or []
+          measured = modeled = 0
+          for inst in instructions:
+              for entry in (inst.get("arch_details") or {}).values():
+                  kind = (entry or {}).get("source_kind")
+                  if kind == "measured":
+                      measured += 1
+                  elif kind == "modeled":
+                      modeled += 1
+          print(f"measured arch_details rows: {measured}")
+          print(f"modeled  arch_details rows: {modeled}")
+          assert measured >= 1000, f"too few measured rows: {measured}"
+          assert modeled >= 1000, f"too few modeled rows: {modeled}"
+          PY
+
+      - name: Package perf cache
+        if: steps.meta.outputs.publish_mutable == 'true'
+        run: |
+          if [ -d vendor/perf-cache ]; then
+            tar --zstd -cf perf-cache.tar.zst -C vendor perf-cache
+          else
+            echo "vendor/perf-cache missing; skipping archive"
+          fi
 
       - name: Upload versioned catalog release assets
         if: steps.meta.outputs.publish_versioned == 'true'
@@ -99,6 +148,7 @@ jobs:
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
+            perf-cache.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -112,6 +162,7 @@ jobs:
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
+            perf-cache.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -125,6 +176,7 @@ jobs:
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
+            perf-cache.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
