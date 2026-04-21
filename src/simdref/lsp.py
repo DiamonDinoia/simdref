@@ -3,26 +3,79 @@ from __future__ import annotations
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from simdref.perf import best_cpi, best_latency
+from simdref.perf_sources import core_architecture
 from simdref.queries import linked_instruction_records
 from simdref.search import search_records
 from simdref.storage import (
-    load_intrinsic_from_db,
     load_instruction_from_db,
+    load_instructions_by_mnemonic_from_db,
+    load_intrinsic_from_db,
     open_db,
-    search_intrinsic_candidates_from_db,
     search_instruction_candidates_from_db,
+    search_intrinsic_candidates_from_db,
 )
 
 
 WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
+# Map user-facing arch strings to ``core_architecture()`` families.
+_ARCH_ALIASES: dict[str, str] = {
+    "x86": "x86",
+    "x86_64": "x86",
+    "amd64": "x86",
+    "arm": "aarch64",
+    "aarch64": "aarch64",
+    "arm64": "aarch64",
+    "riscv": "riscv",
+    "rv": "riscv",
+    "rvv": "riscv",
+}
+
 
 @dataclass
 class Session:
     documents: dict[str, str]
+    show_perf_metrics: bool = True
+    architectures: frozenset[str] = field(default_factory=frozenset)
+
+
+def _normalise_architectures(raw: object) -> frozenset[str]:
+    if not raw:
+        return frozenset()
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        values = [str(item) for item in raw]
+    else:
+        return frozenset()
+    kept: set[str] = set()
+    for value in values:
+        mapped = _ARCH_ALIASES.get(value.casefold())
+        if mapped is not None:
+            kept.add(mapped)
+    return frozenset(kept)
+
+
+def _apply_arch_filter(
+    arch_details: dict[str, dict[str, object]],
+    architectures: frozenset[str],
+) -> dict[str, dict[str, object]]:
+    if not architectures:
+        return arch_details
+    kept: dict[str, dict[str, object]] = {}
+    for core, details in arch_details.items():
+        family = core_architecture(core)
+        if family in architectures:
+            kept[core] = details
+    return kept
+
+
+def _is_asm_uri(uri: str) -> bool:
+    lowered = uri.lower()
+    return lowered.endswith((".s", ".asm", ".inc"))
 
 
 def _jsonrpc_write(payload: dict) -> None:
@@ -69,62 +122,116 @@ def _line_prefix(text: str, line: int, character: int) -> str:
     return match.group(0) if match else ""
 
 
-def _hover_markdown(conn, word: str) -> str | None:
-    intrinsic = load_intrinsic_from_db(conn, word)
-    if intrinsic is not None:
-        lines = [f"```c\n{intrinsic.signature}\n```"]
-        if intrinsic.description:
-            lines.append(intrinsic.description)
-        meta = []
-        if intrinsic.header:
-            meta.append(f"header `{intrinsic.header}`")
-        if intrinsic.isa:
-            meta.append(f"ISA {', '.join(intrinsic.isa)}")
-        if intrinsic.category:
-            meta.append(f"category {intrinsic.category}")
-        if intrinsic.url:
-            meta.append(f"[source]({intrinsic.url})")
-        if meta:
-            lines.append(" | ".join(meta))
-        if intrinsic.instructions:
-            lines.append(f"Instructions: {', '.join(intrinsic.instructions[:6])}")
-        linked = linked_instruction_records(None, intrinsic, conn=conn)
-        if linked:
-            latencies = [best_latency(item.arch_details) for item in linked if best_latency(item.arch_details) != "-"]
-            throughputs = [best_cpi(item.arch_details) for item in linked if best_cpi(item.arch_details) != "-"]
-            perf = []
-            if latencies:
-                perf.append(f"best latency {min(latencies, key=lambda value: float(value))} cycles")
-            if throughputs:
-                perf.append(f"best cycle/instr {min(throughputs, key=lambda value: float(value))}")
-            if perf:
-                lines.append("Performance: " + ", ".join(perf))
-        return "\n\n".join(lines)
+def load_instruction_best_form(conn, mnemonic: str):
+    """Return the most-common form for a bare assembly mnemonic.
 
-    instruction = load_instruction_from_db(conn, word)
-    if instruction is not None:
-        lines = [f"```asm\n{instruction.key}\n```"]
-        if instruction.summary:
-            lines.append(instruction.summary)
-        meta = []
-        if instruction.isa:
-            meta.append(f"ISA {', '.join(instruction.isa)}")
-        if instruction.metadata.get("category"):
-            meta.append(f"category {instruction.metadata['category']}")
-        if meta:
-            lines.append(" | ".join(meta))
-        if instruction.linked_intrinsics:
-            lines.append(f"Intrinsics: {', '.join(instruction.linked_intrinsics[:6])}")
+    ``load_instruction_from_db`` needs a full ``db_key`` (e.g.
+    ``"VADDPS (xmm, xmm, xmm)"``), but hovering in a ``.s`` file gives
+    only the mnemonic. We prefer the shortest form (usually the
+    register-only variant) with the lexicographically smallest key as
+    tiebreaker, matching what a reader hovering ``vaddps`` expects.
+    """
+    if not mnemonic:
+        return None
+    for candidate in (mnemonic, mnemonic.upper(), mnemonic.lower()):
+        rows = load_instructions_by_mnemonic_from_db(conn, candidate)
+        if rows:
+            rows.sort(key=lambda record: (len(record.key), record.key))
+            return rows[0]
+    return None
+
+
+def _instruction_hover(instruction, show_perf: bool, architectures: frozenset[str]) -> str:
+    lines = [f"```asm\n{instruction.key}\n```"]
+    if instruction.summary:
+        lines.append(instruction.summary)
+    meta = []
+    if instruction.isa:
+        meta.append(f"ISA {', '.join(instruction.isa)}")
+    if instruction.metadata.get("category"):
+        meta.append(f"category {instruction.metadata['category']}")
+    if meta:
+        lines.append(" | ".join(meta))
+    if instruction.linked_intrinsics:
+        lines.append(f"Intrinsics: {', '.join(instruction.linked_intrinsics[:6])}")
+    if show_perf:
+        filtered = _apply_arch_filter(instruction.arch_details, architectures)
         perf = []
-        lat = best_latency(instruction.arch_details)
-        cpi = best_cpi(instruction.arch_details)
+        lat = best_latency(filtered)
+        cpi = best_cpi(filtered)
         if lat != "-":
             perf.append(f"best latency {lat} cycles")
         if cpi != "-":
             perf.append(f"best cycle/instr {cpi}")
         if perf:
             lines.append("Performance: " + ", ".join(perf))
-        return "\n\n".join(lines)
+    return "\n\n".join(lines)
+
+
+def _intrinsic_hover(conn, intrinsic, show_perf: bool, architectures: frozenset[str]) -> str:
+    lines = [f"```c\n{intrinsic.signature}\n```"]
+    if intrinsic.description:
+        lines.append(intrinsic.description)
+    meta = []
+    if intrinsic.header:
+        meta.append(f"header `{intrinsic.header}`")
+    if intrinsic.isa:
+        meta.append(f"ISA {', '.join(intrinsic.isa)}")
+    if intrinsic.category:
+        meta.append(f"category {intrinsic.category}")
+    if intrinsic.url:
+        meta.append(f"[source]({intrinsic.url})")
+    if meta:
+        lines.append(" | ".join(meta))
+    if intrinsic.instructions:
+        lines.append(f"Instructions: {', '.join(intrinsic.instructions[:6])}")
+    if show_perf:
+        linked = linked_instruction_records(None, intrinsic, conn=conn)
+        latencies: list[str] = []
+        throughputs: list[str] = []
+        for item in linked:
+            filtered = _apply_arch_filter(item.arch_details, architectures)
+            lat = best_latency(filtered)
+            cpi = best_cpi(filtered)
+            if lat != "-":
+                latencies.append(lat)
+            if cpi != "-":
+                throughputs.append(cpi)
+        perf = []
+        if latencies:
+            perf.append(f"best latency {min(latencies, key=lambda value: float(value))} cycles")
+        if throughputs:
+            perf.append(f"best cycle/instr {min(throughputs, key=lambda value: float(value))}")
+        if perf:
+            lines.append("Performance: " + ", ".join(perf))
+    return "\n\n".join(lines)
+
+
+def _hover_markdown(
+    conn,
+    word: str,
+    *,
+    show_perf_metrics: bool = True,
+    architectures: frozenset[str] | None = None,
+    prefer_instruction: bool = False,
+) -> str | None:
+    archs = architectures or frozenset()
+
+    if prefer_instruction:
+        instruction = load_instruction_from_db(conn, word) or load_instruction_best_form(conn, word)
+        if instruction is not None:
+            return _instruction_hover(instruction, show_perf_metrics, archs)
+        intrinsic = load_intrinsic_from_db(conn, word)
+        if intrinsic is not None:
+            return _intrinsic_hover(conn, intrinsic, show_perf_metrics, archs)
+        return None
+
+    intrinsic = load_intrinsic_from_db(conn, word)
+    if intrinsic is not None:
+        return _intrinsic_hover(conn, intrinsic, show_perf_metrics, archs)
+    instruction = load_instruction_from_db(conn, word) or load_instruction_best_form(conn, word)
+    if instruction is not None:
+        return _instruction_hover(instruction, show_perf_metrics, archs)
     return None
 
 
@@ -150,6 +257,15 @@ def _completion_candidates(conn, prefix: str, limit: int = 50) -> list[dict]:
     return items
 
 
+def _init_session_from_options(session: Session, init_options: object) -> None:
+    if not isinstance(init_options, dict):
+        return
+    show_perf = init_options.get("showPerfMetrics")
+    if isinstance(show_perf, bool):
+        session.show_perf_metrics = show_perf
+    session.architectures = _normalise_architectures(init_options.get("architectures"))
+
+
 def main() -> int:
     conn = open_db()
     session = Session(documents={})
@@ -159,6 +275,7 @@ def main() -> int:
             return 0
         method = message.get("method")
         if method == "initialize":
+            _init_session_from_options(session, (message.get("params") or {}).get("initializationOptions"))
             _jsonrpc_write(
                 {
                     "jsonrpc": "2.0",
@@ -194,7 +311,13 @@ def main() -> int:
             word = _word_at(text, params["position"]["line"], params["position"]["character"])
             contents = None
             if word:
-                body = _hover_markdown(conn, word)
+                body = _hover_markdown(
+                    conn,
+                    word,
+                    show_perf_metrics=session.show_perf_metrics,
+                    architectures=session.architectures,
+                    prefer_instruction=_is_asm_uri(uri),
+                )
                 if body:
                     contents = {"kind": "markdown", "value": body}
             _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"contents": contents} if contents else None})
@@ -205,4 +328,3 @@ def main() -> int:
             prefix = _line_prefix(text, params["position"]["line"], params["position"]["character"])
             items = _completion_candidates(conn, prefix)
             _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"isIncomplete": False, "items": items}})
-    return 0

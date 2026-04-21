@@ -25,6 +25,15 @@ src/simdref/
   fixtures/      Sample data for offline bootstrapping and tests
 ```
 
+Editor integrations live outside the Python package:
+
+```
+editors/
+  vscode/        VS Code extension (TypeScript) — thin LanguageClient around
+                 simdref-lsp, bundles the Python wheel and manages a private
+                 virtualenv on first activation.
+```
+
 ## Data flow
 
 ```

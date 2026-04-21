@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="22" fill="#0f172a"/>
+  <rect x="16" y="16" width="96" height="96" rx="16" fill="#2563eb"/>
+  <g stroke="#f8fafc" stroke-width="6" stroke-linecap="round">
+    <path d="M30 46h56"/>
+    <path d="M30 64h36"/>
+    <path d="M30 82h56"/>
+  </g>
+  <circle cx="92" cy="64" r="9" fill="#fbbf24"/>
+  <text x="64" y="116" text-anchor="middle" font-family="Menlo,monospace" font-size="12" fill="#cbd5f5" font-weight="700">simdref</text>
+</svg>

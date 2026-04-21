@@ -88,6 +88,14 @@ vim.lsp.start({
 })
 ```
 
+Visual Studio Code:
+Install the **simdref** extension from the Marketplace (or
+`code --install-extension simdref-<version>.vsix` from a release asset).
+The extension ships a bundled wheel of the Python server; on first
+activation it creates a managed virtualenv and installs the server into
+it. Requires Python 3.11+ on your PATH. Source lives under
+[editors/vscode/](editors/vscode/).
+
 ### Web app
 
 ```bash

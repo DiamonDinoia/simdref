@@ -1,0 +1,77 @@
+name: VS Code Extension
+
+on:
+  push:
+    tags:
+      - 'vscode-v*.*.*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to Marketplace (requires VSCE_PAT)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build bundled Python wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip wheel --no-deps --wheel-dir=editors/vscode/server-dist ..
+        working-directory: ${{ github.workspace }}
+
+      - name: Install extension deps
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Package VSIX
+        run: npx vsce package --out simdref-${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simdref-vsix
+          path: editors/vscode/*.vsix
+          if-no-files-found: error
+
+      - name: Attach VSIX to GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: editors/vscode/*.vsix
+          fail_on_unmatched_files: true
+
+      - name: Publish to Marketplace
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "VSCE_PAT secret is not configured — running publish --dry-run only."
+            npx vsce publish --dry-run --packagePath simdref-*.vsix
+          else
+            npx vsce publish --packagePath simdref-*.vsix
+          fi

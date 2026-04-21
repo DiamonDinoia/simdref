@@ -1,0 +1,6 @@
+node_modules/
+out/
+*.vsix
+server-dist/
+.ruff_cache/
+.pytest_cache/

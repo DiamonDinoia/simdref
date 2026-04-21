@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 
 from simdref.ingest import build_catalog
-from simdref.lsp import _completion_candidates, _hover_markdown
+from simdref.lsp import (
+    _completion_candidates,
+    _hover_markdown,
+    _normalise_architectures,
+    load_instruction_best_form,
+)
 from simdref.storage import build_sqlite, save_catalog, open_db
 from simdref.web import export_web
 from conftest import build_fixture_catalog
@@ -79,6 +84,36 @@ class LspWebTests(unittest.TestCase):
         items = _completion_candidates(self._conn, "_mm256_a", limit=5)
         labels = [item["label"] for item in items]
         self.assertIn("_mm256_add_ps", labels)
+
+    def test_hover_hides_perf_when_metrics_disabled(self):
+        markdown = _hover_markdown(
+            self._conn, "_mm256_add_ps", show_perf_metrics=False
+        )
+        self.assertIsNotNone(markdown)
+        self.assertNotIn("Performance:", markdown)
+
+    def test_hover_arch_filter_drops_non_x86_perf(self):
+        architectures = _normalise_architectures(["x86"])
+        markdown = _hover_markdown(
+            self._conn, "vaddq_u8", architectures=architectures
+        )
+        self.assertIsNotNone(markdown)
+        # vaddq_u8 is an Arm Neon intrinsic; restricting perf to x86 leaves
+        # nothing to report so the Performance: line must disappear.
+        self.assertNotIn("Performance:", markdown)
+
+    def test_asm_file_bias_resolves_mnemonic_to_instruction(self):
+        markdown = _hover_markdown(
+            self._conn, "vadd.vv", prefer_instruction=True
+        )
+        self.assertIsNotNone(markdown)
+        self.assertIn("vadd.vv", markdown)
+        self.assertIn("ISA V", markdown)
+
+    def test_load_instruction_best_form_resolves_bare_mnemonic(self):
+        record = load_instruction_best_form(self._conn, "vadd.vv")
+        self.assertIsNotNone(record)
+        self.assertEqual(record.mnemonic, "vadd.vv")
 
     def test_export_web_produces_expected_files(self):
         catalog = build_fixture_catalog()
