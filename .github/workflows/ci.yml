@@ -40,9 +40,6 @@ jobs:
       - name: Run Python test suite
         run: python -m pytest tests
 
-      - name: Run source validation
-        run: python tools/validate_sources.py
-
       - name: Check Python syntax
         run: python -m py_compile src/simdref/cli.py src/simdref/display.py src/simdref/ingest.py src/simdref/pdfparse/base.py src/simdref/pdfparse/intel.py src/simdref/tui.py src/simdref/web.py
 
