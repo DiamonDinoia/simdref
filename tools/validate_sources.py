@@ -490,13 +490,30 @@ def validate_arm_intrinsics() -> tuple[int, int]:
 
 def _instruction_candidates(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        results: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            # AARCHMRS top-level entries are ``InstructionSet`` / group
+            # nodes wrapping ``children``. Recurse into them to surface
+            # actual ``Instruction`` leaves instead of accidentally
+            # treating the ISA markers (A64/A32/T32) as instructions.
+            node_type = str(item.get("_type", ""))
+            if node_type.endswith("InstructionSet") or (
+                isinstance(item.get("children"), list) and not item.get("mnemonic")
+            ):
+                results.extend(_instruction_candidates(item.get("children") or []))
+                continue
+            if node_type.endswith("InstructionAlias"):
+                continue
+            results.append(item)
+        return results
     if not isinstance(payload, dict):
         return []
     for key in ("instructions", "base_instructions", "instruction_set", "InstructionSet", "items", "records"):
         value = payload.get(key)
         if isinstance(value, list) and all(isinstance(item, dict) for item in value):
-            return value
+            return _instruction_candidates(value)
     for value in payload.values():
         if isinstance(value, dict):
             nested = _instruction_candidates(value)
