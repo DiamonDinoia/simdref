@@ -42,12 +42,16 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
-      - name: Install LLVM toolchain
-        # Ubuntu 24.04 only ships llvm-18; the scheduling pipeline needs
-        # ``llvm-mca --instruction-tables=full`` which landed in LLVM 19.
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "22"
+      - name: Install LLVM 22 toolchain
+        # Ubuntu 24.04 only ships llvm-18, but the scheduling pipeline
+        # needs ``llvm-mca --instruction-tables=full`` (LLVM 19+) and is
+        # validated locally against LLVM 22. KyleMayes/install-llvm-action
+        # doesn't ship LLVM 22 for linux/x64, so fetch from apt.llvm.org.
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
 
       - name: Verify LLVM binaries
         run: |

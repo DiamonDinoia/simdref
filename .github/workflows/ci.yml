@@ -79,11 +79,13 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
-      - name: Install LLVM toolchain (for --build matrix)
+      - name: Install LLVM 22 toolchain (for --build matrix)
         if: matrix.label == 'local-sdm'
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "22"
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
 
       - name: Install package
         run: uv pip install -e .
