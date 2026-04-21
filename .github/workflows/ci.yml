@@ -79,14 +79,23 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
-      - name: Install LLVM toolchain (for --build matrix)
+      - name: Install LLVM 22 toolchain (for --build matrix)
         if: matrix.label == 'local-sdm'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
 
       - name: Install package
         run: uv pip install -e .
+
+      - name: Vendor RISC-V sources (for --build matrix)
+        if: matrix.label == 'local-sdm'
+        run: |
+          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
+          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
+          python tools/vendor_riscv_sources.py
 
       - name: Build runtime (${{ matrix.label }})
         run: ${{ matrix.build_command }}
