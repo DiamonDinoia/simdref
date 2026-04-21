@@ -42,11 +42,10 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
-      - name: Install LLVM 18 toolchain
+      - name: Install LLVM toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-18 llvm-18-tools
-          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y llvm
 
       - name: Verify LLVM binaries
         run: |
