@@ -645,16 +645,22 @@ class SimdrefApp(App):
             initial_subs.update(DEFAULT_SUBS.get(fam, set()))
         self._enabled_sub_isas: set[str] | None = initial_subs if initial_subs else None
         self._current_detail: IntrinsicRecord | InstructionRecord | None = None
+        self._current_detail_token: int = 0
         self._batch_toggle = False
-        # Small LRU for detail-pane DB lookups so navigating back to a
-        # recently-selected record skips the msgpack round-trip.
+        # LRU caches keyed by (kind, key) so arrow-key navigation through
+        # results hits cache instead of re-loading + re-building.
         self._detail_cache: dict[tuple[str, str], IntrinsicRecord | InstructionRecord] = {}
         self._detail_cache_order: list[tuple[str, str]] = []
-        self._detail_cache_cap = 16
+        self._render_cache: dict[tuple[str, str], list[tuple]] = {}
+        self._render_cache_order: list[tuple[str, str]] = []
+        self._detail_cache_cap = 256
         # Map family -> list of sub-ISA names present in the DB
         self._family_subs: dict[str, list[str]] = {}
         self._enabled_kinds: set[str] = {"intrinsic", "instruction"}
         self._enabled_arm_arch: set[str] | None = None
+        # Cached frozensets of filter state passed to _fts_search; cleared
+        # whenever a toggle changes. Avoids rebuilding sets per keystroke.
+        self._filter_fs_cache: tuple[frozenset[str], frozenset[str] | None] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -981,9 +987,14 @@ class SimdrefApp(App):
 
     @work(exclusive=True)
     async def _debounced_search(self, query: str) -> None:
-        """Debounce search: cancel previous, wait 150ms, then search."""
+        """Debounce search: cancel previous, wait 50ms, then search.
+
+        Debounce is short because FTS5 returns in <5 ms for every measured
+        query and @work(exclusive=True) cancels stale searches — we can
+        afford to be eager without overwhelming the event loop.
+        """
         import asyncio
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.05)
         self._do_search(query)
 
     def _move_result_focus(self, delta: int) -> None:
@@ -1053,6 +1064,11 @@ class SimdrefApp(App):
         if results:
             results_list.index = 0
             self._show_detail(results[0])
+            # Warm caches for the remaining top hits so arrow-key
+            # navigation is instant. Exclusive group cancels stale
+            # prefetches from the previous query.
+            if len(results) > 1:
+                self._prefetch_neighbours(list(results))
 
     def _maybe_load_more_results(self, current_index: int) -> None:
         """Load another page when navigation reaches the end of the loaded list."""
@@ -1101,13 +1117,19 @@ class SimdrefApp(App):
         if item.result in self._current_results:
             self._show_detail(item.result)
 
-    def _get_detail_record(self, kind: str, key: str):
-        """Fetch an intrinsic/instruction record with a small in-session LRU."""
-        assert self._conn is not None
+    def _get_detail_record(self, kind: str, key: str, conn: sqlite3.Connection | None = None):
+        """Fetch an intrinsic/instruction record with an in-session LRU.
+
+        *conn* is optional so that workers running off the event loop can
+        pass their own connection — sqlite3 Connection objects are not
+        thread-safe and must not be shared across threads.
+        """
+        if conn is None:
+            conn = self._conn
+        assert conn is not None
         cache_key = (kind, key)
         cached = self._detail_cache.get(cache_key)
         if cached is not None:
-            # Promote to most-recently-used.
             try:
                 self._detail_cache_order.remove(cache_key)
             except ValueError:
@@ -1115,9 +1137,9 @@ class SimdrefApp(App):
             self._detail_cache_order.append(cache_key)
             return cached
         record = (
-            load_intrinsic_from_db(self._conn, key)
+            load_intrinsic_from_db(conn, key)
             if kind == "intrinsic"
-            else load_instruction_from_db(self._conn, key)
+            else load_instruction_from_db(conn, key)
         )
         if record is not None:
             self._detail_cache[cache_key] = record
@@ -1127,26 +1149,143 @@ class SimdrefApp(App):
                 self._detail_cache.pop(evict, None)
         return record
 
+    def _get_render_payload(
+        self, kind: str, key: str, conn: sqlite3.Connection | None = None
+    ) -> list[tuple] | None:
+        """Pure-compute: return a list of mount-ready (type, args) sections.
+
+        Returned entries are one of:
+            ("static", renderable)
+            ("static_markup", text)
+            ("collapsible", renderable, title, collapsed)
+        Rich renderables (Panel/Table/Syntax) are immutable once built, so
+        we can cache the list and rebuild the thin Static/Collapsible
+        wrappers cheaply at mount time.
+        """
+        cache_key = (kind, key)
+        cached = self._render_cache.get(cache_key)
+        if cached is not None:
+            try:
+                self._render_cache_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._render_cache_order.append(cache_key)
+            return cached
+        record = self._get_detail_record(kind, key, conn=conn)
+        if record is None:
+            return None
+        payload = (
+            self._build_intrinsic_payload(record, conn=conn)
+            if kind == "intrinsic"
+            else self._build_instruction_payload(record)
+        )
+        self._render_cache[cache_key] = payload
+        self._render_cache_order.append(cache_key)
+        while len(self._render_cache_order) > self._detail_cache_cap:
+            evict = self._render_cache_order.pop(0)
+            self._render_cache.pop(evict, None)
+        return payload
+
+    def _mount_payload(self, container, payload: list[tuple]) -> None:
+        """Mount a precomputed payload list into *container*."""
+        for section in payload:
+            tag = section[0]
+            if tag == "static":
+                container.mount(Static(section[1]))
+            elif tag == "static_markup":
+                container.mount(Static(section[1], markup=True))
+            elif tag == "collapsible":
+                _, renderable, title, collapsed = section
+                container.mount(
+                    Collapsible(Static(renderable), title=title, collapsed=collapsed)
+                )
+
     def _show_detail(self, result: SearchResult) -> None:
+        """Render the detail pane for a search result.
+
+        Fast path: if the payload is already cached, mount synchronously
+        so arrow-key navigation feels instant.
+        Slow path: offload DB load + Rich renderable construction onto a
+        thread worker and mount via ``call_from_thread`` when done. This
+        keeps the event loop responsive during first-time renders of
+        large records.
+        """
         detail = self.query_one("#detail-scroll", VerticalScroll)
         detail.remove_children()
 
-        record = self._get_detail_record(result.kind, result.key)
-        if record is None:
+        self._current_detail_token += 1
+        token = self._current_detail_token
+
+        cache_key = (result.kind, result.key)
+        cached_payload = self._render_cache.get(cache_key)
+        cached_record = self._detail_cache.get(cache_key)
+        if cached_payload is not None and cached_record is not None:
+            try:
+                self._render_cache_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._render_cache_order.append(cache_key)
+            self._current_detail = cached_record
+            self._mount_payload(detail, cached_payload)
             return
-        self._current_detail = record
-        if result.kind == "intrinsic":
-            self._render_intrinsic_detail(detail, record)
-        else:
-            self._render_instruction_detail(detail, record)
+
+        self._current_detail = None
+        self._render_detail_worker(result, token)
+
+    @work(thread=True, exclusive=True, group="detail_render")
+    def _render_detail_worker(self, result: SearchResult, token: int) -> None:
+        """Build the detail payload off the event loop, then mount on UI.
+
+        Opens a dedicated sqlite connection — sqlite3 Connection objects
+        are not thread-safe and sharing ``self._conn`` across threads
+        raises ProgrammingError.
+        """
+        conn = open_db()
+        try:
+            payload = self._get_render_payload(result.kind, result.key, conn=conn)
+        finally:
+            conn.close()
+        if payload is None:
+            return
+        record = self._detail_cache.get((result.kind, result.key))
+
+        def _mount() -> None:
+            if token != self._current_detail_token:
+                return
+            detail = self.query_one("#detail-scroll", VerticalScroll)
+            detail.remove_children()
+            self._current_detail = record
+            self._mount_payload(detail, payload)
+
+        self.call_from_thread(_mount)
+
+    @work(thread=True, exclusive=True, group="prefetch")
+    def _prefetch_neighbours(self, results: list[SearchResult]) -> None:
+        """Warm the detail + render caches for the top hits after a search.
+
+        Uses a dedicated sqlite connection (see ``_render_detail_worker``
+        for the thread-safety note). Skips entries already cached.
+        """
+        conn = open_db()
+        try:
+            for result in results[:8]:
+                if (result.kind, result.key) in self._render_cache:
+                    continue
+                self._get_render_payload(result.kind, result.key, conn=conn)
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Record lookups
     # ------------------------------------------------------------------
 
-    def _find_linked_instruction(self, intrinsic: IntrinsicRecord) -> InstructionRecord | None:
-        assert self._conn is not None
-        linked = linked_instruction_records(None, intrinsic, conn=self._conn)
+    def _find_linked_instruction(
+        self, intrinsic: IntrinsicRecord, conn: sqlite3.Connection | None = None
+    ) -> InstructionRecord | None:
+        if conn is None:
+            conn = self._conn
+        assert conn is not None
+        linked = linked_instruction_records(None, intrinsic, conn=conn)
         # Prefer one with description data
         for item in linked:
             if item.description:
@@ -1157,8 +1296,14 @@ class SimdrefApp(App):
     # Detail rendering
     # ------------------------------------------------------------------
 
-    def _render_intrinsic_detail(self, container, intrinsic: IntrinsicRecord) -> None:
-        # Metadata panel (always visible)
+    # ------------------------------------------------------------------
+    # Payload builders — pure CPU work, safe to run off the event loop
+    # ------------------------------------------------------------------
+
+    def _build_intrinsic_payload(
+        self, intrinsic: IntrinsicRecord, conn: sqlite3.Connection | None = None
+    ) -> list[tuple]:
+        payload: list[tuple] = []
         meta = Table(show_header=False, box=None)
         meta.add_row("signature", intrinsic.signature or "-")
         meta.add_row("header", intrinsic.header or "-")
@@ -1171,30 +1316,26 @@ class SimdrefApp(App):
             meta.add_row("description", intrinsic.description)
         if intrinsic.notes:
             meta.add_row("notes", "; ".join(intrinsic.notes))
-        linked = self._find_linked_instruction(intrinsic)
+        linked = self._find_linked_instruction(intrinsic, conn=conn)
         if linked:
             for key, value in instruction_metadata_rows(linked):
                 if key == "summary":
                     continue
                 meta.add_row(key, value)
-        container.mount(Static(Panel(meta, title=f"intrinsic: {intrinsic.name}", border_style="cyan")))
-
-        # Operand table (always visible)
+        payload.append(
+            ("static", Panel(meta, title=f"intrinsic: {intrinsic.name}", border_style="cyan"))
+        )
         if linked:
-            self._mount_operand_table(container, linked)
-
-        # Performance table (always visible)
-        if linked:
-            self._mount_perf_table(container, linked)
-
-        # Collapsible description sections
+            self._append_operand_section(payload, linked)
+            self._append_perf_sections(payload, linked)
         if intrinsic.doc_sections:
-            self._mount_description_sections(container, intrinsic.doc_sections)
+            self._append_description_sections(payload, intrinsic.doc_sections)
         if linked and linked.description:
-            self._mount_description_sections(container, linked.description)
+            self._append_description_sections(payload, linked.description)
+        return payload
 
-    def _render_instruction_detail(self, container, item: InstructionRecord) -> None:
-        # Metadata panel (always visible)
+    def _build_instruction_payload(self, item: InstructionRecord) -> list[tuple]:
+        payload: list[tuple] = []
         meta = Table(show_header=False, box=None)
         meta.add_row("mnemonic", item.mnemonic)
         meta.add_row("form", display_instruction_form(item.form))
@@ -1204,19 +1345,23 @@ class SimdrefApp(App):
             if key in {"isa"}:
                 continue
             meta.add_row(key, value)
-        container.mount(Static(Panel(meta, title=f"instruction: {display_instruction_form(item.form) or item.mnemonic}", border_style="magenta")))
-
-        # Operand table (always visible)
-        self._mount_operand_table(container, item)
-
-        # Performance table (always visible)
-        self._mount_perf_table(container, item)
-
-        # Collapsible description sections
+        payload.append(
+            (
+                "static",
+                Panel(
+                    meta,
+                    title=f"instruction: {display_instruction_form(item.form) or item.mnemonic}",
+                    border_style="magenta",
+                ),
+            )
+        )
+        self._append_operand_section(payload, item)
+        self._append_perf_sections(payload, item)
         if item.description:
-            self._mount_description_sections(container, item.description)
+            self._append_description_sections(payload, item.description)
+        return payload
 
-    def _mount_operand_table(self, container, item: InstructionRecord) -> None:
+    def _append_operand_section(self, payload: list[tuple], item: InstructionRecord) -> None:
         if not item.operand_details:
             return
         table = Table(header_style="bold blue")
@@ -1236,14 +1381,14 @@ class SimdrefApp(App):
                 operand.get("xtype", "-"),
                 operand.get("name", "-"),
             )
-        container.mount(Static(Panel(table, title="operands", border_style="blue")))
+        payload.append(("static", Panel(table, title="operands", border_style="blue")))
 
-    def _mount_perf_table(self, container, item: InstructionRecord) -> None:
+    def _append_perf_sections(self, payload: list[tuple], item: InstructionRecord) -> None:
         rows = measurement_rows(item)
         if not rows:
             lat, cpi = variant_perf_summary(item.arch_details)
             if lat != "-" or cpi != "-":
-                container.mount(Static(f"  [green]latency:[/] {lat}  [green]CPI:[/] {cpi}", markup=True))
+                payload.append(("static_markup", f"  [green]latency:[/] {lat}  [green]CPI:[/] {cpi}"))
             return
         label_map = {
             "uarch": "microarch",
@@ -1273,30 +1418,25 @@ class SimdrefApp(App):
                     cells.append(display_uarch(str(val)) if col == "uarch" else str(val))
                 table.add_row(*cells)
             panel = Panel(table, title=perf_panel_title(kind), border_style=border)
-            container.mount(Collapsible(Static(panel), title=perf_panel_title(kind), collapsed=False))
+            payload.append(("collapsible", panel, perf_panel_title(kind), False))
 
-    def _mount_description_sections(
-        self, container, description: dict[str, str]
+    def _append_description_sections(
+        self, payload: list[tuple], description: dict[str, str]
     ) -> None:
         shown: set[str] = set()
         for key in _DESCRIPTION_ORDER:
             if key in description:
-                self._mount_one_section(container, key, description[key])
+                self._append_one_section(payload, key, description[key])
                 shown.add(key)
         for key, value in description.items():
             if key not in shown:
-                self._mount_one_section(container, key, value)
+                self._append_one_section(payload, key, value)
 
-    def _mount_one_section(self, container, title: str, body: str) -> None:
+    def _append_one_section(self, payload: list[tuple], title: str, body: str) -> None:
         lang = _CODE_SECTION_LANG.get(title)
-        if lang:
-            content = Static(Syntax(body, lang, theme="monokai", word_wrap=True))
-        else:
-            content = Static(body)
+        renderable = Syntax(body, lang, theme="monokai", word_wrap=True) if lang else body
         expanded = title in _EXPANDED_SECTIONS or self._all_expanded
-        container.mount(
-            Collapsible(content, title=title, collapsed=not expanded)
-        )
+        payload.append(("collapsible", renderable, title, not expanded))
 
     # ------------------------------------------------------------------
     # Actions
@@ -1442,6 +1582,11 @@ class SimdrefApp(App):
         build_sqlite(catalog)
         self._needs_update = False
         self._conn = open_db()
+        # Purge stale caches — row contents may have shifted.
+        self._detail_cache.clear()
+        self._detail_cache_order.clear()
+        self._render_cache.clear()
+        self._render_cache_order.clear()
 
         def _finish() -> None:
             self._build_family_subs()
