@@ -1589,6 +1589,6 @@ def main() -> int:
         return _smart_lookup(" ".join(argv), preset=initial_preset)
     if not argv:
         ensure_runtime()
-        return _run_tui(initial_preset=initial_preset)
+        return _run_tui(initial_preset=initial_preset or "intel")
     app()
     return 0

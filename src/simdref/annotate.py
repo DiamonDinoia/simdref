@@ -101,26 +101,80 @@ def lookup(mnemonic: str, conn: sqlite3.Connection) -> list[InstructionRecord]:
     return []
 
 
+_SIZE_SPECIFIER_RE = re.compile(
+    r"\b(byte|word|dword|qword|xmmword|ymmword|zmmword)\s+ptr\b",
+    re.IGNORECASE,
+)
+_SIZE_TO_BITS = {
+    "byte": "8", "word": "16", "dword": "32", "qword": "64",
+    "xmmword": "128", "ymmword": "256", "zmmword": "512",
+}
+# Register classes ordered so longer/wider names match first.
+_REG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:r[abcd]x|r[sd]i|rbp|rsp|r(?:8|9|1[0-5]))\b"), "R64"),
+    (re.compile(r"\b(?:e[abcd]x|e[sd]i|ebp|esp|r(?:8|9|1[0-5])d)\b"), "R32"),
+    (re.compile(r"\b(?:[abcd]x|[sd]i|bp|sp|r(?:8|9|1[0-5])w)\b"), "R16"),
+    (re.compile(r"\b(?:[abcd][lh]|[sd]il|bpl|spl|r(?:8|9|1[0-5])b)\b"), "R8"),
+    (re.compile(r"\bxmm\d+\b"), "XMM"),
+    (re.compile(r"\bymm\d+\b"), "YMM"),
+    (re.compile(r"\bzmm\d+\b"), "ZMM"),
+    (re.compile(r"\bk[0-7]\b"), "K"),
+)
+
+
+def _operand_width_tokens(operands: str) -> list[str]:
+    if not operands:
+        return []
+    s = operands.lower()
+    tokens: list[str] = []
+    for m in _SIZE_SPECIFIER_RE.finditer(s):
+        bits = _SIZE_TO_BITS[m.group(1).lower()]
+        tokens.append(f"M{bits}")
+    for regex, tok in _REG_PATTERNS:
+        if regex.search(s):
+            tokens.append(tok)
+    return tokens
+
+
+def _operand_match_score(record: InstructionRecord, tokens: list[str]) -> int:
+    if not tokens:
+        return 0
+    key = str(getattr(record, "key", "") or "").upper()
+    score = 0
+    for tok in tokens:
+        if re.search(rf"\b{tok}\b", key):
+            score += 10
+        elif tok.startswith("R") and ("M" + tok[1:]) in key:
+            score += 2
+    return score
+
+
 def pick_record(
     records: list[InstructionRecord],
     *,
     arch: str | None = None,
+    operands: str = "",
 ) -> InstructionRecord | None:
     if not records:
         return None
+    candidates = records
     if arch is not None:
-        for rec in records:
-            if arch in (rec.arch_details or {}):
-                return rec
-    # Prefer the record with most measured-arch coverage, then most archs.
-    def score(rec: InstructionRecord) -> tuple[int, int]:
+        pinned = [r for r in records if arch in (r.arch_details or {})]
+        if pinned:
+            candidates = pinned
+
+    op_tokens = _operand_width_tokens(operands)
+
+    def score(rec: InstructionRecord) -> tuple[int, int, int]:
         measured = sum(
             1 for d in (rec.arch_details or {}).values()
             if (d.get("source_kind") or "measured") == "measured"
         )
-        return (measured, len(rec.arch_details or {}))
+        op_score = _operand_match_score(rec, op_tokens)
+        # Operand match dominates; measurement coverage tiebreaks.
+        return (op_score, measured, len(rec.arch_details or {}))
 
-    return max(records, key=score)
+    return max(candidates, key=score)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +291,33 @@ def _arch_perf(
     return lat, cpi, kind
 
 
+_SUMMARY_BITS_RE = re.compile(r"(\d+)\s*-?\s*bit", re.IGNORECASE)
+_FORM_WIDTH_RE = re.compile(r"[MRI](\d+)")
+
+
+def _summary_matches_form(summary: str, record: InstructionRecord) -> bool:
+    """Drop obviously mislabeled SDM summaries (e.g. the generic MOV
+    blurb "Move 32-bit integer operands." attached to MOV (M64, R64)).
+
+    We only flag a summary as wrong when it declares an explicit bit-width
+    that appears nowhere among the form's operand widths."""
+    m = _SUMMARY_BITS_RE.search(summary or "")
+    if not m:
+        return True
+    declared = m.group(1)
+    widths: list[str] = []
+    for op in record.operand_details or []:
+        w = op.get("width")
+        if w:
+            widths.append(str(w))
+    if not widths:
+        key = str(getattr(record, "key", "") or "")
+        widths = _FORM_WIDTH_RE.findall(key)
+    if not widths:
+        return True
+    return declared in widths
+
+
 def format_annotation(
     record: InstructionRecord,
     *,
@@ -248,7 +329,7 @@ def format_annotation(
 ) -> str:
     """Compose the comment fragment (without the leading ``# `` marker)."""
     parts: list[str] = []
-    if docs and record.summary:
+    if docs and record.summary and _summary_matches_form(record.summary, record):
         parts.append(record.summary.strip())
     if performance:
         if arch is not None:
@@ -294,7 +375,7 @@ def _annotate_instruction(
 ) -> tuple[str, dict[str, Any] | None]:
     """Return the rendered output line and an optional JSON record."""
     records = lookup(parsed.mnemonic, conn)
-    record = pick_record(records, arch=opts.arch)
+    record = pick_record(records, arch=opts.arch, operands=parsed.operands)
 
     if record is None:
         if opts.unknown == "drop":
