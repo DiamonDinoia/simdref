@@ -1,0 +1,88 @@
+name: Release
+
+# Publishes a tagged release to PyPI via OIDC trusted publishing and
+# creates a GitHub Release attaching the built wheel + sdist.
+#
+# IMPORTANT: First time this workflow fires you must have configured the
+# `simdref` project on PyPI with a trusted publisher pointing at:
+#   - Owner:            DiamonDinoia
+#   - Repository:       simdref
+#   - Workflow name:    release.yml
+#   - Environment name: pypi
+# See https://docs.pypi.org/trusted-publishers/ for setup instructions.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # for `gh release create` / attaching artifacts
+  id-token: write   # for PyPI OIDC trusted publishing
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/simdref
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Verify tag matches pyproject version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyver=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag=$tag pyproject=$pyver"
+          if [ "$tag" != "$pyver" ]; then
+            echo "::error::tag $GITHUB_REF_NAME (=$tag) does not match pyproject version $pyver"
+            exit 1
+          fi
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Check distribution metadata
+        run: |
+          uv pip install twine
+          twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes_file=""
+          if [ -f CHANGELOG.md ]; then
+            notes_file="CHANGELOG.md"
+          fi
+          if [ -n "$notes_file" ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "simdref $GITHUB_REF_NAME" \
+              --notes-file "$notes_file" \
+              dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "simdref $GITHUB_REF_NAME" \
+              --generate-notes \
+              dist/*
+          fi

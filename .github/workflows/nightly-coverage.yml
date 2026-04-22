@@ -16,6 +16,9 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    # Drift is purely informational — the PR itself enforces review/merge,
+    # and a missing-upstream-feed failure should not turn the repo badge red.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
@@ -48,6 +51,7 @@ jobs:
           fi
 
       - name: Open PR on drift
+        id: cpr
         if: steps.drift.outputs.drift == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
@@ -58,3 +62,11 @@ jobs:
             Automated upstream parity audit detected coverage drift.
             See `docs/coverage/summary.json` for the updated per-source numbers.
           add-paths: docs/coverage/
+
+      - name: Enable auto-merge on the drift PR
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          gh pr merge "$PR_NUMBER" --auto --squash --delete-branch || true
