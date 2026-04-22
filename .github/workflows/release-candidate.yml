@@ -1,12 +1,12 @@
 name: Release Candidate
 
-# Human-dispatched workflow that validates a proposed release end-to-end
-# *before* pushing the v<version> tag. Only when every check is green
-# does the final job create and push the tag, which in turn triggers
-# release.yml (PyPI publish) and build-data.yml (release-time data build).
+# Human-dispatched release gate. Verifies that the current HEAD has a
+# green CI run, validates version/tag/PyPI preconditions, builds and
+# smoke-tests the wheel, and — only when dry_run=false — pushes the
+# v<version> tag. The tag push then triggers release.yml (PyPI publish)
+# and re-triggers ci.yml under the release event (publishes data-v<ver>).
 #
-# Default `dry_run: true` — the first run just proves everything is
-# green without tagging. Flip to false for the real cut.
+# Default dry_run=true — first run is a no-side-effect validation.
 
 on:
   workflow_dispatch:
@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-candidate-${{ inputs.version }}
@@ -65,15 +66,32 @@ jobs:
             exit 1
           fi
 
+      - name: Require green CI on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find the most recent CI workflow run for this exact SHA and
+          # require it to have concluded successfully. No green CI → no tag.
+          sha="${{ github.sha }}"
+          run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=5" \
+            --jq '[.workflow_runs[] | select(.event=="push" or .event=="workflow_dispatch" or .event=="schedule")][0] // empty')
+          if [ -z "$run_json" ]; then
+            echo "::error::no CI workflow run found for $sha — push first and wait for CI before cutting a release"
+            exit 1
+          fi
+          status=$(echo "$run_json" | jq -r .status)
+          conclusion=$(echo "$run_json" | jq -r .conclusion)
+          echo "ci status=$status conclusion=$conclusion"
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::CI for $sha is not green (status=$status conclusion=$conclusion)"
+            exit 1
+          fi
+
       - id: capture
         run: echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
-  ci:
-    needs: preflight
-    uses: ./.github/workflows/ci.yml
-
   build-wheel:
-    needs: ci
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
