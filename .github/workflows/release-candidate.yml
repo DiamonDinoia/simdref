@@ -1,0 +1,142 @@
+name: Release Candidate
+
+# Human-dispatched workflow that validates a proposed release end-to-end
+# *before* pushing the v<version> tag. Only when every check is green
+# does the final job create and push the tag, which in turn triggers
+# release.yml (PyPI publish) and build-data.yml (release-time data build).
+#
+# Default `dry_run: true` — the first run just proves everything is
+# green without tagging. Flip to false for the real cut.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        description: "Version to release (e.g. 0.0.0). Must match pyproject.toml."
+      dry_run:
+        type: boolean
+        default: true
+        description: "If true, do all checks but don't create the tag."
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.capture.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify pyproject matches input
+        run: |
+          pyver=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "pyproject=$pyver input=${{ inputs.version }}"
+          if [ "$pyver" != "${{ inputs.version }}" ]; then
+            echo "::error::pyproject.toml version ($pyver) does not match input (${{ inputs.version }})"
+            exit 1
+          fi
+
+      - name: Refuse if tag already exists
+        run: |
+          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::tag v${{ inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Refuse if version is already on PyPI
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/simdref/${{ inputs.version }}/json")
+          echo "pypi-status=$status"
+          if [ "$status" = "200" ]; then
+            echo "::error::version ${{ inputs.version }} is already published on PyPI"
+            exit 1
+          fi
+
+      - id: capture
+        run: echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+
+  build-wheel:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - run: uv build
+
+      - name: Check distribution metadata
+        run: |
+          uv pip install twine
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          path: dist/
+
+  install-smoke:
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheel
+          path: dist/
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install wheel into a fresh interpreter
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          simdref --version
+          simdref doctor || true
+
+  tag:
+    needs: install-smoke
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.sha }}
+
+      - name: Create and push tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"

@@ -21,6 +21,7 @@ from simdref.cli import (
     _record_has_source_kind,
     app,
 )
+from simdref.storage import CATALOG_PATH, SQLITE_PATH
 
 
 runner = CliRunner()
@@ -88,6 +89,15 @@ class LlmPureHelperTests(unittest.TestCase):
 
 class LlmCliIntegrationTests(unittest.TestCase):
     """End-to-end tests against the dev-install catalog."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not CATALOG_PATH.exists() or not SQLITE_PATH.exists():
+            raise unittest.SkipTest(
+                f"on-disk catalog missing (expected {CATALOG_PATH} and {SQLITE_PATH}); "
+                "run `simdref build --with-sdm` or `simdref update --from-release` "
+                "to provision it before running integration tests"
+            )
 
     def test_llm_schema_emits_json_schema(self):
         result = runner.invoke(app, ["llm", "schema"])

@@ -1,0 +1,51 @@
+name: Validate Release Assets
+
+# Runs after Build Data & Deploy completes successfully. Pulls the
+# freshly-published data-latest assets and executes the full test suite
+# against them. This is the independent signal that "the thing we just
+# published is consumable end-to-end".
+
+on:
+  workflow_run:
+    workflows: ["Build Data & Deploy"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-release-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: uv pip install -e . pytest
+
+      - name: Pull data-latest (the catalog that was just published)
+        run: simdref update --from-release --man-dir "$RUNNER_TEMP/man"
+
+      - name: Full test suite against released catalog
+        run: python -m pytest tests
+
+      - name: Sanity-run the CLI
+        run: |
+          simdref doctor
+          simdref llm query _mm_add_epi32 || true
+          simdref annotate --help

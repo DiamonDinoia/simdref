@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.0.0
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
           activate-environment: true
@@ -63,6 +63,13 @@ jobs:
         run: |
           uv pip install twine
           twine check dist/*
+
+      - name: Install round-trip check (wheel imports cleanly)
+        run: |
+          python -m venv /tmp/rt
+          /tmp/rt/bin/python -m pip install --upgrade pip
+          /tmp/rt/bin/python -m pip install dist/*.whl
+          /tmp/rt/bin/simdref --version
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
