@@ -110,14 +110,16 @@ class SimdrefGroup(TyperGroup):
 
 app = typer.Typer(
     cls=SimdrefGroup,
+    add_completion=False,
     help=(
         "Local SIMD reference across Intel intrinsics, instruction data, performance measurements, and SDM-derived descriptions.\n\n"
         "Run without arguments to open the TUI. Pass a bare query to search or open matching results directly.\n\n"
-        "Common rebuild commands:\n"
-        "  simdref update                  Download the pre-built release catalog (no llvm-mca required).\n"
-        "  simdref update --build          Full local rebuild from upstream sources (requires llvm-mca).\n"
-        "  simdref update --build --with-sdm\n"
-        "                                  Heaviest local rebuild, including Intel SDM parsing."
+        "Installed under two names — 'isa' (short) and 'simdref' (explicit) — both accept every subcommand.\n\n"
+        "Common commands:\n"
+        "  isa update                  Download the pre-built release catalog (no llvm-mca required).\n"
+        "  isa build                   Full local rebuild from upstream sources (requires llvm-mca).\n"
+        "  isa build --with-sdm        Heaviest local rebuild, including Intel SDM parsing.\n"
+        "  isa completion install      Install shell completion into your shell profile."
     ),
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -661,7 +663,8 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
     for key, value in env.items():
         if not key.endswith("_COMPLETE"):
             continue
-        if "SIMDREF" not in key.upper():
+        upper = key.upper()
+        if "SIMDREF" not in upper and upper != "_ISA_COMPLETE":
             continue
         if value:
             return True
@@ -673,33 +676,39 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Usage")
+@app.command(rich_help_panel="Commands")
 def update(
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
-    build: bool = typer.Option(False, "--build", help="(advanced / CI use) Build locally from upstream sources (requires llvm-mca on PATH). Uses substantially more RAM than the default download path."),
-    with_sdm: bool = typer.Option(False, "--with-sdm", help="(advanced / CI use) Also parse the Intel SDM PDF for descriptions and page references. Heaviest local-build path; intended for CI/release generation."),
+    build: bool = typer.Option(False, "--build", help="[DEPRECATED] Moved to 'simdref build'. Kept for the v0.0.0 release only; forwards to the new command.", hidden=True),
+    with_sdm: bool = typer.Option(False, "--with-sdm", help="[DEPRECATED] Moved to 'simdref build --with-sdm'.", hidden=True),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
-    """Refresh runtime data.
-
-    Default behavior downloads the pre-built release catalog. Use
-    ``--build`` for a full local rebuild (requires ``llvm-mca`` on PATH
-    for modeled ARM/RISC-V perf rows).
-    """
-    if with_sdm and not build:
-        raise typer.BadParameter("--with-sdm requires --build")
+    """Download the pre-built release catalog (no llvm-mca required)."""
+    if build or with_sdm:
+        err_console.print(
+            "warning: 'simdref update --build' (and --with-sdm) is deprecated; use 'simdref build' instead",
+            style="yellow",
+        )
+        _require_llvm_mca_or_hint()
+        _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
+        return
 
     if from_release:
         _download_from_release()
         _finalize_runtime_from_download(man_dir=man_dir)
         return
 
-    if build:
-        _require_llvm_mca_or_hint()
-        _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
-        return
-
     _download_release_or_fallback(man_dir=man_dir)
+
+
+@app.command(rich_help_panel="Dev commands")
+def build(
+    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. Heaviest rebuild; intended for CI/release generation."),
+    man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
+) -> None:
+    """Full local rebuild from upstream sources (requires llvm-mca on PATH)."""
+    _require_llvm_mca_or_hint()
+    _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
 
 
 def _require_llvm_mca_or_hint() -> None:
@@ -923,7 +932,7 @@ def _llm_schema_payload() -> dict:
 
 
 llm_app = typer.Typer(help="Structured output for LLM/tool consumption.", invoke_without_command=False)
-_LLM_HELP_PANEL = "Usage"
+_LLM_HELP_PANEL = "Commands"
 
 
 def _build_llm_payload(
@@ -1183,6 +1192,72 @@ def llm_schema() -> None:
 app.add_typer(llm_app, name="llm", rich_help_panel=_LLM_HELP_PANEL)
 
 
+# ---------------------------------------------------------------------------
+# Shell completion (opt-in subcommand; replaces Typer's default
+# --install-completion / --show-completion options)
+# ---------------------------------------------------------------------------
+
+
+completion_app = typer.Typer(help="Shell completion helpers.", no_args_is_help=True)
+
+_COMPLETION_SHELLS = ("bash", "zsh", "fish", "powershell", "pwsh")
+
+
+def _resolve_completion_shell(shell: str | None) -> str:
+    if shell:
+        shell = shell.strip().lower()
+    else:
+        shell_env = os.environ.get("SHELL", "")
+        shell = Path(shell_env).name.lower() if shell_env else ""
+    if shell not in _COMPLETION_SHELLS:
+        err_console.print(
+            f"error: unsupported or undetected shell '{shell}'; pass one of {', '.join(_COMPLETION_SHELLS)}",
+            style="red",
+        )
+        raise typer.Exit(code=1)
+    return shell
+
+
+def _completion_prog_name() -> str:
+    prog = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "simdref"
+    # Strip a stray ``__main__.py`` when invoked via ``python -m simdref``.
+    if prog in {"", "__main__.py"}:
+        prog = "simdref"
+    return prog
+
+
+@completion_app.command("show")
+def completion_show(
+    shell: str = typer.Argument(None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."),
+) -> None:
+    """Print a shell completion script to stdout."""
+    shell = _resolve_completion_shell(shell)
+    from typer._completion_shared import get_completion_script
+    prog_name = _completion_prog_name()
+    complete_var = f"_{prog_name.upper().replace('-', '_')}_COMPLETE"
+    typer.echo(get_completion_script(prog_name=prog_name, complete_var=complete_var, shell=shell))
+
+
+@completion_app.command("install")
+def completion_install(
+    shell: str = typer.Argument(None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."),
+) -> None:
+    """Install shell completion into the user's shell profile."""
+    shell = _resolve_completion_shell(shell)
+    from typer._completion_shared import install as _install_completion
+    prog_name = _completion_prog_name()
+    complete_var = f"_{prog_name.upper().replace('-', '_')}_COMPLETE"
+    try:
+        shell_detected, path = _install_completion(shell=shell, prog_name=prog_name, complete_var=complete_var)
+    except Exception as exc:
+        err_console.print(f"error: completion install failed: {exc}", style="red")
+        raise typer.Exit(code=1) from exc
+    err_console.print(f"installed {shell_detected} completion for {prog_name} at {path}", style="green")
+
+
+app.add_typer(completion_app, name="completion", rich_help_panel="Dev commands")
+
+
 def _registered_command_names() -> set[str]:
     """Return the set of Typer commands + subcommand groups the dispatcher knows about.
 
@@ -1202,7 +1277,7 @@ def _registered_command_names() -> set[str]:
     return names
 
 
-@app.command(rich_help_panel="Usage")
+@app.command(rich_help_panel="Commands")
 def doctor() -> None:
     """Validate installation and show catalog stats."""
     catalog = ensure_catalog()
@@ -1227,19 +1302,13 @@ def _export_web_impl(web_dir: Path) -> None:
     console.print(f"exported static web app to {web_dir}", style="green")
 
 
-@app.command("web", rich_help_panel="Maintenance")
+@app.command("web", rich_help_panel="Dev commands")
 def web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
     """Export static web app."""
     _export_web_impl(web_dir)
 
 
-@app.command("export-web", hidden=True)
-def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
-    """Export static web app."""
-    _export_web_impl(web_dir)
-
-
-@app.command("serve", rich_help_panel="Usage")
+@app.command("serve", rich_help_panel="Dev commands")
 def serve_command(
     web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
     host: str = typer.Option("127.0.0.1"),

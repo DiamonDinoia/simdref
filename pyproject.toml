@@ -39,6 +39,7 @@ dependencies = [
 
 [project.scripts]
 simdref = "simdref.cli:main"
+isa = "simdref.cli:main"
 simdref-lsp = "simdref.lsp:main"
 
 [tool.setuptools]
