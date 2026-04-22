@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import Mock, patch
 
 try:
     import textual  # noqa: F401
@@ -116,6 +117,80 @@ class TuiKeybindingSmokeTests(unittest.TestCase):
                 self.assertEqual(len(detail.children), 0)
 
         self._run(scenario())
+
+
+@unittest.skipUnless(HAS_TEXTUAL, "textual required")
+class TuiAnnotateClipboardTests(unittest.TestCase):
+    def _run(self, coro):
+        asyncio.run(coro)
+
+    def test_annotate_input_does_not_define_custom_clipboard_aliases(self):
+        from simdref.tui import _AnnInput
+
+        keys = {getattr(binding, "key", None) for binding in _AnnInput.__dict__.get("BINDINGS", [])}
+        self.assertNotIn("ctrl+shift+c", keys)
+        self.assertNotIn("ctrl+shift+x", keys)
+        self.assertNotIn("ctrl+shift+v", keys)
+        self.assertNotIn("shift+insert", keys)
+
+    def test_ctrl_v_pastes_via_native_textarea_binding(self):
+        from textual.app import App, ComposeResult
+        from simdref.tui import _AnnInput
+
+        class ClipboardHarness(App):
+            def compose(self) -> ComposeResult:
+                yield _AnnInput.code_editor("", language=None, soft_wrap=False, id="ann-input")
+
+            def _prepare_annotate_clipboard_for_paste(self) -> str | None:
+                self._clipboard = "vaddps %ymm2, %ymm1, %ymm0\n"
+                return self._clipboard
+
+        async def scenario():
+            app = ClipboardHarness()
+            async with app.run_test() as pilot:
+                ta = app.query_one("#ann-input", _AnnInput)
+                ta.focus()
+                await pilot.press("ctrl+v")
+                await pilot.pause()
+                self.assertEqual(ta.text, "vaddps %ymm2, %ymm1, %ymm0\n")
+
+        self._run(scenario())
+
+    def test_prepare_paste_prefers_system_clipboard_over_local(self):
+        from simdref.tui import SimdrefApp
+
+        app = SimdrefApp(initial_view="annotate")
+        app._clipboard = "stale-local"
+        app._ann_local_clipboard_valid = True
+        app.notify = Mock()
+        with patch.object(app, "_read_system_clipboard", return_value="external-clipboard"):
+            text = app._prepare_annotate_clipboard_for_paste()
+        self.assertEqual(text, "external-clipboard")
+        self.assertEqual(app.clipboard, "external-clipboard")
+        self.assertFalse(app._ann_local_clipboard_valid)
+
+    def test_prepare_paste_uses_local_clipboard_only_for_app_copy(self):
+        from simdref.tui import SimdrefApp
+
+        app = SimdrefApp(initial_view="annotate")
+        app._clipboard = "internal-copy"
+        app._ann_local_clipboard_valid = True
+        app.notify = Mock()
+        with patch.object(app, "_read_system_clipboard", return_value=None):
+            text = app._prepare_annotate_clipboard_for_paste()
+        self.assertEqual(text, "internal-copy")
+
+    def test_prepare_paste_does_not_use_stale_local_clipboard(self):
+        from simdref.tui import SimdrefApp
+
+        app = SimdrefApp(initial_view="annotate")
+        app._clipboard = "stale-local"
+        app._ann_local_clipboard_valid = False
+        app.notify = Mock()
+        with patch.object(app, "_read_system_clipboard", return_value=None):
+            text = app._prepare_annotate_clipboard_for_paste()
+        self.assertIsNone(text)
+        app.notify.assert_called()
 
 
 if __name__ == "__main__":

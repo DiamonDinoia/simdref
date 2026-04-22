@@ -579,6 +579,111 @@ class ResultItem(ListItem):
         super().__init__(Static(label, markup=True))
 
 
+class _AnnInput(TextArea):
+    """Annotate input TextArea using Textual's native editing actions."""
+
+    def action_paste(self) -> None:
+        app = self.app
+        text = None
+        prepare = getattr(app, "_prepare_annotate_clipboard_for_paste", None)
+        if prepare is not None:
+            text = prepare()
+            if text is None:
+                return
+        else:
+            text = getattr(app, "clipboard", "") or ""
+            if not text:
+                return
+        super().action_paste()
+        try:
+            app.query_one("#ann-status", Label).update(f"Pasted {len(text)} chars")
+        except Exception:
+            pass
+        schedule = getattr(app, "_schedule_annotate", None)
+        if schedule is not None:
+            schedule(delay=0.75 if len(text) > 5000 else 0.35)
+
+
+class _AnnOutput(Static):
+    """Annotate output pane — focusable, copies its full rendered text."""
+
+    can_focus = True
+
+    BINDINGS = [
+        Binding("ctrl+c", "copy_all", "Copy all", show=False),
+    ]
+
+    def action_copy_all(self) -> None:
+        app = self.app
+        fn = getattr(app, "_ann_copy_output", None)
+        if fn is not None:
+            fn()
+
+
+class AnnContextMenu(ModalScreen):
+    """Right-click context menu for the annotate input/output panes."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        Binding("q", "dismiss", "Close", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    AnnContextMenu {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.35);
+    }
+    AnnContextMenu > Vertical {
+        width: 28;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 0;
+    }
+    AnnContextMenu Button {
+        width: 100%;
+        border: none;
+        background: $surface;
+        color: $text;
+        content-align: left middle;
+        padding: 0 2;
+        height: 1;
+    }
+    AnnContextMenu Button:hover,
+    AnnContextMenu Button:focus {
+        background: $accent 25%;
+        color: $accent;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, target_id: str, has_selection: bool) -> None:
+        super().__init__()
+        self._target_id = target_id
+        self._has_selection = has_selection
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Button("Cut", id="ctx-cut", disabled=not self._has_selection)
+            yield Button("Copy", id="ctx-copy", disabled=not self._has_selection and self._target_id == "ann-input")
+            yield Button("Paste", id="ctx-paste")
+            yield Button("Select All", id="ctx-select-all")
+            yield Button("Clear", id="ctx-clear")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = getattr(event.button, "id", "") or ""
+        app = self.app
+        fn = getattr(app, "_ctx_action", None)
+        # Dispatch via a helper on the app so the action runs in the
+        # right context after the modal pops.
+        self.dismiss()
+        if fn is not None:
+            fn(bid, self._target_id)
+
+    def action_dismiss(self) -> None:  # type: ignore[override]
+        self.app.pop_screen()
+
+
 class HelpScreen(ModalScreen):
     """Modal overlay listing active keybindings."""
 
@@ -818,6 +923,7 @@ class SimdrefApp(App):
         self._family_subs: dict[str, list[str]] = {}
         self._enabled_kinds: set[str] = {"intrinsic", "instruction"}
         self._enabled_arm_arch: set[str] | None = None
+        self._ann_local_clipboard_valid = False
         # Cached frozensets of filter state passed to _fts_search; cleared
         # whenever a toggle changes. Avoids rebuilding sets per keystroke.
         self._filter_fs_cache: tuple[frozenset[str], frozenset[str] | None] | None = None
@@ -874,14 +980,14 @@ class SimdrefApp(App):
                     yield Button("Annotate", id="ann-run", variant="primary")
                     yield Button("Clear", id="ann-clear")
                 with Horizontal(id="ann-panes"):
-                    yield TextArea.code_editor(
+                    yield _AnnInput.code_editor(
                         self._initial_asm,
                         language=None,
                         soft_wrap=False,
                         id="ann-input",
                     )
                     yield _AnnSplitter(id="ann-splitter")
-                    yield VerticalScroll(Static("", id="ann-output"), id="ann-output-wrap")
+                    yield VerticalScroll(_AnnOutput("", id="ann-output"), id="ann-output-wrap")
         yield Label("", id="status-label")
         yield Label("", id="ann-status")
         yield Footer()
@@ -1674,21 +1780,57 @@ class SimdrefApp(App):
         text = "\n".join(lines)
         self._copy_to_clipboard(text)
 
-    def _copy_to_clipboard(self, text: str) -> None:
-        """Copy text to system clipboard using available tool."""
-        for cmd in (
-            ["wl-copy"],
-            ["xclip", "-selection", "clipboard"],
-            ["xsel", "--clipboard", "--input"],
-        ):
+    def _write_system_clipboard(self, text: str) -> bool:
+        """Best-effort write to the OS clipboard using native tools."""
+        prefer_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+        commands: list[list[str]] = []
+        if prefer_wayland:
+            commands.append(["wl-copy"])
+        else:
+            commands.extend(
+                [
+                    ["xclip", "-selection", "clipboard"],
+                    ["xsel", "--clipboard", "--input"],
+                ]
+            )
+        commands.append(["pbcopy"])
+        for cmd in commands:
             if shutil.which(cmd[0]):
                 try:
                     subprocess.run(cmd, input=text.encode(), check=True, timeout=5)
-                    self.notify("Copied to clipboard", severity="information", timeout=2)
-                    return
+                    return True
                 except (subprocess.SubprocessError, OSError):
                     continue
-        self.notify("No clipboard tool found (install xclip, xsel, or wl-copy)", severity="warning", timeout=3)
+        if prefer_wayland and self._qt_write_system_clipboard(text):
+            return True
+        if not prefer_wayland:
+            if self._qt_write_system_clipboard(text):
+                return True
+        return False
+
+    def copy_to_clipboard(self, text: str) -> None:  # type: ignore[override]
+        """Update Textual's local clipboard and mirror it to the OS clipboard."""
+        super().copy_to_clipboard(text)
+        self._ann_local_clipboard_valid = True
+        self._write_system_clipboard(text)
+
+    def _copy_to_clipboard(self, text: str) -> None:
+        """Copy text and show a concise status notification."""
+        self.copy_to_clipboard(text)
+        # OSC 52 fallback — the terminal emulator writes to the system
+        # clipboard. Works in most modern terminals (gnome-terminal,
+        # konsole, kitty, alacritty, iTerm2, Windows Terminal) without
+        # any extra tooling.
+        try:
+            self.notify("Copied to clipboard", severity="information", timeout=2)
+            return
+        except Exception:
+            pass
+        self.notify(
+            "Copied to local clipboard",
+            severity="warning",
+            timeout=3,
+        )
 
     def action_pick(self, index: int) -> None:
         """Select result by number and show its detail."""
@@ -1742,6 +1884,141 @@ class SimdrefApp(App):
         tid = getattr(widget, "id", "") if widget is not None else ""
         if tid in ("tab-search", "tab-annotate"):
             self._set_tab("annotate" if tid == "tab-annotate" else "search")
+            return
+        if getattr(event, "button", 0) == 3 and tid in ("ann-input", "ann-output"):
+            event.stop()
+            self._open_ann_context_menu(tid)
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:  # pragma: no cover - UI wiring
+        if getattr(event, "button", 0) != 3:
+            return
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        tid = getattr(widget, "id", "") if widget is not None else ""
+        if tid in ("ann-input", "ann-output"):
+            event.stop()
+            self._open_ann_context_menu(tid)
+
+    def _open_ann_context_menu(self, target_id: str) -> None:
+        has_sel = False
+        if target_id == "ann-input":
+            try:
+                ta = self.query_one("#ann-input", TextArea)
+                has_sel = bool(getattr(ta, "selected_text", "") or "")
+            except Exception:
+                has_sel = False
+        self.push_screen(AnnContextMenu(target_id=target_id, has_selection=has_sel))
+
+    def _ctx_action(self, bid: str, target_id: str) -> None:
+        """Dispatcher for the right-click context menu."""
+        try:
+            ta = self.query_one("#ann-input", _AnnInput) if target_id == "ann-input" else None
+        except Exception:
+            ta = None
+
+        if bid == "ctx-paste":
+            if ta is not None:
+                ta.action_paste()
+                ta.focus()
+            return
+        if bid == "ctx-clear":
+            if ta is not None:
+                ta.text = ""
+            try:
+                out = self.query_one("#ann-output", _AnnOutput)
+                out.update("")
+            except Exception:
+                pass
+            try:
+                self.query_one("#ann-status", Label).update("")
+            except Exception:
+                pass
+            return
+        if bid == "ctx-select-all":
+            if ta is not None:
+                try:
+                    ta.action_select_all()
+                except Exception:
+                    text = getattr(ta, "text", "") or ""
+                    if hasattr(ta, "selection"):
+                        try:
+                            ta.selection = ((0, 0), self._text_end(text))
+                        except Exception:
+                            pass
+            else:
+                # Output pane — "select all" means "copy all" in a TUI
+                # (terminal mouse selection is limited to visible text).
+                self._ann_copy_output()
+            return
+        if bid == "ctx-copy":
+            if ta is not None:
+                self._ann_copy_input(ta)
+            else:
+                self._ann_copy_output()
+            return
+        if bid == "ctx-cut":
+            if ta is not None:
+                self._ann_cut_input(ta)
+            return
+
+    # ── Clipboard helpers for the annotate panes ────────────────────
+    def _ann_copy_input(self, ta: "_AnnInput") -> None:
+        text = getattr(ta, "selected_text", "") or ""
+        if not text:
+            self.notify("Nothing to copy", severity="information", timeout=2)
+            return
+        ta.action_copy()
+        try:
+            self.query_one("#ann-status", Label).update(f"Copied {len(text)} chars")
+        except Exception:
+            pass
+
+    def _ann_cut_input(self, ta: "_AnnInput") -> None:
+        text = getattr(ta, "selected_text", "") or ""
+        if not text:
+            self.notify("Nothing to cut (no selection)", severity="information", timeout=2)
+            return
+        ta.action_cut()
+        try:
+            self.query_one("#ann-status", Label).update(f"Cut {len(text)} chars")
+        except Exception:
+            pass
+
+    def _prepare_annotate_clipboard_for_paste(self) -> str | None:
+        text = self._read_system_clipboard()
+        if text is not None:
+            if not text:
+                self.notify("Clipboard is empty", severity="information", timeout=2)
+                return None
+            self._clipboard = text
+            self._ann_local_clipboard_valid = False
+            return text
+        local = self.clipboard
+        if self._ann_local_clipboard_valid and local:
+            return local
+        self.notify("Paste failed: clipboard is unavailable", severity="warning", timeout=4)
+        return None
+
+    def _ann_copy_output(self) -> None:
+        try:
+            out = self.query_one("#ann-output", _AnnOutput)
+        except Exception:
+            return
+        text = str(getattr(out, "renderable", "") or "")
+        if not text:
+            self.notify("Nothing to copy", severity="information", timeout=2)
+            return
+        self._copy_to_clipboard(text)
+        try:
+            self.query_one("#ann-status", Label).update(f"Copied {len(text)} chars")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _text_end(text: str) -> tuple[int, int]:
+        if not text:
+            return (0, 0)
+        lines = text.split("\n")
+        return (len(lines) - 1, len(lines[-1]))
 
     # ── Annotate pane ───────────────────────────────────────────────
     def _annotate_options(self):
@@ -1831,6 +2108,19 @@ class SimdrefApp(App):
     def _on_ann_input_changed(self, event) -> None:
         self._schedule_annotate()
 
+    def on_paste(self, event: events.Paste) -> None:
+        focused = self.focused
+        if getattr(focused, "id", None) != "ann-input":
+            return
+        try:
+            self.query_one("#ann-status", Label).update(f"Pasted {len(event.text)} chars")
+        except Exception:
+            pass
+        # Textual enables bracketed paste for supported terminals, so native
+        # terminal paste arrives here as one logical payload. Back off the
+        # debounce slightly for larger payloads to avoid re-render churn.
+        self._schedule_annotate(delay=0.75 if len(event.text) > 5000 else 0.35)
+
     @on(Checkbox.Changed, "#ann-perf, #ann-docs, #ann-modeled")
     def _on_ann_checkbox_changed(self, event) -> None:
         self._schedule_annotate(delay=0.05)
@@ -1859,6 +2149,16 @@ class SimdrefApp(App):
         if self._current_tab() != "annotate":
             return
         self._apply_ann_split(self._ann_split_ratio + float(delta))
+
+    def action_ann_paste_clipboard(self) -> None:
+        """Explicit paste action for callers that want to trigger paste."""
+        if self._current_tab() != "annotate":
+            self._set_tab("annotate")
+        try:
+            ta = self.query_one("#ann-input", _AnnInput)
+        except Exception:
+            return
+        ta.action_paste()
 
     def action_focus_search(self) -> None:
         if self._current_tab() != "search":
@@ -1915,9 +2215,16 @@ class SimdrefApp(App):
                 self.exit(1)
             return
 
-        # '?' always opens the help modal, even when the Input has focus
-        # (Input's character-capture runs before App-level priority bindings).
-        if event.character == "?" and not isinstance(self.screen, HelpScreen):
+        # '?' always opens the help modal, even when the search Input has
+        # focus (Input's character-capture runs before App-level priority
+        # bindings). BUT skip this when the annotate TextArea is focused —
+        # pasted asm/text legitimately contains '?' and swallowing it would
+        # break paste.
+        if (
+            event.character == "?"
+            and not isinstance(self.screen, HelpScreen)
+            and not isinstance(self.focused, TextArea)
+        ):
             event.prevent_default()
             event.stop()
             self.action_show_help()
@@ -1927,6 +2234,83 @@ class SimdrefApp(App):
         if isinstance(focused, (ListView, VerticalScroll)):
             if self._refine_search_from_key(event):
                 return
+
+    def _qt_read_system_clipboard(self) -> str | None:
+        script = (
+            "import sys\n"
+            "from PyQt6.QtGui import QGuiApplication\n"
+            "app = QGuiApplication([])\n"
+            "sys.stdout.write(app.clipboard().text())\n"
+        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                timeout=5,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.decode(errors="replace")
+
+    def _qt_write_system_clipboard(self, text: str) -> bool:
+        script = (
+            "import sys\n"
+            "from PyQt6.QtCore import QTimer\n"
+            "from PyQt6.QtGui import QGuiApplication\n"
+            "app = QGuiApplication([])\n"
+            "app.clipboard().setText(sys.stdin.read())\n"
+            "QTimer.singleShot(50, app.quit)\n"
+            "app.exec()\n"
+        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", script],
+                input=text.encode(),
+                timeout=5,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return False
+        return proc.returncode == 0
+
+    def _read_system_clipboard(self) -> str | None:
+        """Read system clipboard via the first available paste tool.
+
+        On Wayland, avoid xclip/xsel as the primary source because they often
+        see only the X11 clipboard. Prefer wl-clipboard or a Qt backend there.
+        """
+        prefer_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+        commands: list[list[str]] = []
+        if prefer_wayland:
+            commands.append(["wl-paste"])
+        else:
+            commands.extend(
+                [
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    ["xsel", "--clipboard", "--output"],
+                ]
+            )
+        commands.append(["pbpaste"])
+        for cmd in commands:
+            if not shutil.which(cmd[0]):
+                continue
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, timeout=15
+                )
+            except (subprocess.SubprocessError, OSError):
+                continue
+            return proc.stdout.decode(errors="replace")
+        if prefer_wayland:
+            text = self._qt_read_system_clipboard()
+            if text is not None:
+                return text
+        else:
+            text = self._qt_read_system_clipboard()
+            if text is not None:
+                return text
+        return None
 
     @work(thread=True)
     def _run_update(self) -> None:
