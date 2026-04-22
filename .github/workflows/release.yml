@@ -69,7 +69,7 @@ jobs:
           python -m venv /tmp/rt
           /tmp/rt/bin/python -m pip install --upgrade pip
           /tmp/rt/bin/python -m pip install dist/*.whl
-          /tmp/rt/bin/simdref --version
+          /tmp/rt/bin/python -c "import simdref; print(simdref.__version__)"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
