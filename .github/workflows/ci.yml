@@ -5,6 +5,7 @@ on:
   push:
     branches-ignore:
       - gh-pages
+  workflow_call:
 
 permissions:
   contents: read
