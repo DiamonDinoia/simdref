@@ -372,6 +372,76 @@ def _fts_search(
 # ---------------------------------------------------------------------------
 
 
+class _AnnSplitter(Static):
+    """Draggable vertical splitter between the annotate input and output.
+
+    Mouse drag adjusts the split ratio; arrow keys also work when focused.
+    Emits a custom message so the App can re-flow the panes."""
+
+    DEFAULT_CSS = ""  # styled from the App's global CSS block
+
+    can_focus = True
+
+    class Moved(Message):
+        def __init__(self, ratio: float) -> None:
+            super().__init__()
+            self.ratio = max(0.1, min(0.9, ratio))
+
+    def __init__(self, *, glyph: str = "║", id: str | None = None) -> None:
+        super().__init__(glyph, id=id, classes="ann-splitter")
+        self._dragging = False
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:  # pragma: no cover - UI wiring
+        self._dragging = True
+        self.add_class("-dragging")
+        self.capture_mouse(True)
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:  # pragma: no cover - UI wiring
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.remove_class("-dragging")
+        self.capture_mouse(False)
+        event.stop()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:  # pragma: no cover - UI wiring
+        if not self._dragging:
+            return
+        parent = self.parent
+        if parent is None:
+            return
+        parent_region = parent.region
+        if parent_region.width <= 0:
+            return
+        # event.screen_x is relative to the screen origin; shift into parent coords.
+        x_in_parent = event.screen_x - parent_region.x
+        ratio = x_in_parent / parent_region.width
+        self.post_message(self.Moved(ratio))
+
+    def on_key(self, event: events.Key) -> None:  # pragma: no cover - UI wiring
+        if event.key in ("left", "right"):
+            delta = -0.05 if event.key == "left" else 0.05
+            parent = self.parent
+            parent_region = getattr(parent, "region", None) if parent is not None else None
+            width = parent_region.width if parent_region else 60
+            if width <= 0:
+                return
+            # Nudge by a % step, independent of current position — the App
+            # clamps the new ratio.
+            current_fraction = None
+            try:
+                sibling = parent.query_one("#ann-input") if parent else None
+                cw = sibling.region.width if sibling and sibling.region else None
+                if cw is not None and width > 0:
+                    current_fraction = cw / width
+            except Exception:
+                current_fraction = None
+            new_ratio = (current_fraction if current_fraction is not None else 0.33) + delta
+            self.post_message(self.Moved(new_ratio))
+            event.stop()
+
+
 class _ToggleChip(Static):
     """Base clickable toggle chip for ISA/category filters."""
 
@@ -592,17 +662,26 @@ class SimdrefApp(App):
         height: 1fr;
         margin: 0 1;
     }
-    #ann-panes > * {
-        width: 1fr;
+    #ann-input, #ann-output-wrap {
         border: solid $primary;
-    }
-    #ann-input {
         height: 100%;
     }
+    #ann-input { width: 33fr; }
+    #ann-output-wrap { width: 67fr; }
     #ann-output {
-        height: 100%;
-        overflow-y: scroll;
+        height: auto;
+        min-height: 100%;
         padding: 0 1;
+    }
+    .ann-splitter {
+        width: 1;
+        height: 100%;
+        background: $primary 20%;
+        color: $accent;
+        content-align: center middle;
+    }
+    .ann-splitter:hover, .ann-splitter.-dragging {
+        background: $accent 50%;
     }
     #ann-status {
         dock: bottom;
@@ -687,10 +766,14 @@ class SimdrefApp(App):
         Binding("1-9", "pick(0)", "Pick result", show=True, key_display="1-9"),
         Binding("c", "copy_detail", "Copy", show=True),
         Binding("ctrl+t", "switch_tab", "Switch tab", show=True, priority=True, key_display="^t"),
+        Binding("ctrl+left", "ann_split(-0.05)", show=False, priority=True, key_display="^←"),
+        Binding("ctrl+right", "ann_split(0.05)", show=False, priority=True, key_display="^→"),
         Binding("q", "quit", "Quit", show=True),
         Binding("ctrl+d", "quit", "Quit", show=True, priority=True, key_display="^d"),
-        Binding("j", "list_cursor_down", show=False, priority=True),
-        Binding("k", "list_cursor_up", show=False, priority=True),
+        # Non-priority so TextArea / Input consume letters while focused —
+        # otherwise pasted asm containing "j"/"k" gets swallowed.
+        Binding("j", "list_cursor_down", show=False),
+        Binding("k", "list_cursor_up", show=False),
         *[Binding(str(n), f"pick({n})", show=False) for n in range(1, 10)],
     ]
 
@@ -709,6 +792,7 @@ class SimdrefApp(App):
         self._initial_asm = initial_asm
         self._annotate_debounce_timer = None  # textual Timer, set in on_mount
         self._annotate_last_text: str = ""
+        self._ann_split_ratio: float = 0.33  # fraction of width for input pane
         self._current_results: list[SearchResult] = []
         self._current_query: str = ""
         self._has_more_results = False
@@ -796,6 +880,7 @@ class SimdrefApp(App):
                         soft_wrap=False,
                         id="ann-input",
                     )
+                    yield _AnnSplitter(id="ann-splitter")
                     yield VerticalScroll(Static("", id="ann-output"), id="ann-output-wrap")
         yield Label("", id="status-label")
         yield Label("", id="ann-status")
@@ -816,6 +901,7 @@ class SimdrefApp(App):
         # Defer until first layout pass so container width is known
         self.call_after_refresh(self._refresh_sub_isa_bar)
         # Apply initial tab + annotate seed before focusing anything.
+        self._apply_ann_split(self._ann_split_ratio)
         self._set_tab(self._initial_view)
         if self._initial_view == "annotate":
             # _set_tab already focused ann-input and scheduled annotate.
@@ -1752,6 +1838,27 @@ class SimdrefApp(App):
     @on(Select.Changed, "#ann-isa, #ann-agg")
     def _on_ann_select_changed(self, event) -> None:
         self._schedule_annotate(delay=0.05)
+
+    # ── Annotate split-pane resize ──────────────────────────────────
+    def _apply_ann_split(self, ratio: float) -> None:
+        ratio = max(0.1, min(0.9, ratio))
+        self._ann_split_ratio = ratio
+        left = max(1, int(round(ratio * 100)))
+        right = max(1, 100 - left)
+        try:
+            self.query_one("#ann-input").styles.width = f"{left}fr"
+            self.query_one("#ann-output-wrap").styles.width = f"{right}fr"
+        except Exception:
+            pass
+
+    @on(_AnnSplitter.Moved)
+    def _on_ann_split_moved(self, event: "_AnnSplitter.Moved") -> None:
+        self._apply_ann_split(event.ratio)
+
+    def action_ann_split(self, delta: float) -> None:
+        if self._current_tab() != "annotate":
+            return
+        self._apply_ann_split(self._ann_split_ratio + float(delta))
 
     def action_focus_search(self) -> None:
         if self._current_tab() != "search":
