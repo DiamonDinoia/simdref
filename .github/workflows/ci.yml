@@ -1,10 +1,25 @@
 name: CI
 
+# Single-pipeline, strict order:
+#   1. build-catalog  — create the catalog from upstream sources.
+#   2. test, package  — use the catalog (tests + wheel build).
+#   3. publish-data   — publish data-latest (+ data-v<ver> on release).
+#   4. deploy-pages, validate-release — consume the published data.
+#
+# Every edge is expressed via `needs:`. Nothing fires out of order or
+# on missing state; a red step breaks the whole chain deterministically.
+
 on:
   pull_request:
   push:
     branches-ignore:
       - gh-pages
+  release:
+    types:
+      - published
+  schedule:
+    - cron: "0 0 * * 1" # weekly (Mon 00:00 UTC) — refresh data-latest from upstream
+  workflow_dispatch:
   workflow_call:
 
 permissions:
@@ -15,7 +30,104 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests:
+  # ───────────────────────────────────────────────────────────────────
+  # Phase 1 — data creation
+  # ───────────────────────────────────────────────────────────────────
+  build-catalog:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+    outputs:
+      data_tag: ${{ steps.meta.outputs.data_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      # No catalog cache: every run rebuilds from current upstream
+      # sources. Trades ~10 min of runtime for guaranteed freshness and
+      # zero chance of a stale cache masking a schema or ingestion
+      # regression.
+      - name: Install LLVM 22 toolchain
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+
+      - name: Install package
+        run: uv pip install -e .
+
+      - name: Vendor RISC-V sources
+        run: |
+          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
+          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
+          python tools/vendor_riscv_sources.py
+
+      - name: Build catalog
+        run: python -u -m simdref build
+
+      - name: Validate upstream ingestion
+        run: python tools/validate_sources.py --require-sdm
+
+      - name: Assert catalog carries measured + modeled perf rows
+        run: |
+          python - <<'PY'
+          import msgpack
+          from pathlib import Path
+          data = msgpack.unpackb(Path("data/derived/catalog.msgpack").read_bytes(), raw=False)
+          instructions = data.get("instructions") or []
+          measured = modeled = 0
+          for inst in instructions:
+              for entry in (inst.get("arch_details") or {}).values():
+                  if isinstance(entry, dict):
+                      if entry.get("source_kind") == "modeled":
+                          modeled += 1
+                      else:
+                          measured += 1
+          print(f"measured arch_details rows: {measured}")
+          print(f"modeled  arch_details rows: {modeled}")
+          assert measured >= 1000, f"too few measured rows: {measured}"
+          assert modeled >= 1000, f"too few modeled rows: {modeled}"
+          PY
+
+      - name: Compute data tag
+        id: meta
+        run: |
+          VERSION=$(python -c "from simdref import __version__; print(__version__)")
+          echo "data_tag=data-v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Package perf cache
+        run: |
+          if [ -d vendor/perf-cache ]; then
+            tar --zstd -cf perf-cache.tar.zst -C vendor perf-cache
+          else
+            : > perf-cache.tar.zst
+          fi
+
+      - name: Upload catalog artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: catalog
+          path: |
+            data/derived/catalog.msgpack
+            data/derived/catalog.db
+            perf-cache.tar.zst
+            web
+
+  # ───────────────────────────────────────────────────────────────────
+  # Phase 2 — data usage
+  # ───────────────────────────────────────────────────────────────────
+  test:
+    needs: build-catalog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -33,34 +145,17 @@ jobs:
       - name: Install package and test dependencies
         run: uv pip install -e . pytest
 
-      - name: Cache catalog for tests
-        id: catalog-cache
-        uses: actions/cache@v5
+      # actions/upload-artifact preserves path structure when multiple
+      # paths are listed, so catalog.msgpack / catalog.db land back at
+      # data/derived/ automatically — no manual move needed.
+      - name: Restore catalog artifact
+        uses: actions/download-artifact@v5
         with:
-          path: |
-            data/derived/catalog.msgpack
-            data/derived/catalog.db
-            data/derived/web
-          key: ci-catalog-${{ runner.os }}-${{ hashFiles('src/simdref/**', 'data/sources/**', 'tools/vendor_riscv_sources.py', 'pyproject.toml') }}
+          name: catalog
+          path: .
 
-      - name: Install LLVM 22 toolchain (cache miss)
-        if: steps.catalog-cache.outputs.cache-hit != 'true'
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 22
-          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
-
-      - name: Vendor RISC-V sources (cache miss)
-        if: steps.catalog-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
-          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
-          python tools/vendor_riscv_sources.py
-
-      - name: Build catalog locally (cache miss)
-        if: steps.catalog-cache.outputs.cache-hit != 'true'
-        run: python -u -m simdref build --with-sdm --man-dir "$RUNNER_TEMP/man"
+      - name: Verify restored catalog schema
+        run: python -c "from simdref.storage import sqlite_schema_is_current; assert sqlite_schema_is_current(), 'schema mismatch after artifact restore'"
 
       - name: Run Python test suite
         run: python -m pytest tests
@@ -71,76 +166,24 @@ jobs:
       - name: Check web syntax
         run: node --check src/simdref/templates/app.js
 
-  runtime-build:
-    name: Runtime Validation
-    needs: tests
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        label: [local-sdm]
-        include:
-          - label: local-sdm
-            build_command: simdref build --with-sdm --man-dir "$RUNNER_TEMP/man"
-            intrinsics_min: 7000
-            instructions_min: 20000
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@v8.1.0
-        with:
-          enable-cache: true
-          activate-environment: true
-          python-version: "3.12"
-
-      - name: Install LLVM 22 toolchain (for --build matrix)
-        if: matrix.label == 'local-sdm'
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 22
-          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
-
-      - name: Install package
-        run: uv pip install -e .
-
-      - name: Vendor RISC-V sources (for --build matrix)
-        if: matrix.label == 'local-sdm'
-        run: |
-          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
-          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
-          python tools/vendor_riscv_sources.py
-
-      - name: Build runtime (${{ matrix.label }})
-        run: ${{ matrix.build_command }}
-
-      - name: Validate upstream source ingestion (${{ matrix.label }})
-        if: matrix.label == 'local-sdm'
-        run: python tools/validate_sources.py --require-sdm
-
-      - name: Inspect runtime (${{ matrix.label }})
+      - name: Runtime smoke — inspect catalog
         run: simdref doctor
 
-      - name: Validate runtime artifacts (${{ matrix.label }})
+      - name: Runtime smoke — structural assertions
         env:
-          EXPECTED_INTRINSICS_MIN: ${{ matrix.intrinsics_min }}
-          EXPECTED_INSTRUCTIONS_MIN: ${{ matrix.instructions_min }}
+          EXPECTED_INTRINSICS_MIN: "7000"
+          EXPECTED_INSTRUCTIONS_MIN: "20000"
         run: |
           python - <<'PY'
-          import os
-          import json
+          import os, json
           from simdref.storage import SQLITE_PATH, WEB_DIR, open_db, sqlite_schema_is_current
 
-          assert sqlite_schema_is_current(), "SQLite schema is not current after update"
+          assert sqlite_schema_is_current(), "SQLite schema is not current"
           with open_db(SQLITE_PATH) as conn:
               intrinsics = conn.execute("select count(*) from intrinsics_data").fetchone()[0]
               instructions = conn.execute("select count(*) from instructions_data").fetchone()[0]
-          assert intrinsics > int(os.environ["EXPECTED_INTRINSICS_MIN"]), f"unexpected intrinsic count: {intrinsics}"
-          assert instructions > int(os.environ["EXPECTED_INSTRUCTIONS_MIN"]), f"unexpected instruction count: {instructions}"
+          assert intrinsics > int(os.environ["EXPECTED_INTRINSICS_MIN"]), intrinsics
+          assert instructions > int(os.environ["EXPECTED_INSTRUCTIONS_MIN"]), instructions
 
           search_index = WEB_DIR / "search-index.json"
           intrinsic_chunks = WEB_DIR / "intrinsic-chunks"
@@ -151,14 +194,8 @@ jobs:
           chunked_names = set()
           for p in chunk_files:
               chunked_names.update(json.loads(p.read_text()).keys())
-          # Chunks are keyed by intrinsic name (case-sensitive), while the
-          # intrinsics_data table uses COLLATE NOCASE on `name`. Don't
-          # pin an exact equality; verify a sensible lower bound and that
-          # every chunk-name actually exists in the DB.
           assert chunked_names, "intrinsic chunks contained no names"
-          assert len(chunked_names) <= intrinsics, (
-              f"chunk names exceed SQLite rows: {len(chunked_names)} > {intrinsics}"
-          )
+          assert len(chunked_names) <= intrinsics
 
           payload = json.loads(search_index.read_text())
           assert len(payload.get("intrinsics", [])) == intrinsics
@@ -167,7 +204,6 @@ jobs:
           PY
 
   package:
-    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -184,3 +220,128 @@ jobs:
 
       - name: Build distributables
         run: uv build
+
+      - name: Check distribution metadata
+        run: |
+          uv pip install twine
+          twine check dist/*
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          path: dist/
+
+  # ───────────────────────────────────────────────────────────────────
+  # Phase 3 — deploy (only on push-to-main, release, or manual dispatch)
+  # Skipped entirely for pull_request and reusable workflow_call.
+  # ───────────────────────────────────────────────────────────────────
+  publish-data:
+    needs: [test, package]
+    if: >-
+      github.event_name == 'release'
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'schedule'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: catalog
+          path: .
+
+      - name: Publish data-latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: data-latest
+          name: Latest Data Build
+          prerelease: true
+          files: |
+            data/derived/catalog.msgpack
+            data/derived/catalog.db
+            perf-cache.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish data-v<version> (release events only)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-catalog.outputs.data_tag }}
+          name: Data Build ${{ needs.build-catalog.outputs.data_tag }}
+          prerelease: ${{ github.event.release.prerelease }}
+          files: |
+            data/derived/catalog.msgpack
+            data/derived/catalog.db
+            perf-cache.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-pages:
+    needs: publish-data
+    if: >-
+      github.event_name == 'release'
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: catalog
+          path: .
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  validate-release:
+    needs: publish-data
+    if: >-
+      github.event_name == 'release'
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: uv pip install -e . pytest
+
+      - name: Pull freshly-published data-latest
+        run: simdref update --from-release --man-dir "$RUNNER_TEMP/man"
+
+      - name: Full test suite against released catalog
+        run: python -m pytest tests
+
+      - name: Sanity-run the CLI
+        run: |
+          simdref --version
+          simdref doctor
+          simdref llm query _mm_add_epi32 || true
+          simdref annotate --help

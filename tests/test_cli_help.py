@@ -69,16 +69,13 @@ class CliCompletionTests(unittest.TestCase):
 
 
 class CliBuildCommandTests(unittest.TestCase):
-    def test_build_help_exposes_with_sdm_and_man_dir(self):
+    def test_build_help_exposes_man_dir(self):
         output = _run_cli_help("build", "--help")
-        self.assertIn("--with-sdm", output)
         self.assertIn("--man-dir", output)
 
-    def test_update_help_hides_deprecated_build_flags(self):
+    def test_update_help_has_from_release(self):
         output = _run_cli_help("update", "--help")
-        # The deprecated flags are kept for the shim but hidden from help.
-        self.assertNotIn("--build", output)
-        self.assertNotIn("--with-sdm", output)
+        self.assertIn("--from-release", output)
 
 
 if __name__ == "__main__":

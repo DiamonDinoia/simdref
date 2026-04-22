@@ -49,8 +49,7 @@ an external toolchain:
   skip the one-time download.
 
 ```bash
-isa build                 # download + parse, rebuild from scratch
-isa build --with-sdm      # also parse the Intel SDM PDF (CI / release)
+isa build                 # download + parse, rebuild from scratch (includes Intel SDM PDF)
 ```
 
 ## Adding a new source

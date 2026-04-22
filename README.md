@@ -155,8 +155,7 @@ and `ld` still consume it.
 
 | Command | Description |
 |---------|-------------|
-| `isa build` | Full local rebuild from upstream sources (`llvm-mca` 18+ required) |
-| `isa build --with-sdm` | Heaviest rebuild, also parses the Intel SDM PDF (CI / release) |
+| `isa build` | Full local rebuild from upstream sources, including Intel SDM parsing (`llvm-mca` 18+ required) |
 | `isa web` | Export the static web app under `web/` |
 | `isa serve` | Serve the exported web app locally (gzip-aware) |
 | `isa completion install [SHELL]` | Install shell completion into the user's profile |

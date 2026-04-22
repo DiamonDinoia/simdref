@@ -128,7 +128,6 @@ app = typer.Typer(
         "Common commands:\n"
         "  isa update                  Download the pre-built release catalog (no llvm-mca required).\n"
         "  isa build                   Full local rebuild from upstream sources (requires llvm-mca).\n"
-        "  isa build --with-sdm        Heaviest local rebuild, including Intel SDM parsing.\n"
         "  isa completion install      Install shell completion into your shell profile."
     ),
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -754,20 +753,9 @@ def annotate(
 @app.command(rich_help_panel="Commands")
 def update(
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
-    build: bool = typer.Option(False, "--build", help="[DEPRECATED] Moved to 'simdref build'. Kept for the v0.0.0 release only; forwards to the new command.", hidden=True),
-    with_sdm: bool = typer.Option(False, "--with-sdm", help="[DEPRECATED] Moved to 'simdref build --with-sdm'.", hidden=True),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
     """Download the pre-built release catalog (no llvm-mca required)."""
-    if build or with_sdm:
-        err_console.print(
-            "warning: 'simdref update --build' (and --with-sdm) is deprecated; use 'simdref build' instead",
-            style="yellow",
-        )
-        _require_llvm_mca_or_hint()
-        _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
-        return
-
     if from_release:
         _download_from_release()
         _finalize_runtime_from_download(man_dir=man_dir)
@@ -778,12 +766,11 @@ def update(
 
 @app.command(rich_help_panel="Dev commands")
 def build(
-    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. Heaviest rebuild; intended for CI/release generation."),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
-    """Full local rebuild from upstream sources (requires llvm-mca on PATH)."""
+    """Full local rebuild from upstream sources, including Intel SDM parsing (requires llvm-mca on PATH)."""
     _require_llvm_mca_or_hint()
-    _build_runtime_locally(man_dir=man_dir, include_sdm=with_sdm)
+    _build_runtime_locally(man_dir=man_dir, include_sdm=True)
 
 
 def _require_llvm_mca_or_hint() -> None:

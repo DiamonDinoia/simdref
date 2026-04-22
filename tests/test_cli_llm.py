@@ -95,7 +95,7 @@ class LlmCliIntegrationTests(unittest.TestCase):
         if not CATALOG_PATH.exists() or not SQLITE_PATH.exists():
             raise unittest.SkipTest(
                 f"on-disk catalog missing (expected {CATALOG_PATH} and {SQLITE_PATH}); "
-                "run `simdref build --with-sdm` or `simdref update --from-release` "
+                "run `simdref build` or `simdref update --from-release` "
                 "to provision it before running integration tests"
             )
 
