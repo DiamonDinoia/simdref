@@ -34,6 +34,7 @@ try:
     from textual.message import Message
     from textual.binding import Binding
     from textual.containers import Horizontal, VerticalScroll
+    from textual.screen import ModalScreen
     from textual.widgets import (
         Collapsible,
         Footer,
@@ -63,6 +64,9 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
         return _decorator
 
     class App:  # type: ignore[override]
+        pass
+
+    class ModalScreen(_TextualStub):  # type: ignore[override]
         pass
 
     ComposeResult = object
@@ -467,6 +471,18 @@ class SearchInput(Input):
         if hasattr(app, "_move_result_focus"):
             app._move_result_focus(-1)
 
+    async def _on_key(self, event: events.Key) -> None:  # type: ignore[override]
+        # '?' always opens the help modal; if we let the Input consume it we
+        # would instead insert a literal '?' into the search value.
+        if event.character == "?":
+            event.prevent_default()
+            event.stop()
+            action = getattr(self.app, "action_show_help", None)
+            if action is not None:
+                action()
+            return
+        await super()._on_key(event)
+
 
 class ResultItem(ListItem):
     """A search result list item carrying the underlying SearchResult."""
@@ -477,6 +493,51 @@ class ResultItem(ListItem):
         subtitle = (result.subtitle or "").split("\n")[0]
         label = f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]  [dim italic]{subtitle}[/]"
         super().__init__(Static(label, markup=True))
+
+
+class HelpScreen(ModalScreen):
+    """Modal overlay listing active keybindings."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=True),
+        Binding("q", "dismiss", "Close", show=False),
+        Binding("?", "dismiss", "Close", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    HelpScreen {
+        align: center middle;
+    }
+    HelpScreen > Static {
+        width: 64;
+        max-height: 24;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    """
+
+    def __init__(self, bindings) -> None:
+        super().__init__()
+        self._bindings_source = bindings
+
+    def compose(self) -> ComposeResult:
+        rows: list[str] = ["[b]simdref — keybindings[/b]", ""]
+        seen: set[tuple[str, str]] = set()
+        for binding in self._bindings_source:
+            key = getattr(binding, "key_display", None) or getattr(binding, "key", "")
+            action = getattr(binding, "action", "")
+            description = getattr(binding, "description", "") or action
+            if not key or (key, action) in seen:
+                continue
+            seen.add((key, action))
+            rows.append(f"[cyan]{key:<10}[/] {description}")
+        rows.append("")
+        rows.append("[dim]esc / q / ? to close[/]")
+        yield Static("\n".join(rows), markup=True)
+
+    def action_dismiss(self) -> None:  # type: ignore[override]
+        self.app.pop_screen()
 
 
 class SimdrefApp(App):
@@ -555,12 +616,16 @@ class SimdrefApp(App):
 
     BINDINGS = [
         Binding("/", "focus_search", "Search", show=True),
+        Binding("ctrl+k", "focus_search", show=False),
+        Binding("?", "show_help", "Help", show=True, priority=True),
         Binding("escape", "back", "Back", show=True),
         Binding("f", "toggle_all", "Expand/Collapse All", show=True),
         Binding("1-9", "pick(0)", "Pick result", show=True, key_display="1-9"),
         Binding("c", "copy_detail", "Copy", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("ctrl+d", "quit", "Quit", show=True, priority=True, key_display="^d"),
+        Binding("j", "list_cursor_down", show=False, priority=True),
+        Binding("k", "list_cursor_up", show=False, priority=True),
         *[Binding(str(n), f"pick({n})", show=False) for n in range(1, 10)],
     ]
 
@@ -949,6 +1014,9 @@ class SimdrefApp(App):
             return False
         if any(getattr(event, name, False) for name in ("ctrl", "alt", "meta")):
             return False
+        # vim-style list navigation is handled by bindings; don't swallow as input.
+        if event.key in {"j", "k"} and isinstance(self.focused, (ListView, VerticalScroll)):
+            return False
         search_input.value += event.character
         search_input.focus()
         search_input.cursor_position = len(search_input.value)
@@ -1306,6 +1374,32 @@ class SimdrefApp(App):
         for section in self.query(Collapsible):
             section.collapsed = not self._all_expanded
 
+    def action_show_help(self) -> None:
+        """Open a modal screen listing all active keybindings."""
+        self.push_screen(HelpScreen(self.BINDINGS))
+
+    def action_list_cursor_down(self) -> None:
+        """vim-style j: advance the results list when it (or the detail pane) has focus."""
+        try:
+            results = self.query_one("#results-list", ListView)
+        except Exception:
+            return
+        focused = self.focused
+        if not isinstance(focused, (ListView, VerticalScroll)):
+            return
+        results.action_cursor_down()
+
+    def action_list_cursor_up(self) -> None:
+        """vim-style k: step the results list back."""
+        try:
+            results = self.query_one("#results-list", ListView)
+        except Exception:
+            return
+        focused = self.focused
+        if not isinstance(focused, (ListView, VerticalScroll)):
+            return
+        results.action_cursor_up()
+
     def on_key(self, event: events.Key) -> None:
         if getattr(self, "_needs_update", False):
             if event.key == "y":
@@ -1314,6 +1408,14 @@ class SimdrefApp(App):
             elif event.key in ("n", "q"):
                 event.prevent_default()
                 self.exit(1)
+            return
+
+        # '?' always opens the help modal, even when the Input has focus
+        # (Input's character-capture runs before App-level priority bindings).
+        if event.character == "?" and not isinstance(self.screen, HelpScreen):
+            event.prevent_default()
+            event.stop()
+            self.action_show_help()
             return
 
         focused = self.focused
