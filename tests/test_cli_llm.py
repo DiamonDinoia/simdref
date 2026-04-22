@@ -18,6 +18,7 @@ from simdref.cli import (
     _llm_filter_records,
     _llm_format_markdown,
     _llm_schema_payload,
+    _record_has_source_kind,
     app,
 )
 
@@ -132,6 +133,100 @@ class LlmCliIntegrationTests(unittest.TestCase):
         # Every line must be parseable JSON on its own.
         for line in lines:
             json.loads(line)
+
+    def test_llm_invalid_preset_exits_usage(self):
+        result = runner.invoke(app, ["llm", "query", "_mm_add_epi32", "--preset", "not_a_real_preset"])
+        self.assertEqual(result.exit_code, LLM_EXIT_USAGE, result.output)
+        self.assertIn("unknown --preset", (result.output + (result.stderr or "")))
+
+    def test_llm_list_pattern_emits_ndjson(self):
+        result = runner.invoke(app, ["llm", "list", "--pattern", "_mm_add_epi32"])
+        if result.exit_code == LLM_EXIT_NO_MATCH:
+            self.skipTest("catalog does not carry _mm_add_epi32 in this environment")
+        self.assertEqual(result.exit_code, LLM_EXIT_MATCH, result.output)
+        lines = [l for l in result.output.strip().splitlines() if l.strip()]
+        self.assertGreaterEqual(len(lines), 1)
+        for line in lines:
+            rec = json.loads(line)
+            self.assertIn(rec["kind"], ("intrinsic", "instruction"))
+            self.assertIn("isa", rec)
+            self.assertIn("category", rec)
+
+    def test_llm_list_pattern_no_match_returns_two(self):
+        result = runner.invoke(app, ["llm", "list", "--pattern", "__definitely_nothing_matches_this__"])
+        self.assertEqual(result.exit_code, LLM_EXIT_NO_MATCH, result.output)
+
+    def test_llm_list_pattern_with_isa_filters(self):
+        result = runner.invoke(app, ["llm", "list", "--pattern", "*", "--isa", "Arm"])
+        if result.exit_code == LLM_EXIT_NO_MATCH:
+            self.skipTest("catalog has no Arm entries in this environment")
+        self.assertEqual(result.exit_code, LLM_EXIT_MATCH, result.output)
+        lines = [l for l in result.output.strip().splitlines() if l.strip()]
+        self.assertGreater(len(lines), 0)
+
+    def test_llm_batch_mixed_match_no_match(self):
+        stdin = "_mm_add_epi32\n__definitely_missing__\n"
+        result = runner.invoke(app, ["llm", "batch"], input=stdin)
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = [l for l in result.output.strip().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 2)
+        records = [json.loads(l) for l in lines]
+        self.assertEqual({r["query"] for r in records}, {"_mm_add_epi32", "__definitely_missing__"})
+        missing_rec = next(r for r in records if r["query"] == "__definitely_missing__")
+        self.assertEqual(missing_rec["status"], "no_match")
+
+    def test_llm_batch_skips_blank_and_comment_lines(self):
+        stdin = "\n# a comment\n_mm_add_epi32\n\n"
+        result = runner.invoke(app, ["llm", "batch"], input=stdin)
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = [l for l in result.output.strip().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        rec = json.loads(lines[0])
+        self.assertEqual(rec["query"], "_mm_add_epi32")
+
+
+class LlmSchemaCompletenessTests(unittest.TestCase):
+    def test_schema_declares_catalog_meta(self):
+        schema = _llm_schema_payload()
+        self.assertIn("generated_at", schema["properties"])
+        self.assertIn("source_versions", schema["properties"])
+
+    def test_schema_declares_instruction_refs(self):
+        schema = _llm_schema_payload()
+        result = schema["properties"]["result"]
+        self.assertIn("instruction_refs", result["properties"])
+        refs = result["properties"]["instruction_refs"]
+        ref_props = refs["items"]["properties"]
+        for field in ("key", "name", "form", "architecture", "xed", "resolution", "match_count"):
+            self.assertIn(field, ref_props)
+
+
+class LlmSourceKindFilterTests(unittest.TestCase):
+    def test_record_has_measured_source(self):
+        rec = {
+            "arch_details": {
+                "SKL": {"latency": "4", "source_kind": "measured"},
+            },
+        }
+        self.assertTrue(_record_has_source_kind(rec, "measured"))
+        self.assertFalse(_record_has_source_kind(rec, "modeled"))
+
+    def test_record_default_source_is_measured(self):
+        rec = {"arch_details": {"SKL": {"latency": "4"}}}
+        self.assertTrue(_record_has_source_kind(rec, "measured"))
+
+    def test_filter_records_by_source_kind(self):
+        records = [
+            {"intrinsic": "a", "arch_details": {"SKL": {"source_kind": "measured"}}},
+            {"intrinsic": "b", "arch_details": {"SKL": {"source_kind": "modeled"}}},
+        ]
+        kept = _llm_filter_records(records, isa=None, category=None, source_kind="modeled")
+        self.assertEqual([r["intrinsic"] for r in kept], ["b"])
+
+    def test_filter_records_any_source_kind_passes_through(self):
+        records = [{"intrinsic": "a", "arch_details": {"SKL": {"source_kind": "measured"}}}]
+        kept = _llm_filter_records(records, isa=None, category=None, source_kind="any")
+        self.assertEqual(kept, records)
 
 
 if __name__ == "__main__":

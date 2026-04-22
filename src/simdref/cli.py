@@ -19,9 +19,17 @@ from contextlib import nullcontext as _nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
+import fnmatch
+
+import click
 import httpx
 import typer
 from rich.console import Console
+
+# Usage errors (missing args, bad flags) normally exit 2 in Click. We reserve
+# exit code 2 strictly for "query valid but no catalog match" in `simdref llm`,
+# so downgrade Click usage errors to exit 1 at the CLI boundary.
+click.exceptions.UsageError.exit_code = 1
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -665,11 +673,11 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Usage")
 def update(
     from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
-    build: bool = typer.Option(False, "--build", help="Build locally from upstream sources (requires llvm-mca on PATH). Uses substantially more RAM than the default download path."),
-    with_sdm: bool = typer.Option(False, "--with-sdm", help="Also parse the Intel SDM PDF for descriptions and page references. Heaviest local-build path; intended for CI/release generation."),
+    build: bool = typer.Option(False, "--build", help="(advanced / CI use) Build locally from upstream sources (requires llvm-mca on PATH). Uses substantially more RAM than the default download path."),
+    with_sdm: bool = typer.Option(False, "--with-sdm", help="(advanced / CI use) Also parse the Intel SDM PDF for descriptions and page references. Heaviest local-build path; intended for CI/release generation."),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
     """Refresh runtime data.
@@ -863,6 +871,22 @@ def _llm_schema_payload() -> dict:
             "query": {"type": "string"},
             "mode": {"type": "string", "enum": ["exact", "search"]},
             "match_kind": {"type": ["string", "null"], "enum": ["intrinsic", "instruction", None]},
+            "generated_at": {
+                "type": "string",
+                "description": "ISO-8601 timestamp of the catalog build the answer was derived from.",
+            },
+            "source_versions": {
+                "type": "array",
+                "description": "Upstream source descriptors (name, version, url) pinned by this catalog.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "version": {"type": "string"},
+                        "url": {"type": "string"},
+                    },
+                },
+            },
             "result": {
                 "type": "object",
                 "properties": {
@@ -870,6 +894,22 @@ def _llm_schema_payload() -> dict:
                     "intrinsic": {"type": ["string", "array"]},
                     "signature": {"type": "string"},
                     "instructions": {"type": "array", "items": {"type": "string"}},
+                    "instruction_refs": {
+                        "type": "array",
+                        "description": "Resolved instruction references when known.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "key": {"type": "string"},
+                                "name": {"type": "string"},
+                                "form": {"type": "string"},
+                                "architecture": {"type": "string"},
+                                "xed": {"type": "string"},
+                                "resolution": {"type": "string"},
+                                "match_count": {"type": "integer"},
+                            },
+                        },
+                    },
                     "isa": {"type": "array", "items": {"type": "string"}},
                     "lat": {"type": "string"},
                     "cpi": {"type": "string"},
@@ -883,6 +923,73 @@ def _llm_schema_payload() -> dict:
 
 
 llm_app = typer.Typer(help="Structured output for LLM/tool consumption.", invoke_without_command=False)
+_LLM_HELP_PANEL = "Usage"
+
+
+def _build_llm_payload(
+    conn,
+    query_str: str,
+    limit: int,
+    isa: list[str] | None,
+    category: list[str] | None,
+    source_kind: str | None,
+) -> dict:
+    """Build the llm payload for *query_str* against an open DB connection.
+
+    Kept free of I/O and exit logic so that ``simdref llm batch`` can call it
+    in a loop without re-opening the catalog per query.
+    """
+    intrinsic = load_intrinsic_from_db(conn, query_str)
+    if intrinsic is not None:
+        result = _llm_intrinsic_payload(conn, intrinsic)
+        kept = _llm_filter_records([result], isa, category, source_kind=source_kind)
+        return {
+            "query": query_str, "mode": "exact",
+            "match_kind": "intrinsic" if kept else None,
+            **({"result": kept[0]} if kept else {"results": []}),
+        }
+    instructions = _find_instructions_fast(query_str)
+    if instructions:
+        items = [_llm_instruction_payload(item) for item in instructions]
+        items = _llm_filter_records(items, isa, category, source_kind=source_kind)
+        return {
+            "query": query_str, "mode": "exact",
+            "match_kind": "instruction",
+            "results": items,
+        }
+    results, intrinsic_map, instruction_map = _search_runtime(conn, query_str, limit=limit)
+    items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
+    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
+    return {
+        "query": query_str, "mode": "search",
+        "match_kind": None,
+        "results": items,
+    }
+
+
+def _normalize_fmt(fmt: str, allowed: set[str]) -> str:
+    fmt_lower = (fmt or "json").lower()
+    if fmt_lower not in allowed:
+        typer.echo(
+            f"error: unknown --format '{fmt}' (expected {'|'.join(sorted(allowed))})",
+            err=True,
+        )
+        raise typer.Exit(code=LLM_EXIT_USAGE)
+    return fmt_lower
+
+
+def _resolve_preset_or_exit(preset: str | None, isa: list[str] | None) -> list[str] | None:
+    if not preset:
+        return isa
+    from simdref.filters import ARCH_PRESETS
+    if preset not in ARCH_PRESETS:
+        known = ", ".join(sorted(ARCH_PRESETS))
+        typer.echo(f"error: unknown --preset '{preset}' (known: {known})", err=True)
+        raise typer.Exit(code=LLM_EXIT_USAGE)
+    preset_isa, _ = _resolve_preset_filters(preset)
+    if preset_isa and not isa:
+        return preset_isa
+    return isa
 
 
 def _llm_query_impl(
@@ -894,19 +1001,8 @@ def _llm_query_impl(
     preset: str | None = None,
     source_kind: str | None = None,
 ) -> None:
-    fmt_lower = (fmt or "json").lower()
-    if fmt_lower not in {"json", "ndjson", "markdown"}:
-        typer.echo(f"error: unknown --format '{fmt}' (expected json|ndjson|markdown)", err=True)
-        raise typer.Exit(code=LLM_EXIT_USAGE)
-    if preset:
-        from simdref.filters import ARCH_PRESETS
-        if preset not in ARCH_PRESETS:
-            known = ", ".join(sorted(ARCH_PRESETS))
-            typer.echo(f"error: unknown --preset '{preset}' (known: {known})", err=True)
-            raise typer.Exit(code=LLM_EXIT_USAGE)
-        preset_isa, _ = _resolve_preset_filters(preset)
-        if preset_isa and not isa:
-            isa = preset_isa
+    fmt_lower = _normalize_fmt(fmt, {"json", "ndjson", "markdown"})
+    isa = _resolve_preset_or_exit(preset, isa)
     if not query_tokens:
         typer.echo("error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True)
         raise typer.Exit(code=LLM_EXIT_USAGE)
@@ -914,34 +1010,7 @@ def _llm_query_impl(
     ensure_runtime()
     try:
         with open_db() as conn:
-            intrinsic = load_intrinsic_from_db(conn, query_str)
-            if intrinsic is not None:
-                result = _llm_intrinsic_payload(conn, intrinsic)
-                kept = _llm_filter_records([result], isa, category, source_kind=source_kind)
-                payload = {
-                    "query": query_str, "mode": "exact",
-                    "match_kind": "intrinsic" if kept else None,
-                    **({"result": kept[0]} if kept else {"results": []}),
-                }
-            else:
-                instructions = _find_instructions_fast(query_str)
-                if instructions:
-                    items = [_llm_instruction_payload(item) for item in instructions]
-                    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
-                    payload = {
-                        "query": query_str, "mode": "exact",
-                        "match_kind": "instruction",
-                        "results": items,
-                    }
-                else:
-                    results, intrinsic_map, instruction_map = _search_runtime(conn, query_str, limit=limit)
-                    items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
-                    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
-                    payload = {
-                        "query": query_str, "mode": "search",
-                        "match_kind": None,
-                        "results": items,
-                    }
+            payload = _build_llm_payload(conn, query_str, limit, isa, category, source_kind)
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - internal error path
@@ -967,13 +1036,86 @@ def llm_query(
     _llm_query_impl(query, limit, fmt, isa, None, preset=preset, source_kind=source_kind)
 
 
+def _emit_filtered_names(
+    conn,
+    pattern: str,
+    isa: list[str] | None,
+) -> int:
+    """Stream NDJSON records matching *pattern* filtered by ISA family.
+
+    Iterates the SQLite catalog directly so the caller avoids loading the
+    full msgpack payload for every candidate. Returns number of records
+    emitted (caller uses this to decide the exit code).
+    """
+    from simdref.display import isa_family as _isa_family
+    glob_pat = pattern
+    isa_set = {f.strip() for f in (isa or []) if f and f.strip()}
+    emitted = 0
+
+    intrinsic_rows = conn.execute(
+        "SELECT name, isa, category FROM intrinsics_data ORDER BY name"
+    ).fetchall()
+    for row in intrinsic_rows:
+        name = row["name"]
+        if not fnmatch.fnmatchcase(name, glob_pat) and not fnmatch.fnmatch(name.casefold(), glob_pat.casefold()):
+            continue
+        isas = [s.strip() for s in (row["isa"] or "").split(",") if s.strip()]
+        if isa_set:
+            families = {_isa_family(s) for s in isas}
+            if not families & isa_set:
+                continue
+        typer.echo(json.dumps(
+            {"name": name, "kind": "intrinsic", "isa": isas, "category": row["category"] or ""},
+            sort_keys=True,
+        ))
+        emitted += 1
+
+    instruction_rows = conn.execute(
+        "SELECT key, db_key, isa, category FROM instructions_data ORDER BY key"
+    ).fetchall()
+    for row in instruction_rows:
+        key = row["key"]
+        db_key = row["db_key"]
+        if (
+            not fnmatch.fnmatchcase(key, glob_pat)
+            and not fnmatch.fnmatch(key.casefold(), glob_pat.casefold())
+            and not fnmatch.fnmatchcase(db_key, glob_pat)
+        ):
+            continue
+        isas = [s.strip() for s in (row["isa"] or "").split(",") if s.strip()]
+        if isa_set:
+            families = {_isa_family(s) for s in isas}
+            if not families & isa_set:
+                continue
+        typer.echo(json.dumps(
+            {"name": key, "kind": "instruction", "isa": isas, "category": row["category"] or ""},
+            sort_keys=True,
+        ))
+        emitted += 1
+    return emitted
+
+
 @llm_app.command("list")
 def llm_list(
-    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json or markdown."),
+    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json or markdown (ignored when --pattern is given)."),
+    pattern: str = typer.Option(None, "--pattern", help="Glob filter over intrinsic/instruction names. When set, the command emits NDJSON {name, kind, isa, category} records instead of the FilterSpec."),
+    isa: list[str] = typer.Option(None, "--isa", help="Restrict --pattern output to the given ISA family (repeatable)."),
 ) -> None:
-    """Emit the FilterSpec (ISA families, sub-ISAs, categories)."""
-    from simdref.filters import build_filter_spec
+    """Emit the FilterSpec or stream matching catalog entries.
+
+    Without ``--pattern`` this emits the full :class:`FilterSpec` describing
+    ISA families, sub-ISAs, and categories. With ``--pattern GLOB`` it emits
+    NDJSON records for each matching intrinsic/instruction — useful for a
+    Claude skill that wants "all AVX-512 *gather* intrinsics" without
+    calling ``query`` per name.
+    """
     ensure_runtime()
+    if pattern:
+        with open_db() as conn:
+            emitted = _emit_filtered_names(conn, pattern, isa)
+        raise typer.Exit(code=LLM_EXIT_MATCH if emitted else LLM_EXIT_NO_MATCH)
+
+    from simdref.filters import build_filter_spec
     with open_db() as conn:
         spec = build_filter_spec(conn)
     payload = spec.to_json()
@@ -992,16 +1134,75 @@ def llm_list(
     typer.echo(json.dumps(payload, sort_keys=True, indent=2))
 
 
+@llm_app.command("batch")
+def llm_batch(
+    limit: int = typer.Option(8, help="Maximum number of search results per query in search mode."),
+    isa: list[str] = typer.Option(None, "--isa", help="Filter results by ISA family (repeatable)."),
+    preset: str = typer.Option(None, "--preset", help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all)."),
+    source_kind: str = typer.Option("any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."),
+) -> None:
+    """Resolve queries from stdin (one per line); emit NDJSON records.
+
+    Each output line is ``{"query": ..., "status": "match|no_match|ambiguous|error",
+    "payload": {...}}``. Amortizes catalog load across hundreds of lookups — useful
+    when a Claude skill resolves every mnemonic in a disassembly.
+    """
+    isa = _resolve_preset_or_exit(preset, isa)
+    ensure_runtime()
+    with open_db() as conn:
+        for raw_line in sys.stdin:
+            query = raw_line.strip()
+            if not query or query.startswith("#"):
+                continue
+            try:
+                payload = _build_llm_payload(conn, query, limit, isa, None, source_kind)
+                exit_code = _llm_exit_code(payload)
+                if exit_code == LLM_EXIT_MATCH:
+                    status = "match"
+                elif exit_code == LLM_EXIT_AMBIGUOUS:
+                    status = "ambiguous"
+                else:
+                    status = "no_match"
+                typer.echo(json.dumps(
+                    {"query": query, "status": status, "payload": payload},
+                    sort_keys=True,
+                ))
+            except Exception as exc:  # pragma: no cover - defensive
+                typer.echo(json.dumps(
+                    {"query": query, "status": "error", "error": str(exc)},
+                    sort_keys=True,
+                ))
+
+
 @llm_app.command("schema")
 def llm_schema() -> None:
     """Emit the JSON Schema for `simdref llm` payloads."""
     typer.echo(json.dumps(_llm_schema_payload(), sort_keys=True, indent=2))
 
 
-app.add_typer(llm_app, name="llm")
+app.add_typer(llm_app, name="llm", rich_help_panel=_LLM_HELP_PANEL)
 
 
-@app.command()
+def _registered_command_names() -> set[str]:
+    """Return the set of Typer commands + subcommand groups the dispatcher knows about.
+
+    Kept as introspection so the bare-word dispatcher in ``main()`` never drifts
+    from the real command surface.
+    """
+    names: set[str] = set()
+    for info in getattr(app, "registered_commands", []):
+        if info.name:
+            names.add(info.name)
+        elif info.callback is not None:
+            names.add(info.callback.__name__.replace("_", "-"))
+    for info in getattr(app, "registered_groups", []):
+        if info.name:
+            names.add(info.name)
+    names.update({"--help", "-h"})
+    return names
+
+
+@app.command(rich_help_panel="Usage")
 def doctor() -> None:
     """Validate installation and show catalog stats."""
     catalog = ensure_catalog()
@@ -1026,7 +1227,7 @@ def _export_web_impl(web_dir: Path) -> None:
     console.print(f"exported static web app to {web_dir}", style="green")
 
 
-@app.command("web")
+@app.command("web", rich_help_panel="Maintenance")
 def web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
     """Export static web app."""
     _export_web_impl(web_dir)
@@ -1038,7 +1239,7 @@ def export_web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output direct
     _export_web_impl(web_dir)
 
 
-@app.command("serve")
+@app.command("serve", rich_help_panel="Usage")
 def serve_command(
     web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
     host: str = typer.Option("127.0.0.1"),
@@ -1160,12 +1361,15 @@ def main() -> int:
     else:
         argv = _cleaned
     # Rewrite `llm <bare-query>` to `llm query <bare-query>` so Typer's
-    # subcommand dispatch (list/schema) works without stealing bare queries.
-    llm_subcommands = {"query", "list", "schema", "--help", "-h"}
+    # subcommand dispatch (list/batch/schema/query) works without stealing
+    # bare queries. Derived from Typer introspection so new subcommands
+    # automatically become recognised.
+    llm_subcommands = {info.name for info in getattr(llm_app, "registered_commands", []) if info.name}
+    llm_subcommands |= {"--help", "-h"}
     if argv and argv[0] == "llm" and len(argv) >= 2 and argv[1] not in llm_subcommands and not argv[1].startswith("-"):
         argv = ["llm", "query", *argv[1:]]
     sys.argv = [sys.argv[0], *argv]
-    commands = {"update", "search", "show", "man", "doctor", "tui", "web", "export-web", "serve", "llm", "complete", "shell-init", "--help", "-h"}
+    commands = _registered_command_names()
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
         return _smart_lookup(" ".join(argv), preset=initial_preset)
     if not argv:
