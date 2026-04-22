@@ -11,8 +11,16 @@ First tagged release. The baseline set of interfaces the project aims to
 support is in place:
 
 - **CLI** with smart bare-word lookup (`simdref _mm_add_ps`, `simdref VPADDD`,
-  fuzzy multi-token queries), grouped `--help` output (Usage / Maintenance),
-  and stable exit codes.
+  fuzzy multi-token queries), grouped `--help` output (Commands / Dev commands),
+  and stable exit codes. Also installed under the `isa` alias — both
+  executables accept every subcommand.
+- **`simdref build`** — full local rebuild from upstream sources,
+  promoted from the old `simdref update --build` flag. The deprecated
+  `update --build` / `update --with-sdm` flags still work in 0.0.0 (they
+  emit a warning and forward to `build`) and will be removed in 0.0.1.
+- **`simdref completion install|show`** subcommands for shell completion,
+  replacing Typer's auto-generated `--install-completion` / `--show-completion`
+  top-level options.
 - **TUI** (Textual-based) browser with ISA/kind filters, presets, detail
   pane, `/` `?` `j/k` `1-9` `c` keybindings, and a help modal.
 - **LSP** (`simdref-lsp`) providing hover + completion over JSON-RPC/stdio.

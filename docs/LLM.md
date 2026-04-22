@@ -1,9 +1,14 @@
 # `simdref llm` — structured output for LLM / tool consumption
 
-`simdref llm` is the subcommand group intended for programmatic consumers:
-agents, skills, editor integrations, and ad-hoc scripts that want to reason
-about SIMD intrinsics and instructions without having to parse human-oriented
-TUI or Markdown output.
+`isa llm` (aka `simdref llm`) is the subcommand group intended for
+programmatic consumers: agents, skills, editor integrations, and ad-hoc
+scripts that want to reason about SIMD intrinsics and instructions without
+having to parse human-oriented TUI or Markdown output.
+
+The CLI ships under two executable names: **`isa`** (short) and
+**`simdref`** (explicit). Both run the same code, and every example
+below works identically under either name — this document uses `isa` for
+brevity.
 
 Every subcommand emits stable JSON or NDJSON on stdout; all progress, errors,
 and diagnostics go to stderr. That separation lets callers safely pipe
@@ -11,7 +16,7 @@ stdout into `jq` / `json.loads`.
 
 ## Subcommands
 
-### `simdref llm query QUERY...`
+### `isa llm query QUERY...`
 
 Resolve a single query (intrinsic name, instruction mnemonic, or free-form
 search) and emit one payload.
@@ -47,14 +52,14 @@ search) and emit one payload.
 Free-form search yields `{"mode": "search", "results": [...]}` where each
 entry has the same shape as `result`.
 
-### `simdref llm batch`
+### `isa llm batch`
 
 Reads queries one-per-line from stdin and emits one NDJSON record per input
 line, amortizing catalog load across hundreds of lookups. Blank lines and
 lines starting with `#` are skipped.
 
 ```bash
-echo -e "_mm_add_ps\nVPADDD\n_does_not_exist" | simdref llm batch
+echo -e "_mm_add_ps\nVPADDD\n_does_not_exist" | isa llm batch
 ```
 
 Each output record has the shape:
@@ -69,14 +74,14 @@ indicates an internal failure; the record will also carry an `error` field).
 Accepts the same `--limit`, `--isa`, `--preset`, `--source-kind` flags as
 `query`.
 
-### `simdref llm list`
+### `isa llm list`
 
 Without arguments, emits the full `FilterSpec` describing ISA families,
 sub-ISAs, and the category catalog:
 
 ```bash
-simdref llm list --format json
-simdref llm list --format markdown
+isa llm list --format json
+isa llm list --format markdown
 ```
 
 With `--pattern GLOB [--isa FAM]`, streams NDJSON records of the form
@@ -86,10 +91,10 @@ families. The pattern uses `fnmatch` (shell globs — `*`, `?`, `[...]`) and
 is applied case-insensitively to both the entry name and its `db_key`.
 
 ```bash
-simdref llm list --pattern "*gather*" --isa "Intel"
+isa llm list --pattern "*gather*" --isa "Intel"
 ```
 
-### `simdref llm schema`
+### `isa llm schema`
 
 Emits a JSON Schema describing the `query` / `batch` payload shape, including
 the `generated_at` timestamp, `source_versions` array, and nested
@@ -114,11 +119,11 @@ loop:
 1. **Identify mnemonics.** Parse the assembly, extract instruction mnemonics.
 2. **Pre-filter** the catalog for speed:
    ```bash
-   simdref llm list --pattern "VPADD*" --isa "Intel"
+   isa llm list --pattern "VPADD*" --isa "Intel"
    ```
 3. **Resolve each mnemonic** in one batch call, keeping measured perf only:
    ```bash
-   printf '%s\n' "${mnemonics[@]}" | simdref llm batch --source-kind measured
+   printf '%s\n' "${mnemonics[@]}" | isa llm batch --source-kind measured
    ```
 4. **Consume the NDJSON stream.** Each record contains `lat`, `cpi`, the
    linked intrinsic name, and the canonical `summary` — enough to propose

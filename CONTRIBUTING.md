@@ -17,9 +17,12 @@ pip install -e .
 Prime the runtime data (fast, no toolchain required):
 
 ```bash
-simdref update            # downloads the pre-built release catalog
-simdref doctor            # sanity-check
+isa update                # downloads the pre-built release catalog
+isa doctor                # sanity-check
 ```
+
+> The package installs as both `isa` and `simdref` — pick whichever
+> name you prefer. The docs use `isa` for brevity.
 
 ## Running the tests
 
@@ -33,10 +36,10 @@ The TUI smoke tests (`tests/test_tui.py`) require `textual` (already a
 runtime dep) and skip automatically if no catalog is present. Running
 `simdref update` first is usually enough to unlock them.
 
-## Full local rebuild (`--build`)
+## Full local rebuild (`isa build`)
 
-The `update --build` path rebuilds the catalog from upstream sources. It
-needs an external toolchain:
+The `build` command rebuilds the catalog from upstream sources. It needs
+an external toolchain:
 
 - **`llvm-mca` 18+** on `PATH` — used to model ARM/RISC-V latencies we can't
   measure directly. On Debian/Ubuntu: `sudo apt install llvm`.
@@ -46,8 +49,8 @@ needs an external toolchain:
   skip the one-time download.
 
 ```bash
-simdref update --build                 # download + parse, rebuild from scratch
-simdref update --build --with-sdm      # also parse the Intel SDM PDF (CI / release)
+isa build                 # download + parse, rebuild from scratch
+isa build --with-sdm      # also parse the Intel SDM PDF (CI / release)
 ```
 
 ## Adding a new source
