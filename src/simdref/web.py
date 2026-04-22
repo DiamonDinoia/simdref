@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import shutil
 from collections import defaultdict
 from dataclasses import asdict
@@ -83,6 +84,38 @@ def _chunk_prefix(mnemonic: str) -> str:
     """3-char uppercase prefix for grouping instructions into chunks."""
     clean = mnemonic.strip().upper()
     return clean[:3] if len(clean) >= 3 else clean
+
+
+_INTRINSIC_PREFIX_STRIP = re.compile(r"^(?:mm\d*|sv|vq?)_?", re.IGNORECASE)
+_INTRINSIC_ALNUM = re.compile(r"[A-Za-z0-9]")
+
+
+def _intrinsic_chunk_prefix(name: str) -> str:
+    """3-char bucket key for grouping intrinsics by their op name.
+
+    Strips leading underscores, an optional ``riscv_`` namespace, and a
+    single width/family token (``mm``, ``mm256``, ``mm512``, ``sv``,
+    ``v``, ``vq``) so that buckets cluster by operation (``add``,
+    ``cvt``, ``fma``) rather than by vector width or platform. Without
+    the ``riscv_`` strip the 74k RISC-V vector intrinsics all fall into
+    a single 89 MB bucket.
+
+    Falls back to ``misc`` when a name does not produce at least two
+    alphanumeric characters after stripping.
+
+    The same function is re-implemented in ``app.js`` — keep in sync.
+    """
+    s = name.lstrip("_")
+    if s[:6].lower() == "riscv_":
+        s = s[6:]
+    m = _INTRINSIC_PREFIX_STRIP.match(s)
+    if m and m.end() < len(s):
+        s = s[m.end():]
+    s = s.lstrip("_")
+    clean = "".join(_INTRINSIC_ALNUM.findall(s)).lower()
+    if len(clean) < 2:
+        return "misc"
+    return clean[:3]
 
 
 def _intrinsic_search_fields(item) -> list[str]:
@@ -265,28 +298,38 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
     return dict(chunks)
 
 
-def _intrinsic_details(catalog: Catalog) -> dict[str, dict]:
-    """Full intrinsic details keyed by name (for on-demand loading)."""
+def _intrinsic_detail_entry(item) -> dict:
     return {
-        item.name: {
-            "name": item.name,
-            "signature": item.signature,
-            "description": item.description,
-            "header": item.header,
-            "url": item.url,
-            "architecture": item.architecture,
-            "display_architecture": display_architecture(item.architecture),
-            "isa": item.isa,
-            "display_isa": display_isa(item.isa),
-            "display_isa_tokens": [display_isa([value]) for value in item.isa],
-            "instructions": item.instructions,
-            "instruction_refs": item.instruction_refs,
-            "metadata": item.metadata,
-            "doc_sections": item.doc_sections,
-            "notes": item.notes,
-        }
-        for item in catalog.intrinsics
+        "name": item.name,
+        "signature": item.signature,
+        "description": item.description,
+        "header": item.header,
+        "url": item.url,
+        "architecture": item.architecture,
+        "display_architecture": display_architecture(item.architecture),
+        "isa": item.isa,
+        "display_isa": display_isa(item.isa),
+        "display_isa_tokens": [display_isa([value]) for value in item.isa],
+        "instructions": item.instructions,
+        "instruction_refs": item.instruction_refs,
+        "metadata": item.metadata,
+        "doc_sections": item.doc_sections,
+        "notes": item.notes,
     }
+
+
+def _intrinsic_chunks(catalog: Catalog) -> dict[str, dict]:
+    """Group full intrinsic details by bucket prefix.
+
+    Mirrors the ``detail-chunks/`` layout used for instructions so that
+    clicking an intrinsic only fetches the ~100-200 KB chunk containing
+    it rather than the ~138 MB full file.
+    """
+    chunks: dict[str, dict] = defaultdict(dict)
+    for item in catalog.intrinsics:
+        prefix = _intrinsic_chunk_prefix(item.name)
+        chunks[prefix][item.name] = _intrinsic_detail_entry(item)
+    return dict(chunks)
 
 
 def _build_stamp(catalog: Catalog) -> dict:
@@ -322,7 +365,7 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
     * ``filter_spec.json`` -- shared ISA/category facets (web + CLI)
     * ``build_stamp.json`` -- version/freshness metadata
     * ``detail-chunks/{PREFIX}.json`` -- instruction detail chunks
-    * ``intrinsic-details.json`` -- full intrinsic details
+    * ``intrinsic-chunks/{PREFIX}.json`` -- intrinsic detail chunks
     """
     web_dir.mkdir(parents=True, exist_ok=True)
 
@@ -348,4 +391,13 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
     for prefix, chunk in _detail_chunks(catalog).items():
         _write_json(chunks_dir / f"{prefix}.json", chunk)
 
-    _write_json(web_dir / "intrinsic-details.json", _intrinsic_details(catalog))
+    intrinsic_chunks_dir = web_dir / "intrinsic-chunks"
+    if intrinsic_chunks_dir.exists():
+        shutil.rmtree(intrinsic_chunks_dir)
+    intrinsic_chunks_dir.mkdir()
+    for prefix, chunk in _intrinsic_chunks(catalog).items():
+        _write_json(intrinsic_chunks_dir / f"{prefix}.json", chunk)
+
+    for stale in (web_dir / "intrinsic-details.json", web_dir / "intrinsic-details.json.gz"):
+        if stale.exists():
+            stale.unlink()

@@ -141,13 +141,26 @@ class LspWebTests(unittest.TestCase):
             # on the live web page.
             intrinsic_names = {item["name"] for item in search["intrinsics"]}
             self.assertIn("_mm256_add_ps", intrinsic_names)
-            details = json.loads((Path(tmpdir) / "intrinsic-details.json").read_text())
-            arm_detail = details["vaddq_u8"]
+
+            # Intrinsic details are sharded into per-prefix chunks to avoid
+            # shipping the 144 MB monolithic file to the client. The
+            # client derives the bucket from the intrinsic name with the
+            # same rule as ``simdref.web._intrinsic_chunk_prefix``.
+            from simdref.web import _intrinsic_chunk_prefix
+            intrinsic_chunks_dir = Path(tmpdir) / "intrinsic-chunks"
+            self.assertTrue(intrinsic_chunks_dir.is_dir())
+
+            def _load_intrinsic_detail(name: str) -> dict:
+                bucket = _intrinsic_chunk_prefix(name)
+                chunk = json.loads((intrinsic_chunks_dir / f"{bucket}.json").read_text())
+                return chunk[name]
+
+            arm_detail = _load_intrinsic_detail("vaddq_u8")
             self.assertEqual(arm_detail["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
             self.assertIn("argument_preparation", arm_detail["metadata"])
             riscv_intr = next(item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1")
             self.assertEqual(riscv_intr["display_architecture"], "RISC-V")
-            riscv_detail = details["__riscv_vadd_vv_i32m1"]
+            riscv_detail = _load_intrinsic_detail("__riscv_vadd_vv_i32m1")
             self.assertEqual(riscv_detail["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
             self.assertIn("riscv:vsub.vv", [item["key"] for item in search["instructions"]])
             # Search index instructions have key but no measurements
@@ -205,14 +218,17 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("catalog_generated_at", stamp)
             self.assertEqual(stamp["intrinsics"], len(catalog.intrinsics))
 
-            # Intrinsic details
-            intr_details = json.loads(
-                (Path(tmpdir) / "intrinsic-details.json").read_text()
+            # Intrinsic details live in per-prefix chunks; hydrate the
+            # bucket that carries ``vaddq_u8`` and spot-check.
+            from simdref.web import _intrinsic_chunk_prefix
+            vaddq_bucket = _intrinsic_chunk_prefix("vaddq_u8")
+            intr_chunk = json.loads(
+                (Path(tmpdir) / "intrinsic-chunks" / f"{vaddq_bucket}.json").read_text()
             )
-            self.assertIsInstance(intr_details, dict)
-            self.assertTrue(len(intr_details) > 0)
-            self.assertIn("doc_sections", intr_details["vaddq_u8"])
-            self.assertIn("ACLE Documentation", intr_details["vaddq_u8"]["doc_sections"])
+            self.assertIsInstance(intr_chunk, dict)
+            self.assertTrue(len(intr_chunk) > 0)
+            self.assertIn("doc_sections", intr_chunk["vaddq_u8"])
+            self.assertIn("ACLE Documentation", intr_chunk["vaddq_u8"]["doc_sections"])
 
     def test_export_web_preserves_x86_detail_sections_for_rendering(self):
         catalog = build_fixture_catalog()

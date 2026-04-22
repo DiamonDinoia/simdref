@@ -360,6 +360,11 @@ body {
   height: 88px;
   overflow: hidden;
   contain: layout paint style;
+  /* Skip layout + paint for rows outside the viewport. The fixed
+   * 88px intrinsic-size tells the browser not to reflow the page
+   * when a row enters/leaves view. */
+  content-visibility: auto;
+  contain-intrinsic-size: 88px;
 }
 .results-virtual {
   position: relative;

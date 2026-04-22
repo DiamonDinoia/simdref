@@ -23,7 +23,6 @@ const shortcutsOverlay = $("shortcuts-overlay");
 
 /* ── State ────────────────────────────────────────────────────────── */
 let catalog = null;            // search-index.json payload
-let intrinsicDetails = null;   // intrinsic-details.json (loaded on first need)
 let searchEntries = [];
 let searchTokenIndex = new Map();
 let searchPrefixIndex = new Map();
@@ -47,8 +46,11 @@ const VIEWPORT_BUFFER_ROWS = 30;
 let virtualWrap = null;
 let virtualRange = { start: -1, end: -1 };
 
-/* Detail chunk cache: prefix -> Promise<data> */
+/* Detail chunk caches: prefix -> Promise<data>. Separate maps for
+ * instructions (detail-chunks/) and intrinsics (intrinsic-chunks/) so
+ * colliding prefixes (e.g. "ADD") don't shadow each other. */
 const chunkCache = new Map();
+const intrinsicChunkCache = new Map();
 
 /* ISA state */
 let defaultEnabledIsas = new Set(["SSE", "AVX", "AVX-512"]);
@@ -533,6 +535,18 @@ function chunkPrefix(mnemonic) {
   return c.length >= 3 ? c.slice(0, 3) : c;
 }
 
+/* Keep in sync with simdref.web._intrinsic_chunk_prefix. */
+function intrinsicChunkPrefix(name) {
+  let s = String(name || "").replace(/^_+/, "");
+  if (s.slice(0, 6).toLowerCase() === "riscv_") s = s.slice(6);
+  const m = s.match(/^(?:mm\d*|sv|vq?)_?/i);
+  if (m && m[0].length < s.length) s = s.slice(m[0].length);
+  s = s.replace(/^_+/, "");
+  const clean = (s.match(/[a-z0-9]/gi) || []).join("").toLowerCase();
+  if (clean.length < 2) return "misc";
+  return clean.slice(0, 3);
+}
+
 function loadChunk(prefix) {
   if (chunkCache.has(prefix)) return chunkCache.get(prefix);
   const p = fetchJson(`detail-chunks/${encodeURIComponent(prefix)}.json`)
@@ -542,11 +556,36 @@ function loadChunk(prefix) {
   return p;
 }
 
-function loadIntrinsicDetails() {
-  if (intrinsicDetails) return Promise.resolve(intrinsicDetails);
-  return fetchJson("intrinsic-details.json")
-    .then(data => { intrinsicDetails = data || {}; return intrinsicDetails; })
+function loadIntrinsicChunk(prefix) {
+  if (intrinsicChunkCache.has(prefix)) return intrinsicChunkCache.get(prefix);
+  const p = fetchJson(`intrinsic-chunks/${encodeURIComponent(prefix)}.json`)
+    .then(data => data || {})
     .catch(() => ({}));
+  intrinsicChunkCache.set(prefix, p);
+  return p;
+}
+
+/* Fetch one intrinsic's full details (lazy, per-bucket). Returns the
+ * detail entry or null if not found in its bucket (build skew). */
+async function loadIntrinsic(name) {
+  const chunk = await loadIntrinsicChunk(intrinsicChunkPrefix(name));
+  return chunk[name] || null;
+}
+
+/* Warm intrinsic-chunks for the top N visible hits during browser
+ * idle time so clicking a result doesn't pay a network round-trip. */
+function prefetchIntrinsicChunks(entries) {
+  const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 0));
+  const prefixes = new Set();
+  for (const e of entries) {
+    if (!e || e.kind !== "intrinsic") continue;
+    prefixes.add(intrinsicChunkPrefix(e.item.name));
+    if (prefixes.size >= 4) break;
+  }
+  for (const prefix of prefixes) {
+    if (intrinsicChunkCache.has(prefix)) continue;
+    schedule(() => { loadIntrinsicChunk(prefix); });
+  }
 }
 
 /* ── Render helpers ───────────────────────────────────────────────── */
@@ -864,9 +903,10 @@ async function renderDetail(entry) {
         const prefix = chunkPrefix(instr.mnemonic);
         const chunk = await loadChunk(prefix);
         const instrDetail = chunk[instr.key] || chunk[instr.display_key] || chunk[primaryKey] || {};
-        // Also load full intrinsic details
-        const intrDetails = await loadIntrinsicDetails();
-        detail = intrDetails[entry.item.name] || entry.item;
+        // Load this intrinsic's chunk lazily; fall back to the
+        // search-index entry if the chunk doesn't carry it.
+        const full = await loadIntrinsic(entry.item.name);
+        detail = full || entry.item;
         detail._measurements = instrDetail.measurements || [];
         detail._operands = instrDetail.operand_details || [];
         detail._instrDescription = instrDetail.description || {};
@@ -876,8 +916,8 @@ async function renderDetail(entry) {
       }
     }
     if (!detail) {
-      const intrDetails = await loadIntrinsicDetails();
-      detail = intrDetails[entry.item.name] || entry.item;
+      const full = await loadIntrinsic(entry.item.name);
+      detail = full || entry.item;
       detail._measurements = [];
       detail._operands = [];
       detail._pdfRefs = [];
@@ -1108,6 +1148,7 @@ function renderResults() {
   resultsNode.scrollTop = 0;
   syncResultsCount(query);
   renderVisibleResults(true);
+  prefetchIntrinsicChunks(resultPool.slice(0, 16));
 
   // Auto-select
   const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));

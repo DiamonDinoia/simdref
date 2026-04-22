@@ -148,8 +148,13 @@ def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path
 def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
     # Pre-compressed sidecars must be emitted for gzip-aware static serve.
-    for name in ("search-index.json", "intrinsic-details.json", "filter_spec.json"):
+    for name in ("search-index.json", "filter_spec.json"):
         assert (tmp_path / f"{name}.gz").is_file(), f"missing {name}.gz sidecar"
+    # Intrinsic details are sharded — every emitted chunk carries a .gz.
+    intr_chunks = list((tmp_path / "intrinsic-chunks").glob("*.json"))
+    assert intr_chunks, "intrinsic-chunks directory is empty"
+    for chunk in intr_chunks:
+        assert (chunk.with_suffix(".json.gz")).is_file(), f"missing {chunk.name}.gz sidecar"
 
 
 def test_search_index_instructions_have_required_fields(catalog: Catalog, tmp_path: Path):
