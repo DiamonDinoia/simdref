@@ -1,12 +1,13 @@
 name: Deploy Pages
 
-# Publishes the static web bundle to GitHub Pages every time main receives
-# a green CI run. Uses the catalog assets from the most recent
-# "data-latest" GitHub Release, which Build Data & Deploy refreshes weekly.
+# Publishes the static web bundle to GitHub Pages whenever Build Data &
+# Deploy publishes a fresh data-latest release. Falls back to building
+# the catalog locally on workflow_dispatch so the first deploy can run
+# before any release exists.
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Build Data & Deploy"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -45,6 +46,8 @@ jobs:
       - run: uv pip install -e .
 
       - name: Download published catalog from data-latest release
+        id: pull-release
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -56,7 +59,26 @@ jobs:
             --dir data/derived \
             --clobber
 
-      - name: Rebuild static web bundle from published catalog
+      - name: Install LLVM 22 toolchain (fallback build)
+        if: steps.pull-release.outcome != 'success'
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+
+      - name: Vendor RISC-V sources (fallback build)
+        if: steps.pull-release.outcome != 'success'
+        run: |
+          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
+          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
+          python tools/vendor_riscv_sources.py
+
+      - name: Build catalog locally (fallback build)
+        if: steps.pull-release.outcome != 'success'
+        run: python -u -m simdref build --with-sdm --man-dir "$RUNNER_TEMP/man"
+
+      - name: Rebuild static web bundle from catalog
         run: |
           python - <<'PY'
           from simdref.storage import WEB_DIR, load_catalog
