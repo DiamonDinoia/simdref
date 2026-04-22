@@ -1,0 +1,6 @@
+{
+  "name": "simdref",
+  "plugins": [
+    { "name": "asm-analysis", "source": "." }
+  ]
+}

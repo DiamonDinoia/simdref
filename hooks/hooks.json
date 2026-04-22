@@ -1,0 +1,8 @@
+{
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "command -v simdref >/dev/null 2>&1 || echo 'asm-analysis: simdref not on PATH — run `pipx install simdref --pip-args \"--index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/\"` or use uvx; skill will still work via uvx fallback' >&2"
+    }
+  ]
+}

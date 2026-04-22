@@ -1,0 +1,8 @@
+{
+  "name": "asm-analysis",
+  "version": "0.0.0",
+  "description": "Compile → annotate → llm-batch pipeline for analysing and optimising assembly. Wraps simdref's annotate and llm subcommands around gcc/objdump/cmake and proposes intrinsic-level replacements with measured latency/CPI.",
+  "author": "Marco Barbone",
+  "license": "GPL-3.0-or-later",
+  "repository": "https://github.com/DiamonDinoia/simdref"
+}
