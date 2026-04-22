@@ -238,11 +238,17 @@ jobs:
   # ───────────────────────────────────────────────────────────────────
   publish-data:
     needs: [test, package]
+    # Phase 3 only runs when ci.yml is the top-level workflow — i.e.,
+    # not when invoked via workflow_call from release-candidate.yml.
+    # github.workflow reflects the top-level caller's name.
     if: >-
-      github.event_name == 'release'
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'schedule'
-      || github.event_name == 'workflow_dispatch'
+      github.workflow == 'CI'
+      && (
+        github.event_name == 'release'
+        || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'schedule'
+        || github.event_name == 'workflow_dispatch'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -284,9 +290,12 @@ jobs:
   deploy-pages:
     needs: publish-data
     if: >-
-      github.event_name == 'release'
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'schedule'
+      github.workflow == 'CI'
+      && (
+        github.event_name == 'release'
+        || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'schedule'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -313,9 +322,12 @@ jobs:
   validate-release:
     needs: publish-data
     if: >-
-      github.event_name == 'release'
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'schedule'
+      github.workflow == 'CI'
+      && (
+        github.event_name == 'release'
+        || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'schedule'
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
