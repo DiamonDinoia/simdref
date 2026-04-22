@@ -302,6 +302,13 @@ function syncResultsCount(query) {
     resultsCount.textContent = shown < resultPool.length
       ? `Showing ${shown} of ${resultPool.length} results for "${query}"`
       : `${resultPool.length} result${resultPool.length !== 1 ? "s" : ""} for "${query}"`;
+  } else if (catalog && Array.isArray(catalog.intrinsics) && Array.isArray(catalog.instructions)) {
+    // Empty-query hint: show the catalog size so visitors know the index loaded.
+    const nI = catalog.intrinsics.length;
+    const nA = catalog.instructions.length;
+    resultsCount.textContent = shown < resultPool.length
+      ? `Showing ${shown} of ${resultPool.length} (${nI} intrinsics · ${nA} instructions)`
+      : `Type to search ${nI} intrinsics · ${nA} instructions`;
   } else {
     resultsCount.textContent = shown < resultPool.length
       ? `Showing ${shown} of ${resultPool.length} results`
@@ -1529,4 +1536,14 @@ Promise.all([
     const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
     if (fromHash) queryInput.value = fromHash;
     renderResults();
+  })
+  .catch((err) => {
+    // Fetch failure (CORS, 404, gzip misconfig) should not leave "Loading..." up forever.
+    console.error("simdref: failed to load catalog", err);
+    if (metaNode) metaNode.textContent = "catalog load failed";
+    if (resultsCount) resultsCount.textContent = "Failed to load search index";
+    if (detailEmpty) {
+      detailEmpty.textContent = "Could not load the search index. Open the browser console for details.";
+      detailEmpty.style.display = "";
+    }
   });

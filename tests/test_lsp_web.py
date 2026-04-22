@@ -99,6 +99,33 @@ class LspWebTests(unittest.TestCase):
             html = (Path(tmpdir) / "index.html").read_text()
             self.assertIn("simdref", html)
             self.assertIn("search-index.json", html)
+            # The initial empty-state copy in the results panel should cue the
+            # visitor rather than say "0 results" (which reads like a real
+            # empty catalog on first paint).
+            from html.parser import HTMLParser
+
+            class _Extract(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self._target = False
+                    self.text = ""
+
+                def handle_starttag(self, tag, attrs):
+                    if tag == "span" and dict(attrs).get("id") == "results-count":
+                        self._target = True
+
+                def handle_endtag(self, tag):
+                    if tag == "span" and self._target:
+                        self._target = False
+
+                def handle_data(self, data):
+                    if self._target:
+                        self.text += data
+
+            parser = _Extract()
+            parser.feed(html)
+            self.assertNotEqual(parser.text.strip(), "0 results")
+            self.assertIn("Loading", parser.text)
 
             # Search index
             search = json.loads((Path(tmpdir) / "search-index.json").read_text())
@@ -107,6 +134,13 @@ class LspWebTests(unittest.TestCase):
             self.assertIn("instructions", search)
             self.assertTrue(len(search["intrinsics"]) > 0)
             self.assertTrue(len(search["instructions"]) > 0)
+
+            # Sanity: the exported index decodes to a non-empty records array
+            # and carries a known probe intrinsic so we can catch silent
+            # hydration failures that would otherwise surface as "Loading…"
+            # on the live web page.
+            intrinsic_names = {item["name"] for item in search["intrinsics"]}
+            self.assertIn("_mm256_add_ps", intrinsic_names)
             details = json.loads((Path(tmpdir) / "intrinsic-details.json").read_text())
             arm_detail = details["vaddq_u8"]
             self.assertEqual(arm_detail["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
