@@ -4,13 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simdref"
-version = "0.1.0"
+version = "0.0.0"
 description = "Searchable SIMD intrinsic and instruction reference with CLI, manpages, TUI, LSP, and static web export."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "GPL-3.0-or-later"}
 authors = [
   {name = "Marco"}
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Documentation",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
   "httpx>=0.28,<1",
