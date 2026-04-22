@@ -5,6 +5,17 @@ All notable changes to `simdref` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- **`simdref annotate`** — annotate a `.s` assembly file with per-instruction
+  summaries and latency/CPI figures, emitting a `.sa` file that still
+  assembles. `--performance` and `--docs` are on by default; `--arch` pins
+  output to a specific microarch, otherwise aggregates across measured
+  archs (`--agg avg|median|best|worst`).
+- **ci:** fix runtime-validation step that still checked for the removed
+  monolithic `web/intrinsic-details.json`; it now validates the per-prefix
+  chunks under `web/intrinsic-chunks/`.
+
 ## [0.0.0] — 2026-04-22 — initial public release
 
 First tagged release. The baseline set of interfaces the project aims to

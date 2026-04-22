@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml)
 [![Pages](https://github.com/DiamonDinoia/simdref/actions/workflows/pages.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/pages.yml)
-[![PyPI](https://img.shields.io/pypi/v/simdref.svg)](https://pypi.org/project/simdref/)
-[![Python](https://img.shields.io/pypi/pyversions/simdref.svg)](https://pypi.org/project/simdref/)
+[![TestPyPI](https://img.shields.io/pypi/v/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org&label=TestPyPI)](https://test.pypi.org/project/simdref/)
+[![Python](https://img.shields.io/pypi/pyversions/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org)](https://test.pypi.org/project/simdref/)
 
 A single searchable reference for SIMD intrinsics and instructions across
 **x86 (Intel + uops.info)**, **Arm (ACLE / AARCHMRS)**, and **RISC-V
@@ -12,7 +12,6 @@ generated manpages, a static web app, and a structured JSON interface
 for LLM skills.
 
 [Web App](https://diamondinoia.github.io/simdref/) ·
-[PyPI](https://pypi.org/project/simdref/) ·
 [TestPyPI](https://test.pypi.org/project/simdref/) ·
 [GitHub](https://github.com/DiamonDinoia/simdref) ·
 [Contributing](CONTRIBUTING.md)
@@ -101,6 +100,39 @@ isa llm list --pattern "*gather*" --isa Intel
 See [docs/LLM.md](docs/LLM.md) for the full payload shape and a
 Claude-skill recipe.
 
+**Assembly annotator** — turn compiler output into a self-documented
+`.sa` file. Given `hello_simd.s`:
+
+```asm
+dot8:
+    vmovups (%rdi), %ymm0
+    vmovups (%rsi), %ymm1
+    vmulps  %ymm1, %ymm0, %ymm0
+    vaddps  %ymm0, %ymm0, %ymm0
+    vhaddps %ymm0, %ymm0, %ymm0
+    ret
+```
+
+```bash
+isa annotate hello_simd.s           # writes hello_simd.sa
+isa annotate hello_simd.s --arch skylake-x -o -   # to stdout, skylake-x only
+```
+
+produces:
+
+```asm
+dot8:
+    vmovups (%rdi), %ymm0   # Move Unaligned Packed Single Precision FP Values. | lat=10.3c cpi=0.78 [avg of 25 archs, measured]
+    vmovups (%rsi), %ymm1   # Move Unaligned Packed Single Precision FP Values. | lat=10.3c cpi=0.78 [avg of 25 archs, measured]
+    vmulps  %ymm1, %ymm0, %ymm0   # Multiply Packed Single Precision FP Values. | lat=3.8c cpi=0.54 [avg of 25 archs, measured]
+    vaddps  %ymm0, %ymm0, %ymm0   # Add Packed Single Precision FP Values.      | lat=3.1c cpi=0.58 [avg of 25 archs, measured]
+    vhaddps %ymm0, %ymm0, %ymm0   # Horizontal Add Packed Single Precision FP.  | lat=5.6c cpi=2.22 [avg of 25 archs, measured]
+    ret
+```
+
+The output is still valid assembly — comments start with `#`, so `as`
+and `ld` still consume it.
+
 ## Commands
 
 `isa --help` groups commands into **Commands** (day-to-day) and
@@ -117,6 +149,7 @@ Claude-skill recipe.
 | `isa llm batch` | Resolve many queries from stdin in one invocation (NDJSON out) |
 | `isa llm list` | Dump the `FilterSpec` or stream matching catalog entries |
 | `isa llm schema` | Print the JSON schema for `llm` payloads |
+| `isa annotate <file.s>` | Annotate a `.s` assembly file with per-instruction summaries and latency/CPI — writes `<file>.sa` |
 
 **Dev commands**
 

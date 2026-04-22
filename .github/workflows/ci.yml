@@ -122,9 +122,17 @@ jobs:
           assert instructions > int(os.environ["EXPECTED_INSTRUCTIONS_MIN"]), f"unexpected instruction count: {instructions}"
 
           search_index = WEB_DIR / "search-index.json"
-          intrinsic_details = WEB_DIR / "intrinsic-details.json"
+          intrinsic_chunks = WEB_DIR / "intrinsic-chunks"
           assert search_index.exists(), f"missing {search_index}"
-          assert intrinsic_details.exists(), f"missing {intrinsic_details}"
+          assert intrinsic_chunks.is_dir(), f"missing {intrinsic_chunks}"
+          chunk_files = sorted(intrinsic_chunks.glob("*.json"))
+          assert chunk_files, f"no chunk files under {intrinsic_chunks}"
+          chunked_names = set()
+          for p in chunk_files:
+              chunked_names.update(json.loads(p.read_text()).keys())
+          assert len(chunked_names) == intrinsics, (
+              f"intrinsic chunk coverage mismatch: {len(chunked_names)} vs {intrinsics}"
+          )
 
           payload = json.loads(search_index.read_text())
           assert len(payload.get("intrinsics", [])) == intrinsics

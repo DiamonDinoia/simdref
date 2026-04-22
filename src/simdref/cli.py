@@ -199,7 +199,7 @@ def _download_from_release() -> None:
                 raise typer.Exit(code=1) from exc
         else:
             err_console.print(f"failed to download {asset}: no compatible release asset found", style="red")
-            err_console.print("try 'simdref update --build-local' to build locally", style="yellow")
+            err_console.print("try 'simdref build' to build locally", style="yellow")
             raise typer.Exit(code=1)
     err_console.print("download complete", style="green")
 
@@ -674,6 +674,67 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 # ---------------------------------------------------------------------------
 # Typer commands
 # ---------------------------------------------------------------------------
+
+
+@app.command(rich_help_panel="Commands")
+def annotate(
+    input_path: Path = typer.Argument(..., help="Input .s assembly file, or '-' for stdin."),
+    output: Path = typer.Option(None, "-o", "--output", help="Output .sa path (default: <input>.sa, or '-' for stdout)."),
+    performance: bool = typer.Option(True, "--performance/--no-performance", help="Include latency/CPI annotations."),
+    docs: bool = typer.Option(True, "--docs/--no-docs", help="Include human-readable instruction summaries."),
+    arch: str | None = typer.Option(None, "--arch", help="Pin annotations to a specific microarch (e.g. skylake-x, zen4)."),
+    agg: str = typer.Option("avg", "--agg", help="Aggregation across archs when --arch is not set: avg|median|best|worst."),
+    include_modeled: bool = typer.Option(False, "--include-modeled", help="Fall back to modeled perf data when no arch has measured data."),
+    block: bool = typer.Option(False, "--block/--inline", help="Emit annotation as a comment block above each instruction (default: inline trailing)."),
+    unknown: str = typer.Option("mark", "--unknown", help="Handling of unknown mnemonics: keep|drop|mark."),
+    fmt: str = typer.Option("sa", "--format", help="Output format: sa|md|json."),
+) -> None:
+    """Annotate a ``.s`` assembly file with instruction summaries and perf data."""
+    from simdref.annotate import AnnotateOptions, annotate_stream
+
+    if agg not in {"avg", "median", "best", "worst"}:
+        err_console.print(f"invalid --agg value: {agg}", style="red")
+        raise typer.Exit(code=1)
+    if unknown not in {"keep", "drop", "mark"}:
+        err_console.print(f"invalid --unknown value: {unknown}", style="red")
+        raise typer.Exit(code=1)
+    if fmt not in {"sa", "md", "json"}:
+        err_console.print(f"invalid --format value: {fmt}", style="red")
+        raise typer.Exit(code=1)
+
+    ensure_runtime()
+
+    input_is_stdin = str(input_path) == "-"
+    if input_is_stdin:
+        source_lines: list[str] = sys.stdin.readlines()
+        default_out = Path("-")
+    else:
+        if not input_path.exists():
+            err_console.print(f"input not found: {input_path}", style="red")
+            raise typer.Exit(code=1)
+        source_lines = input_path.read_text().splitlines(keepends=True)
+        default_out = input_path.with_suffix(input_path.suffix + "a") if input_path.suffix == ".s" else input_path.with_suffix(".sa")
+
+    out_path = output if output is not None else default_out
+    opts = AnnotateOptions(
+        performance=performance,
+        docs=docs,
+        arch=arch,
+        agg=agg,
+        include_modeled=include_modeled,
+        block=block,
+        unknown=unknown,
+        fmt=fmt,
+    )
+
+    with open_db(SQLITE_PATH) as conn:
+        rendered = "".join(annotate_stream(source_lines, opts=opts, conn=conn))
+
+    if str(out_path) == "-":
+        sys.stdout.write(rendered)
+    else:
+        out_path.write_text(rendered)
+        err_console.print(f"wrote {out_path}", style="green")
 
 
 @app.command(rich_help_panel="Commands")

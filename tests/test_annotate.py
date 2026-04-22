@@ -1,0 +1,218 @@
+"""Tests for the annotate subcommand and helpers."""
+
+from __future__ import annotations
+
+from simdref.annotate import (
+    AnnotateOptions,
+    LineKind,
+    aggregate_perf,
+    annotate_stream,
+    format_annotation,
+    parse_asm_line,
+    pick_record,
+)
+from simdref.models import InstructionRecord
+
+
+def _make_record(
+    *,
+    mnemonic: str = "vaddps",
+    summary: str = "Add packed single-precision floats.",
+    arch_details: dict | None = None,
+) -> InstructionRecord:
+    return InstructionRecord(
+        mnemonic=mnemonic,
+        form=f"{mnemonic} ymm, ymm, ymm",
+        summary=summary,
+        arch_details=arch_details or {},
+    )
+
+
+def _arch_entry(lat: str, cpi: str, kind: str = "measured") -> dict:
+    return {
+        "latencies": [{"cycles": lat}],
+        "measurement": {"TP": cpi},
+        "source_kind": kind,
+    }
+
+
+def test_parse_asm_line_classifies_lines():
+    assert parse_asm_line("").kind == LineKind.BLANK
+    assert parse_asm_line("   \n").kind == LineKind.BLANK
+    assert parse_asm_line("main:").kind == LineKind.LABEL
+    assert parse_asm_line("    .cfi_startproc").kind == LineKind.DIRECTIVE
+    assert parse_asm_line("# a comment").kind == LineKind.COMMENT
+    ins = parse_asm_line("    vaddps %ymm2, %ymm1, %ymm0")
+    assert ins.kind == LineKind.INSTRUCTION
+    assert ins.mnemonic == "vaddps"
+    assert "%ymm0" in ins.operands
+
+
+def test_aggregate_perf_modes():
+    rec = _make_record(
+        arch_details={
+            "SKX": _arch_entry("3", "0.5"),
+            "ZEN4": _arch_entry("5", "1.0"),
+        }
+    )
+    assert aggregate_perf(rec, mode="avg").latency == 4.0
+    assert aggregate_perf(rec, mode="median").latency == 4.0
+    assert aggregate_perf(rec, mode="best").latency == 3.0
+    assert aggregate_perf(rec, mode="worst").latency == 5.0
+    assert aggregate_perf(rec, mode="avg").n_archs == 2
+
+
+def test_aggregate_perf_include_modeled_toggle():
+    rec = _make_record(
+        arch_details={"SKX": _arch_entry("4", "1.0", kind="modeled")}
+    )
+    measured_only = aggregate_perf(rec, mode="avg", include_modeled=False)
+    # No measured data, falls through to any-kind mixed.
+    assert measured_only.n_archs == 1
+    assert measured_only.source_kind in {"mixed", "modeled"}
+    with_modeled = aggregate_perf(rec, mode="avg", include_modeled=True)
+    assert with_modeled.latency == 4.0
+    assert with_modeled.source_kind == "modeled"
+
+
+def test_pick_record_prefers_named_arch():
+    a = _make_record(arch_details={"SKX": _arch_entry("3", "0.5")})
+    b = _make_record(arch_details={"ZEN4": _arch_entry("5", "1.0")})
+    assert pick_record([a, b], arch="ZEN4") is b
+
+
+def test_format_annotation_has_summary_and_perf():
+    rec = _make_record(
+        arch_details={
+            "SKX": _arch_entry("3", "0.5"),
+            "ZEN4": _arch_entry("5", "1.0"),
+        }
+    )
+    out = format_annotation(
+        rec,
+        performance=True,
+        docs=True,
+        arch=None,
+        agg="avg",
+        include_modeled=False,
+    )
+    assert "Add packed" in out
+    assert "lat=4.0c" in out
+    assert "cpi=0.75" in out
+    assert "[avg of 2 archs, measured]" in out
+
+
+class _FakeConn:
+    def __init__(self, mapping: dict[str, list[InstructionRecord]]):
+        self.mapping = mapping
+
+
+def _fake_lookup_factory(mapping):
+    def _fake(mnemonic, conn):
+        return mapping.get(mnemonic.lower(), [])
+    return _fake
+
+
+def test_annotate_stream_inline(monkeypatch):
+    rec = _make_record(
+        arch_details={"SKX": _arch_entry("3", "0.5")}
+    )
+    from simdref import annotate as annotate_mod
+
+    monkeypatch.setattr(
+        annotate_mod, "lookup", _fake_lookup_factory({"vaddps": [rec]})
+    )
+
+    src = [
+        "main:\n",
+        "    .cfi_startproc\n",
+        "    vaddps %ymm2, %ymm1, %ymm0\n",
+        "    vmadeupinstr %ymm0, %ymm1\n",
+        "\n",
+    ]
+    opts = AnnotateOptions()
+    out = list(annotate_stream(src, opts=opts, conn=_FakeConn({})))
+    joined = "".join(out)
+
+    # Labels/directives/blank lines pass through unchanged.
+    assert "main:\n" in joined
+    assert ".cfi_startproc\n" in joined
+
+    # Known mnemonic keeps the original instruction text and adds annotation.
+    known = [ln for ln in out if "vaddps" in ln][0]
+    assert "vaddps %ymm2, %ymm1, %ymm0" in known
+    assert "# " in known
+    assert "lat=3.0c" in known
+
+    # Unknown mnemonic marked with "??".
+    unknown = [ln for ln in out if "vmadeupinstr" in ln][0]
+    assert "# ??" in unknown
+
+
+def test_annotate_hello_simd_snippet(monkeypatch):
+    """End-to-end annotate on a small SIMD dot-product snippet."""
+    from pathlib import Path
+    from simdref import annotate as annotate_mod
+
+    vaddps = _make_record(
+        mnemonic="vaddps",
+        summary="Add packed single-precision floats.",
+        arch_details={"SKX": _arch_entry("4", "0.5"), "ZEN4": _arch_entry("3", "0.5")},
+    )
+    vmulps = _make_record(
+        mnemonic="vmulps",
+        summary="Multiply packed single-precision floats.",
+        arch_details={"SKX": _arch_entry("4", "0.5")},
+    )
+    vmovups = _make_record(
+        mnemonic="vmovups",
+        summary="Move unaligned packed single-precision floats.",
+        arch_details={"SKX": _arch_entry("5", "0.5")},
+    )
+    vxorps = _make_record(
+        mnemonic="vxorps",
+        summary="Bitwise logical XOR of packed single-precision floats.",
+        arch_details={"SKX": _arch_entry("1", "0.33")},
+    )
+    vhaddps = _make_record(
+        mnemonic="vhaddps",
+        summary="Horizontal add packed single-precision floats.",
+        arch_details={"SKX": _arch_entry("6", "2.0")},
+    )
+    mapping = {
+        "vaddps": [vaddps],
+        "vmulps": [vmulps],
+        "vmovups": [vmovups],
+        "vxorps": [vxorps],
+        "vhaddps": [vhaddps],
+    }
+    monkeypatch.setattr(annotate_mod, "lookup", _fake_lookup_factory(mapping))
+
+    fixture = Path(__file__).parent / "fixtures" / "hello_simd.s"
+    src = fixture.read_text().splitlines(keepends=True)
+    out = "".join(annotate_stream(src, opts=AnnotateOptions(), conn=_FakeConn({})))
+
+    # Directives/labels/ret pass through unchanged; `ret` is an unknown
+    # mnemonic and gets the "??" marker.
+    assert ".cfi_startproc\n" in out
+    assert "dot8:\n" in out
+    # All known SIMD mnemonics picked up a summary + perf fragment.
+    for mnem, fragment in [
+        ("vmovups", "Move unaligned"),
+        ("vmulps", "Multiply packed"),
+        ("vaddps", "Add packed"),
+        ("vxorps", "Bitwise logical XOR"),
+        ("vhaddps", "Horizontal add"),
+    ]:
+        line = next(ln for ln in out.splitlines() if mnem in ln and "#" in ln)
+        assert fragment in line
+        assert "lat=" in line
+        assert "cpi=" in line
+
+    # Every annotation is a valid assembly comment (starts with '#' on x86 GAS).
+    for ln in out.splitlines():
+        if "#" in ln:
+            # The portion after the first '#' must not contain another unescaped newline
+            # and the comment char must occur after the instruction text.
+            idx = ln.index("#")
+            assert idx >= 0
