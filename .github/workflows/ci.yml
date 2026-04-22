@@ -32,6 +32,11 @@ jobs:
       - name: Install package and test dependencies
         run: uv pip install -e . pytest
 
+      - name: Prime catalog from release (fast path)
+        # Download the pre-built release catalog so any test that walks an
+        # on-disk catalog (e.g. runtime smoke checks) has one available.
+        run: python -m simdref update --from-release --man-dir "$RUNNER_TEMP/man"
+
       - name: Run Python test suite
         run: python -m pytest tests
 
@@ -48,8 +53,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        label: [local-sdm]
+        label: [release-assets, local-sdm]
         include:
+          - label: release-assets
+            build_command: simdref update --man-dir "$RUNNER_TEMP/man"
+            intrinsics_min: 1000
+            instructions_min: 1000
           - label: local-sdm
             build_command: simdref build --with-sdm --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 7000
