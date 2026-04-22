@@ -1,6 +1,10 @@
 name: Build Data & Deploy
 
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   schedule:
     - cron: "0 0 * * 1" # Weekly Monday midnight UTC
   workflow_dispatch:
@@ -19,7 +23,14 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name == 'schedule' || github.event_name == 'release' || github.ref_name == github.event.repository.default_branch || github.event.inputs.run_build == 'true'
+    # Only run on: scheduled cron, release publish, manual dispatch with
+    # run_build=true, or a green CI on main. Skip red CI runs so a broken
+    # main never produces a fresh data-latest.
+    if: >-
+      github.event_name == 'schedule'
+      || github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_build == 'true')
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
