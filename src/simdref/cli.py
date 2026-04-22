@@ -95,10 +95,21 @@ from simdref.storage import (
 from simdref.web import export_web
 
 
-def _run_tui(*, initial_query: str = "", initial_preset: str | None = None):
+def _run_tui(
+    *,
+    initial_query: str = "",
+    initial_preset: str | None = None,
+    initial_view: str = "search",
+    initial_asm: str = "",
+):
     from simdref.tui import run_tui
 
-    return run_tui(initial_query=initial_query, initial_preset=initial_preset)
+    return run_tui(
+        initial_query=initial_query,
+        initial_preset=initial_preset,
+        initial_view=initial_view,
+        initial_asm=initial_asm,
+    )
 
 
 class SimdrefGroup(TyperGroup):
@@ -678,7 +689,7 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 
 @app.command(rich_help_panel="Commands")
 def annotate(
-    input_path: Path = typer.Argument(..., help="Input .s assembly file, or '-' for stdin."),
+    input_path: Path | None = typer.Argument(None, help="Input .s assembly file, or '-' for stdin. Omit to open the TUI annotate tab."),
     output: Path = typer.Option(None, "-o", "--output", help="Output .sa path (default: <input>.sa, or '-' for stdout)."),
     performance: bool = typer.Option(True, "--performance/--no-performance", help="Include latency/CPI annotations."),
     docs: bool = typer.Option(True, "--docs/--no-docs", help="Include human-readable instruction summaries."),
@@ -689,8 +700,14 @@ def annotate(
     unknown: str = typer.Option("mark", "--unknown", help="Handling of unknown mnemonics: keep|drop|mark."),
     fmt: str = typer.Option("sa", "--format", help="Output format: sa|md|json."),
 ) -> None:
-    """Annotate a ``.s`` assembly file with instruction summaries and perf data."""
+    """Annotate a ``.s`` assembly file with instruction summaries and perf data.
+
+    With no positional argument, launches the TUI on the Annotate tab."""
     from simdref.annotate import AnnotateOptions, annotate_stream
+
+    if input_path is None:
+        ensure_runtime()
+        raise typer.Exit(code=_run_tui(initial_view="annotate"))
 
     if agg not in {"avg", "median", "best", "worst"}:
         err_console.print(f"invalid --agg value: {agg}", style="red")

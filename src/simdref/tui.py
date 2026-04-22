@@ -33,17 +33,22 @@ try:
     from textual.app import App, ComposeResult
     from textual.message import Message
     from textual.binding import Binding
-    from textual.containers import Horizontal, VerticalScroll
+    from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.screen import ModalScreen
     from textual.widgets import (
+        Button,
+        Checkbox,
         Collapsible,
+        ContentSwitcher,
         Footer,
         Header,
         Input,
         Label,
         ListItem,
         ListView,
+        Select,
         Static,
+        TextArea,
     )
 except ImportError:  # pragma: no cover - allows non-TUI test environments
     class _TextualStub:
@@ -73,8 +78,14 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
     Message = _TextualStub
     Binding = _TextualStub
     Horizontal = _TextualStub
+    Vertical = _TextualStub
     VerticalScroll = _TextualStub
+    Button = _TextualStub
+    Button.Pressed = _EventStub
+    Checkbox = _TextualStub
+    Checkbox.Changed = _EventStub
     Collapsible = _TextualStub
+    ContentSwitcher = _TextualStub
     Footer = _TextualStub
     Header = _TextualStub
     Input = _TextualStub
@@ -85,7 +96,10 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
     ListView = _TextualStub
     ListView.Selected = _EventStub
     ListView.Highlighted = _EventStub
+    Select = _TextualStub
+    Select.Changed = _EventStub
     Static = _TextualStub
+    TextArea = _TextualStub
     events = _TextualStub()
 
 from simdref.display import (
@@ -546,6 +560,56 @@ class SimdrefApp(App):
     TITLE = "simdref"
 
     CSS = """
+    #tabs-bar {
+        dock: top;
+        height: 1;
+        margin: 0 1;
+    }
+    #tabs-bar .tab-btn {
+        width: auto;
+        color: $text-muted;
+        padding: 0 2;
+        margin: 0 1 0 0;
+        text-style: none;
+        background: transparent;
+        border: none;
+    }
+    #tabs-bar .tab-btn:hover { color: $text; }
+    #tabs-bar .tab-btn.active {
+        color: $accent;
+        text-style: bold underline;
+    }
+    #view-switcher { height: 1fr; }
+    #annotate-view { height: 1fr; layout: vertical; }
+    #ann-toolbar {
+        height: auto;
+        padding: 0 1;
+    }
+    #ann-toolbar Checkbox { margin: 0 2 0 0; width: auto; border: none; padding: 0; background: transparent; }
+    #ann-toolbar Select { width: 22; margin: 0 1 0 0; }
+    #ann-toolbar Label { width: auto; margin: 0 1 0 0; color: $text-muted; }
+    #ann-panes {
+        height: 1fr;
+        margin: 0 1;
+    }
+    #ann-panes > * {
+        width: 1fr;
+        border: solid $primary;
+    }
+    #ann-input {
+        height: 100%;
+    }
+    #ann-output {
+        height: 100%;
+        overflow-y: scroll;
+        padding: 0 1;
+    }
+    #ann-status {
+        dock: bottom;
+        height: 1;
+        margin: 0 1;
+        color: $text-muted;
+    }
     #search-input {
         dock: top;
         margin: 0 1;
@@ -622,6 +686,7 @@ class SimdrefApp(App):
         Binding("f", "toggle_all", "Expand/Collapse All", show=True),
         Binding("1-9", "pick(0)", "Pick result", show=True, key_display="1-9"),
         Binding("c", "copy_detail", "Copy", show=True),
+        Binding("ctrl+t", "switch_tab", "Switch tab", show=True, priority=True, key_display="^t"),
         Binding("q", "quit", "Quit", show=True),
         Binding("ctrl+d", "quit", "Quit", show=True, priority=True, key_display="^d"),
         Binding("j", "list_cursor_down", show=False, priority=True),
@@ -629,10 +694,21 @@ class SimdrefApp(App):
         *[Binding(str(n), f"pick({n})", show=False) for n in range(1, 10)],
     ]
 
-    def __init__(self, initial_query: str = "", initial_preset: str | None = None) -> None:
+    def __init__(
+        self,
+        initial_query: str = "",
+        initial_preset: str | None = None,
+        *,
+        initial_view: str = "search",
+        initial_asm: str = "",
+    ) -> None:
         super().__init__()
         self._initial_query = initial_query
         self._initial_preset = initial_preset
+        self._initial_view = initial_view if initial_view in ("search", "annotate") else "search"
+        self._initial_asm = initial_asm
+        self._annotate_debounce_timer = None  # textual Timer, set in on_mount
+        self._annotate_last_text: str = ""
         self._current_results: list[SearchResult] = []
         self._current_query: str = ""
         self._has_more_results = False
@@ -664,30 +740,65 @@ class SimdrefApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield SearchInput(
-            placeholder="Search intrinsics and instructions...",
-            id="search-input",
-            value=self._initial_query,
-        )
-        with Horizontal(id="isa-bar"):
-            yield ToggleAllLabel("ISA:", classes="isa-label", id="isa-toggle-all")
-            for family in _ISA_FAMILIES:
-                yield IsaToggle(family, enabled=family in self._enabled_families)
-            yield PresetButton("Default", "default", classes="preset-btn")
-            yield PresetButton("Intel", "intel", classes="preset-btn")
-            yield PresetButton("Arm32", "arm32", classes="preset-btn")
-            yield PresetButton("Arm64", "arm64", classes="preset-btn")
-            yield PresetButton("RISC-V", "riscv", classes="preset-btn")
-            yield PresetButton("None", "none", classes="preset-btn")
-            yield PresetButton("All", "all", classes="preset-btn")
-        yield VerticalScroll(id="sub-isa-container")
-        with Horizontal(id="kind-bar"):
-            yield ToggleAllLabel("Kind:", classes="isa-label", id="kind-label")
-            yield KindToggle("intrinsic", "intrinsics", enabled="intrinsic" in self._enabled_kinds)
-            yield KindToggle("instruction", "asm", enabled="instruction" in self._enabled_kinds)
-        yield ListView(id="results-list")
-        yield VerticalScroll(id="detail-scroll")
+        with Horizontal(id="tabs-bar"):
+            yield Static("Search", id="tab-search", classes="tab-btn")
+            yield Static("Annotate", id="tab-annotate", classes="tab-btn")
+        with ContentSwitcher(id="view-switcher", initial=f"view-{self._initial_view}"):
+            with Vertical(id="view-search"):
+                yield SearchInput(
+                    placeholder="Search intrinsics and instructions...",
+                    id="search-input",
+                    value=self._initial_query,
+                )
+                with Horizontal(id="isa-bar"):
+                    yield ToggleAllLabel("ISA:", classes="isa-label", id="isa-toggle-all")
+                    for family in _ISA_FAMILIES:
+                        yield IsaToggle(family, enabled=family in self._enabled_families)
+                    yield PresetButton("Default", "default", classes="preset-btn")
+                    yield PresetButton("Intel", "intel", classes="preset-btn")
+                    yield PresetButton("Arm32", "arm32", classes="preset-btn")
+                    yield PresetButton("Arm64", "arm64", classes="preset-btn")
+                    yield PresetButton("RISC-V", "riscv", classes="preset-btn")
+                    yield PresetButton("None", "none", classes="preset-btn")
+                    yield PresetButton("All", "all", classes="preset-btn")
+                yield VerticalScroll(id="sub-isa-container")
+                with Horizontal(id="kind-bar"):
+                    yield ToggleAllLabel("Kind:", classes="isa-label", id="kind-label")
+                    yield KindToggle("intrinsic", "intrinsics", enabled="intrinsic" in self._enabled_kinds)
+                    yield KindToggle("instruction", "asm", enabled="instruction" in self._enabled_kinds)
+                yield ListView(id="results-list")
+                yield VerticalScroll(id="detail-scroll")
+            with Vertical(id="view-annotate"):
+                with Horizontal(id="ann-toolbar"):
+                    yield Label("ISA")
+                    yield Select(
+                        [("x86", "x86"), ("arm", "arm"), ("riscv", "riscv"), ("any", "")],
+                        value="x86",
+                        allow_blank=False,
+                        id="ann-isa",
+                    )
+                    yield Label("Agg")
+                    yield Select(
+                        [("avg", "avg"), ("median", "median"), ("best", "best"), ("worst", "worst")],
+                        value="avg",
+                        allow_blank=False,
+                        id="ann-agg",
+                    )
+                    yield Checkbox("perf", value=True, id="ann-perf")
+                    yield Checkbox("docs", value=True, id="ann-docs")
+                    yield Checkbox("modeled", value=True, id="ann-modeled")
+                    yield Button("Annotate", id="ann-run", variant="primary")
+                    yield Button("Clear", id="ann-clear")
+                with Horizontal(id="ann-panes"):
+                    yield TextArea.code_editor(
+                        self._initial_asm,
+                        language=None,
+                        soft_wrap=False,
+                        id="ann-input",
+                    )
+                    yield VerticalScroll(Static("", id="ann-output"), id="ann-output-wrap")
         yield Label("", id="status-label")
+        yield Label("", id="ann-status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -704,6 +815,11 @@ class SimdrefApp(App):
             self._apply_initial_preset(self._initial_preset)
         # Defer until first layout pass so container width is known
         self.call_after_refresh(self._refresh_sub_isa_bar)
+        # Apply initial tab + annotate seed before focusing anything.
+        self._set_tab(self._initial_view)
+        if self._initial_view == "annotate":
+            # _set_tab already focused ann-input and scheduled annotate.
+            return
         if self._initial_query:
             self._run_initial_query()
         else:
@@ -1498,7 +1614,149 @@ class SimdrefApp(App):
         self._show_detail(result)
         self.query_one("#detail-scroll").focus()
 
+    # ── Tab switching ───────────────────────────────────────────────
+    def _current_tab(self) -> str:
+        try:
+            switcher = self.query_one("#view-switcher", ContentSwitcher)
+            current = getattr(switcher, "current", None) or ""
+        except Exception:
+            return self._initial_view
+        return "annotate" if current.endswith("annotate") else "search"
+
+    def _set_tab(self, name: str) -> None:
+        name = "annotate" if name == "annotate" else "search"
+        try:
+            switcher = self.query_one("#view-switcher", ContentSwitcher)
+            switcher.current = f"view-{name}"
+        except Exception:
+            return
+        for btn_id, active in (("tab-search", name == "search"), ("tab-annotate", name == "annotate")):
+            try:
+                btn = self.query_one(f"#{btn_id}", Static)
+            except Exception:
+                continue
+            if active:
+                btn.add_class("active")
+            else:
+                btn.remove_class("active")
+        try:
+            if name == "annotate":
+                self.query_one("#ann-input", TextArea).focus()
+                self._schedule_annotate()
+            else:
+                self.query_one("#search-input", Input).focus()
+        except Exception:
+            pass
+
+    def action_switch_tab(self) -> None:
+        self._set_tab("search" if self._current_tab() == "annotate" else "annotate")
+
+    def on_click(self, event: events.Click) -> None:  # pragma: no cover - UI wiring
+        widget = getattr(event, "widget", None)
+        tid = getattr(widget, "id", "") if widget is not None else ""
+        if tid in ("tab-search", "tab-annotate"):
+            self._set_tab("annotate" if tid == "tab-annotate" else "search")
+
+    # ── Annotate pane ───────────────────────────────────────────────
+    def _annotate_options(self):
+        from simdref.annotate import AnnotateOptions
+
+        def _sel(widget_id: str, fallback: str) -> str:
+            try:
+                v = self.query_one(f"#{widget_id}", Select).value
+            except Exception:
+                return fallback
+            return "" if v is None else str(v)
+
+        def _chk(widget_id: str, fallback: bool) -> bool:
+            try:
+                return bool(self.query_one(f"#{widget_id}", Checkbox).value)
+            except Exception:
+                return fallback
+
+        isa = _sel("ann-isa", "x86")
+        return AnnotateOptions(
+            performance=_chk("ann-perf", True),
+            docs=_chk("ann-docs", True),
+            arch=None,
+            agg=_sel("ann-agg", "avg") or "avg",
+            include_modeled=_chk("ann-modeled", True),
+            block=False,
+            unknown="mark",
+            fmt="sa",
+        ), isa
+
+    def _schedule_annotate(self, delay: float = 0.35) -> None:
+        if self._annotate_debounce_timer is not None:
+            try:
+                self._annotate_debounce_timer.stop()
+            except Exception:
+                pass
+            self._annotate_debounce_timer = None
+        try:
+            self._annotate_debounce_timer = self.set_timer(delay, self._run_annotate)
+        except Exception:
+            self._run_annotate()
+
+    def _run_annotate(self) -> None:
+        from simdref.annotate import annotate_stream
+
+        try:
+            ta = self.query_one("#ann-input", TextArea)
+            out = self.query_one("#ann-output", Static)
+            status = self.query_one("#ann-status", Label)
+        except Exception:
+            return
+        text = getattr(ta, "text", "") or ""
+        self._annotate_last_text = text
+        if not text.strip():
+            out.update("")
+            status.update("")
+            return
+        opts, _isa = self._annotate_options()
+        if self._conn is None:
+            self._conn = open_db()
+        try:
+            lines = text.splitlines(keepends=True)
+            rendered = "".join(annotate_stream(lines, opts=opts, conn=self._conn))
+        except Exception as exc:  # pragma: no cover - defensive
+            status.update(f"error: {exc}")
+            return
+        out.update(rendered)
+        # Count known/unknown from rendered output for a quick status line.
+        known = sum(1 for ln in rendered.splitlines() if " # " in ln and "# ??" not in ln)
+        unknown = rendered.count("# ??")
+        status.update(f"annotated {known} / {known + unknown}  ({unknown} unknown)")
+
+    @on(Button.Pressed, "#ann-run")
+    def _on_ann_run(self, event) -> None:
+        self._run_annotate()
+
+    @on(Button.Pressed, "#ann-clear")
+    def _on_ann_clear(self, event) -> None:
+        try:
+            self.query_one("#ann-input", TextArea).text = ""
+            self.query_one("#ann-output", Static).update("")
+            self.query_one("#ann-status", Label).update("")
+        except Exception:
+            pass
+
+    @on(TextArea.Changed, "#ann-input")
+    def _on_ann_input_changed(self, event) -> None:
+        self._schedule_annotate()
+
+    @on(Checkbox.Changed, "#ann-perf, #ann-docs, #ann-modeled")
+    def _on_ann_checkbox_changed(self, event) -> None:
+        self._schedule_annotate(delay=0.05)
+
+    @on(Select.Changed, "#ann-isa, #ann-agg")
+    def _on_ann_select_changed(self, event) -> None:
+        self._schedule_annotate(delay=0.05)
+
     def action_focus_search(self) -> None:
+        if self._current_tab() != "search":
+            self._set_tab("search")
+            return
         self.query_one("#search-input", Input).focus()
 
     def action_back(self) -> None:
@@ -1599,8 +1857,19 @@ class SimdrefApp(App):
         self.call_from_thread(_finish)
 
 
-def run_tui(initial_query: str = "", initial_preset: str | None = None) -> int:
+def run_tui(
+    initial_query: str = "",
+    initial_preset: str | None = None,
+    *,
+    initial_view: str = "search",
+    initial_asm: str = "",
+) -> int:
     """Launch the interactive Textual TUI."""
-    app = SimdrefApp(initial_query=initial_query, initial_preset=initial_preset)
+    app = SimdrefApp(
+        initial_query=initial_query,
+        initial_preset=initial_preset,
+        initial_view=initial_view,
+        initial_asm=initial_asm,
+    )
     app.run()
     return 0
