@@ -78,7 +78,6 @@ from simdref.storage import (
     DATA_DIR,
     DEFAULT_MAN_DIR,
     SQLITE_PATH,
-    SQLITE_SCHEMA_VERSION,
     WEB_DIR,
     build_sqlite,
     load_catalog,
@@ -176,9 +175,7 @@ RELEASE_TAG = "data-latest"
 
 
 def _release_tag_candidates() -> list[str]:
-    version_tag = f"data-v{__version__}-schema{SQLITE_SCHEMA_VERSION}"
-    schema_tag = f"data-schema{SQLITE_SCHEMA_VERSION}-latest"
-    return [version_tag, schema_tag, RELEASE_TAG]
+    return [f"data-v{__version__}", RELEASE_TAG]
 
 
 def _release_asset_url(tag: str, asset_name: str) -> str:

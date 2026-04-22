@@ -25,7 +25,6 @@ jobs:
       PYTHONUNBUFFERED: "1"
     outputs:
       data_tag: ${{ steps.meta.outputs.data_tag }}
-      schema_tag: ${{ steps.meta.outputs.schema_tag }}
       publish_mutable: ${{ steps.meta.outputs.publish_mutable }}
       publish_versioned: ${{ steps.meta.outputs.publish_versioned }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
@@ -92,13 +91,7 @@ jobs:
           print(__version__)
           PY
           )
-          SCHEMA=$(python - <<'PY'
-          from simdref.storage import SQLITE_SCHEMA_VERSION
-          print(SQLITE_SCHEMA_VERSION)
-          PY
-          )
-          echo "data_tag=data-v${VERSION}-schema${SCHEMA}" >> "$GITHUB_OUTPUT"
-          echo "schema_tag=data-schema${SCHEMA}-latest" >> "$GITHUB_OUTPUT"
+          echo "data_tag=data-v${VERSION}" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "publish_versioned=true" >> "$GITHUB_OUTPUT"
             echo "publish_mutable=true" >> "$GITHUB_OUTPUT"
@@ -164,20 +157,6 @@ jobs:
           tag_name: ${{ steps.meta.outputs.data_tag }}
           name: Data Build ${{ steps.meta.outputs.data_tag }}
           prerelease: ${{ steps.meta.outputs.is_prerelease }}
-          files: |
-            data/derived/catalog.msgpack
-            data/derived/catalog.db
-            perf-cache.tar.zst
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload schema-compatible catalog release assets
-        if: steps.meta.outputs.publish_mutable == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.schema_tag }}
-          name: Latest Schema-Compatible Data Build
-          prerelease: true
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
