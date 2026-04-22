@@ -118,7 +118,7 @@ jobs:
           fi
 
       - name: Build catalog from upstream
-        run: python -u -m simdref update --build --with-sdm
+        run: python -u -m simdref build --with-sdm
 
       - name: Validate upstream source ingestion
         run: python tools/validate_sources.py --require-sdm

@@ -60,7 +60,7 @@ jobs:
             intrinsics_min: 1000
             instructions_min: 1000
           - label: local-sdm
-            build_command: simdref update --build --with-sdm --man-dir "$RUNNER_TEMP/man"
+            build_command: simdref build --with-sdm --man-dir "$RUNNER_TEMP/man"
             intrinsics_min: 7000
             instructions_min: 20000
     steps:

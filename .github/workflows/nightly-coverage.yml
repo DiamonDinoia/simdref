@@ -36,7 +36,7 @@ jobs:
         run: uv pip install -e .
 
       - name: Build local catalog
-        run: python -m simdref update --build-local
+        run: python -m simdref build
 
       - name: Re-run coverage audit
         run: python tools/audit_coverage.py fetch
