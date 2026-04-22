@@ -20,6 +20,11 @@ on:
   schedule:
     - cron: "0 0 * * 1" # weekly (Mon 00:00 UTC) — refresh data-latest from upstream
   workflow_dispatch:
+    inputs:
+      publish_versioned:
+        type: boolean
+        default: false
+        description: "Also publish data-v<pyproject-version> (used to bootstrap a versioned data release when release.yml's tag push did not cascade)."
   workflow_call:
 
 permissions:
@@ -273,13 +278,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish data-v<version> (release events only)
-        if: github.event_name == 'release'
+      - name: Publish data-v<version>
+        if: github.event_name == 'release' || inputs.publish_versioned == true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build-catalog.outputs.data_tag }}
           name: Data Build ${{ needs.build-catalog.outputs.data_tag }}
-          prerelease: ${{ github.event.release.prerelease }}
+          prerelease: ${{ github.event.release.prerelease || false }}
           files: |
             data/derived/catalog.msgpack
             data/derived/catalog.db
