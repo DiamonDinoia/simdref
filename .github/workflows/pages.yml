@@ -45,7 +45,20 @@ jobs:
 
       - run: uv pip install -e .
 
+      - name: Check data-latest release exists
+        id: check-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view data-latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::data-latest release not found — Build Data & Deploy has not yet published. Skipping deploy."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download published catalog from data-latest release
+        if: steps.check-release.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -58,6 +71,7 @@ jobs:
             --clobber
 
       - name: Rebuild static web bundle from catalog
+        if: steps.check-release.outputs.available == 'true'
         run: |
           python - <<'PY'
           from simdref.storage import WEB_DIR, load_catalog
@@ -68,10 +82,12 @@ jobs:
           PY
 
       - name: Upload Pages artifact
+        if: steps.check-release.outputs.available == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: web/
 
       - name: Deploy to GitHub Pages
+        if: steps.check-release.outputs.available == 'true'
         id: deployment
         uses: actions/deploy-pages@v5

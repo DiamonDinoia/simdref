@@ -205,14 +205,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev flow
 (tests, adding a new source, build stages) and
 [ARCHITECTURE.md](ARCHITECTURE.md) for module layout.
 
-## Dependencies
-
-[httpx](https://www.python-httpx.org/) ·
-[rapidfuzz](https://github.com/maxbachmann/RapidFuzz) ·
-[rich](https://github.com/Textualize/rich) ·
-[typer](https://typer.tiangolo.com/) ·
-[textual](https://github.com/Textualize/textual)
-
 ## License
 
 [GNU General Public License v3.0](LICENSE).

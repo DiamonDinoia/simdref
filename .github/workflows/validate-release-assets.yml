@@ -38,13 +38,39 @@ jobs:
       - name: Install package and test dependencies
         run: uv pip install -e . pytest
 
+      - name: Verify upstream Build Data build job succeeded
+        id: check-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id="${{ github.event.workflow_run.id }}"
+          if [ -n "$run_id" ]; then
+            build_conclusion=$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/jobs" \
+              --jq '.jobs[] | select(.name=="build") | .conclusion' 2>/dev/null || echo "")
+            echo "upstream build job conclusion: ${build_conclusion:-<unknown>}"
+            if [ "$build_conclusion" != "success" ]; then
+              echo "::warning::upstream build job did not succeed (conclusion=${build_conclusion:-none}); nothing to validate."
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if gh release view data-latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::data-latest release not found — nothing to validate."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Pull data-latest (the catalog that was just published)
+        if: steps.check-release.outputs.available == 'true'
         run: simdref update --from-release --man-dir "$RUNNER_TEMP/man"
 
       - name: Full test suite against released catalog
+        if: steps.check-release.outputs.available == 'true'
         run: python -m pytest tests
 
       - name: Sanity-run the CLI
+        if: steps.check-release.outputs.available == 'true'
         run: |
           simdref doctor
           simdref llm query _mm_add_epi32 || true

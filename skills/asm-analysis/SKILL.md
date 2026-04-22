@@ -25,21 +25,58 @@ Pipeline: **input → compile line → `.s` → `simdref annotate` → `simdref 
 
 ## 0. Preflight (runs once before any pipeline stage)
 
-Check `simdref --version`. If it fails, ask the user which of these two to use, then proceed:
+Probe the installed version:
+```bash
+simdref --version   # or: simdref -V
+```
 
-1. **Persistent install via pipx:**
+### 0a. Not installed
+
+Ask the user which of these two to use, then proceed:
+
+1. **Persistent install via pipx (recommended):**
    ```bash
-   pipx install simdref --pip-args "--index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/"
+   pipx install simdref
    ```
 2. **Transient per-invocation via uvx (no install state):**
    ```bash
-   uvx --index https://test.pypi.org/simple/ --index https://pypi.org/simple/ --index-strategy unsafe-best-match --from simdref simdref <args...>
+   uvx --from simdref simdref <args...>
    ```
-   In this mode, prepend the `uvx …` prefix to every `simdref …` invocation in the rest of this skill.
+   In this mode, prepend the `uvx --from simdref` prefix to every `simdref …` invocation in the rest of this skill.
 
-No version pin — both resolve the latest TestPyPI release. Extra-index to real PyPI is required because `simdref`'s runtime deps (httpx, typer, textual, rich, rapidfuzz, msgpack, PyYAML, pdfplumber, PyMuPDF) are only on real PyPI.
+If real PyPI doesn't yet have simdref (pre-release window), fall back to:
+```bash
+pipx install simdref --pip-args "--index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/"
+```
 
 Never install without asking.
+
+### 0b. Already installed — check for a newer release
+
+Before the first real pipeline run in a conversation, offer (once) to
+upgrade:
+
+```bash
+# pipx install:
+pipx upgrade simdref
+
+# uvx transient: upgrade happens automatically on next invocation
+```
+
+If the user declines, note the installed version and move on. Don't
+nag again in the same conversation.
+
+### 0c. Skill self-update
+
+This skill file lives at `skills/asm-analysis/SKILL.md` inside the
+simdref source tree and ships as part of the PyPI release. When the
+user upgrades simdref, a fresh copy of this skill comes with it. If
+they installed the skill out-of-band (e.g., copied to
+`~/.claude/skills/`), offer:
+```bash
+pip show -f simdref | grep SKILL.md
+```
+then point them at the packaged copy for the upgrade diff.
 
 ---
 

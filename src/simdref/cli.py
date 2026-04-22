@@ -1551,6 +1551,9 @@ def main() -> int:
     """CLI entry point — dispatches to subcommand or smart lookup."""
     global SHOW_FP16_ISAS, SHORT_MODE, FULL_MODE
     argv = sys.argv[1:]
+    if any(arg in ("--version", "-V") for arg in argv):
+        print(__version__)
+        return 0
     if _is_completion_invocation():
         app()
         return 0
