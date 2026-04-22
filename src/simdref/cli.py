@@ -1279,21 +1279,106 @@ def _registered_command_names() -> set[str]:
 
 @app.command(rich_help_panel="Commands")
 def doctor() -> None:
-    """Validate installation and show catalog stats."""
-    catalog = ensure_catalog()
+    """Check the installation and report pass/fail for each component.
+
+    Exits with a non-zero status when any required check fails so this
+    command is usable from scripts and CI.
+    """
     from rich.table import Table
-    table = Table(show_header=False, box=None)
-    table.add_row("catalog", str(CATALOG_PATH))
-    table.add_row("sqlite", f"{SQLITE_PATH} exists={SQLITE_PATH.exists()}")
-    table.add_row("man", str(DEFAULT_MAN_DIR))
-    table.add_row("intrinsics", str(len(catalog.intrinsics)))
-    table.add_row("instructions", str(len(catalog.instructions)))
-    for source in catalog.sources:
-        table.add_row(
-            f"source {source.source}",
-            f"version={source.version} url={source.url}",
-        )
+
+    ok_icon = "[green]✓[/]"
+    fail_icon = "[red]✗[/]"
+    warn_icon = "[yellow]![/]"
+    failures = 0
+    warnings = 0
+
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("", width=2)
+    table.add_column("check", style="cyan", no_wrap=True)
+    table.add_column("status")
+    table.add_column("detail", style="dim")
+
+    # Catalog file
+    if CATALOG_PATH.exists():
+        try:
+            catalog = load_catalog()
+        except Exception as exc:
+            table.add_row(fail_icon, "catalog", "[red]unreadable[/]", f"{CATALOG_PATH}: {exc}")
+            failures += 1
+            console.print(table)
+            console.print(f"\n[red]{failures} check failed — run[/] [cyan]simdref ingest[/] [red]to rebuild.[/]")
+            raise typer.Exit(1)
+        table.add_row(ok_icon, "catalog", "[green]present[/]", str(CATALOG_PATH))
+    else:
+        table.add_row(fail_icon, "catalog", "[red]missing[/]", f"{CATALOG_PATH} — run `simdref ingest`")
+        failures += 1
+        console.print(table)
+        console.print(f"\n[red]{failures} check failed.[/]")
+        raise typer.Exit(1)
+
+    # SQLite index
+    if not SQLITE_PATH.exists():
+        table.add_row(fail_icon, "sqlite index", "[red]missing[/]", f"{SQLITE_PATH} — run `simdref ingest`")
+        failures += 1
+    elif not sqlite_schema_is_current():
+        table.add_row(warn_icon, "sqlite index", "[yellow]outdated schema[/]", "rebuild with `simdref ingest`")
+        warnings += 1
+    else:
+        table.add_row(ok_icon, "sqlite index", "[green]current[/]", str(SQLITE_PATH))
+
+    # Catalog counts
+    n_intr = len(catalog.intrinsics)
+    n_instr = len(catalog.instructions)
+    if n_intr > 0 and n_instr > 0:
+        table.add_row(ok_icon, "catalog data", "[green]populated[/]", f"{n_intr:,} intrinsics · {n_instr:,} instructions")
+    else:
+        table.add_row(fail_icon, "catalog data", "[red]empty[/]", f"{n_intr} intrinsics · {n_instr} instructions")
+        failures += 1
+
+    # Sources
+    if catalog.sources:
+        table.add_row(ok_icon, "sources", "[green]recorded[/]", f"{len(catalog.sources)} source(s)")
+        for source in catalog.sources:
+            table.add_row("", f"  {source.source}", "", f"version={source.version}")
+    else:
+        table.add_row(warn_icon, "sources", "[yellow]none recorded[/]", "catalog has no provenance entries")
+        warnings += 1
+
+    # FTS smoke test
+    if SQLITE_PATH.exists() and sqlite_schema_is_current():
+        try:
+            from simdref.storage import open_db
+            with open_db() as conn:
+                row = conn.execute(
+                    "SELECT count(*) AS c FROM intrinsics_fts WHERE intrinsics_fts MATCH ?",
+                    ("add",),
+                ).fetchone()
+                hits = row["c"] if row else 0
+            if hits > 0:
+                table.add_row(ok_icon, "fts search", "[green]working[/]", f"query 'add' -> {hits} hits")
+            else:
+                table.add_row(warn_icon, "fts search", "[yellow]no hits[/]", "query 'add' returned 0 hits")
+                warnings += 1
+        except Exception as exc:
+            table.add_row(fail_icon, "fts search", "[red]error[/]", str(exc))
+            failures += 1
+
+    # Man page directory (informational — missing is fine)
+    man_present = DEFAULT_MAN_DIR.exists() and any(DEFAULT_MAN_DIR.rglob("*"))
+    if man_present:
+        table.add_row(ok_icon, "man pages", "[green]present[/]", str(DEFAULT_MAN_DIR))
+    else:
+        table.add_row(warn_icon, "man pages", "[dim]not installed[/]", f"{DEFAULT_MAN_DIR} — optional; install with `simdref install-manpages`")
+
     console.print(table)
+
+    if failures:
+        console.print(f"\n[red]{failures} failed[/], [yellow]{warnings} warnings[/] — simdref is not ready.")
+        raise typer.Exit(1)
+    if warnings:
+        console.print(f"\n[yellow]OK with {warnings} warning(s)[/] — simdref will run but consider the notes above.")
+        return
+    console.print("\n[bold green]All checks passed.[/] simdref is ready.")
 
 
 def _export_web_impl(web_dir: Path) -> None:
