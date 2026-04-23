@@ -99,3 +99,8 @@ def core_architecture(canonical_id: str) -> str | None:
     """Return the architecture family (x86/aarch64/riscv) for a canonical id."""
     core = _ALIAS_INDEX.get(canonical_id.casefold())
     return core.architecture if core is not None else None
+
+
+def supported_core_ids() -> list[str]:
+    """Return the sorted list of canonical core ids carried in the catalog."""
+    return sorted(core.canonical_id for core in CANONICAL_CORES)

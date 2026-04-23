@@ -315,14 +315,49 @@ def _fmt_num(x: float | None) -> str:
     return f"{x:.2f}"
 
 
-def _arch_perf(
+def arch_perf(
     record: InstructionRecord, arch: str
 ) -> tuple[float | None, float | None, str]:
+    """Return ``(latency, cpi, source_kind)`` for *arch* on *record*.
+
+    Missing values are ``None`` and ``source_kind`` falls back to
+    ``"measured"`` when the row predates the provenance field.
+    """
     details = (record.arch_details or {}).get(arch) or {}
     kind = details.get("source_kind") or "measured"
     lat = _per_arch_value(details, _latency_for)
     cpi = _per_arch_value(details, _cpi_for)
     return lat, cpi, kind
+
+
+def _ports_for(details: dict[str, Any]) -> str | None:
+    measurement = details.get("measurement") or {}
+    ports = measurement.get("ports") or measurement.get("TP_ports")
+    if ports is None or ports == "-":
+        return None
+    return str(ports)
+
+
+def collect_ports(
+    record: InstructionRecord,
+    *,
+    arch: str | None,
+    archs_used: list[str] | None,
+) -> list[str] | None:
+    """Gather distinct port-pressure strings for the contributing arches."""
+    arch_details = record.arch_details or {}
+    if arch is not None:
+        keys: list[str] = [arch] if arch in arch_details else []
+    elif archs_used:
+        keys = archs_used
+    else:
+        keys = list(arch_details.keys())
+    ports: list[str] = []
+    for core in keys:
+        value = _ports_for(arch_details.get(core) or {})
+        if value and value not in ports:
+            ports.append(value)
+    return ports or None
 
 
 _SUMMARY_BITS_RE = re.compile(r"(\d+)\s*-?\s*bit", re.IGNORECASE)
@@ -367,8 +402,11 @@ def format_annotation(
         parts.append(record.summary.strip())
     if performance:
         if arch is not None:
-            lat, cpi, kind = _arch_perf(record, arch)
-            tag = f"[{arch}, {kind}]"
+            lat, cpi, kind = arch_perf(record, arch)
+            if lat is None and cpi is None:
+                tag = f"[missing:{arch}]"
+            else:
+                tag = f"[{arch}, {kind}]"
         else:
             summary = aggregate_perf(
                 record, mode=agg, include_modeled=include_modeled
@@ -446,11 +484,23 @@ def _annotate_instruction(
     if not annotation:
         return parsed.raw, None
 
+    if opts.arch is not None:
+        lat_val, cpi_val, _ = arch_perf(record, opts.arch)
+        archs_used: list[str] = [opts.arch] if (opts.arch in (record.arch_details or {})) else []
+    else:
+        summary = aggregate_perf(record, mode=opts.agg, include_modeled=opts.include_modeled)
+        lat_val, cpi_val = summary.latency, summary.cpi
+        archs_used = list(summary.archs_used)
+    ports_val = collect_ports(record, arch=opts.arch, archs_used=archs_used)
+
     json_record: dict[str, Any] = {
         "mnemonic": parsed.mnemonic,
         "known": True,
         "summary": record.summary,
         "annotation": annotation,
+        "latency": lat_val,
+        "cpi": cpi_val,
+        "ports": ports_val,
     }
     if parsed.address is not None:
         json_record["address"] = f"0x{parsed.address:x}"

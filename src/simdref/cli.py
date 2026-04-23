@@ -413,7 +413,15 @@ def _download_release_or_fallback(*, man_dir: Path) -> None:
 def _bootstrap_interactive() -> None:
     """Bootstrap runtime data with a lightweight default path."""
     err_console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
+    # Harnesses that capture only stdout see nothing of the stderr Rich
+    # progress bar; emit one-line start/end markers on stdout in non-TTY
+    # contexts so callers can observe that the download is running.
+    non_tty = not sys.stdout.isatty()
+    if non_tty:
+        typer.echo(f"simdref: bootstrapping catalog (downloading release assets to {DATA_DIR}) ...")
     _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
+    if non_tty:
+        typer.echo("simdref: catalog bootstrap complete")
 
 
 def ensure_catalog():
@@ -660,9 +668,49 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
 
 
 def _smart_lookup(query: str, preset: str | None = None) -> int:
-    """Open the TUI pre-filled with the given query."""
+    """Open the TUI pre-filled with the given query.
+
+    When stdio is not a TTY (agent harness, CI, pipe) the TUI would block
+    forever waiting on terminal input, so instead we print a plain-text
+    summary of the best-matching instruction to stdout and exit.
+    """
     ensure_runtime()
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return _print_non_interactive_summary(query)
     return _run_tui(initial_query=query, initial_preset=preset)
+
+
+def _print_non_interactive_summary(query: str) -> int:
+    """Plain-text fallback for bare queries in non-TTY contexts.
+
+    Returns 0 on match, 2 on no match (mirrors `simdref llm` exit codes).
+    """
+    from simdref.annotate import aggregate_perf, collect_ports, _fmt_num
+
+    records = _find_instructions_fast(query)
+    if not records:
+        err_console.print(
+            f"no instruction match for {query!r} (non-interactive; run in a TTY for TUI search).",
+            style="yellow",
+        )
+        return 2
+
+    typer.echo(f"# {query}  ({len(records)} variant{'s' if len(records) != 1 else ''})")
+    for rec in records:
+        typer.echo("")
+        typer.echo(f"[{rec.key}]")
+        if rec.summary:
+            typer.echo(f"  {rec.summary.strip()}")
+        summary = aggregate_perf(rec, mode="avg", include_modeled=False)
+        ports = collect_ports(rec, arch=None, archs_used=summary.archs_used)
+        ports_str = ",".join(ports) if ports else "-"
+        typer.echo(
+            f"  avg over {summary.n_archs} arch(s) [{summary.source_kind}]: "
+            f"lat={_fmt_num(summary.latency)}c cpi={_fmt_num(summary.cpi)} ports={ports_str}"
+        )
+        if summary.archs_used:
+            typer.echo(f"  archs: {', '.join(summary.archs_used)}")
+    return 0
 
 
 def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
@@ -721,6 +769,23 @@ def annotate(
         raise typer.Exit(code=1)
 
     ensure_runtime()
+
+    if arch is not None:
+        from simdref.perf_sources.cores import canonical_core_id, supported_core_ids
+        canonical = canonical_core_id(arch)
+        if canonical is None:
+            supported = ", ".join(supported_core_ids())
+            err_console.print(
+                f"[bold red]arch {arch!r} is not in the local catalog.[/bold red]",
+                style="red",
+            )
+            err_console.print(f"supported cores: {supported}", style="yellow")
+            err_console.print(
+                "x86 (Skylake/Sapphire Rapids/Zen) perf ingest is tracked as a separate issue.",
+                style="dim",
+            )
+            raise typer.Exit(code=1)
+        arch = canonical
 
     input_is_stdin = str(input_path) == "-"
     if input_is_stdin:
