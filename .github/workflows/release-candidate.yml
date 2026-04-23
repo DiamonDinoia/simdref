@@ -51,7 +51,11 @@ jobs:
           fi
 
       - name: Verify .claude-plugin metadata matches pyproject
-        run: python scripts/check-version-sync.py
+        run: |
+          if ! python scripts/check-version-sync.py; then
+            echo "::error::plugin metadata out of sync with pyproject. Run: scripts/bump-version.py ${{ inputs.version }} && git commit -am 'chore(release): bump to ${{ inputs.version }}' && git push"
+            exit 1
+          fi
 
       - name: Refuse if tag already exists
         run: |
