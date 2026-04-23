@@ -1,0 +1,18 @@
+
+Disassembly of section .text:
+
+0000000000401190 <saxpy>:
+  401190:	push   %rbp
+  401191:	mov    %rsp,%rbp
+  401194:	xor    %eax,%eax
+  401196:	cmp    %edi,%eax
+  401198:	jge    4011c0 <saxpy+0x30>
+  40119a:	nop
+  4011a0:	vmovaps (%rsi,%rax,4),%xmm0
+  4011a4:	vfmadd231ps %xmm2,%xmm1,%xmm0
+  4011a8:	vmovaps %xmm0,(%rdx,%rax,4)
+  4011ac:	add    $0x4,%rax
+  4011b0:	cmp    %edi,%eax
+  4011b2:	jl     4011a0 <saxpy+0x10>
+  4011c0:	pop    %rbp
+  4011c1:	ret

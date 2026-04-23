@@ -37,6 +37,9 @@ class AsmLine:
     mnemonic: str = ""
     operands: str = ""
     trailing_comment: str = ""
+    address: int | None = None
+    source_file: str | None = None
+    source_line: int | None = None
 
 
 _INSTR_RE = re.compile(
@@ -46,9 +49,17 @@ _INSTR_RE = re.compile(
     r"(?:[ \t]*(?P<comment>#.*))?$"
 )
 _LABEL_RE = re.compile(r"^[ \t]*[A-Za-z_.$][\w.$]*:")
+# objdump -d line shape: optional whitespace, hex VA, ':', hex bytes, mnemonic ops.
+_OBJDUMP_INSTR_RE = re.compile(
+    r"^\s*(?P<addr>[0-9a-fA-F]+):\s+"
+    r"(?:(?:[0-9a-fA-F]{2}\s+){1,10})?"
+    r"(?P<rest>\S.*?)\s*$"
+)
+# objdump -S injects "file:line" comment lines before the instruction block.
+_OBJDUMP_SRC_RE = re.compile(r"^\s*(?P<file>[^ \t/][^:]*):(?P<line>\d+)\s*$")
 
 
-def parse_asm_line(line: str) -> AsmLine:
+def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
     stripped = line.rstrip("\n")
     if not stripped.strip():
         return AsmLine(LineKind.BLANK, stripped)
@@ -59,6 +70,28 @@ def parse_asm_line(line: str) -> AsmLine:
         return AsmLine(LineKind.DIRECTIVE, stripped)
     if _LABEL_RE.match(stripped):
         return AsmLine(LineKind.LABEL, stripped)
+
+    address: int | None = None
+    if track_positions:
+        obj_m = _OBJDUMP_INSTR_RE.match(stripped)
+        if obj_m:
+            try:
+                address = int(obj_m.group("addr"), 16)
+            except ValueError:
+                address = None
+            rest = obj_m.group("rest")
+            m = _INSTR_RE.match(rest)
+            if m:
+                return AsmLine(
+                    kind=LineKind.INSTRUCTION,
+                    raw=stripped,
+                    indent=(stripped[: stripped.find(rest)] if rest in stripped else ""),
+                    mnemonic=m.group("mnemonic") or "",
+                    operands=(m.group("operands") or "").strip(),
+                    trailing_comment=(m.group("comment") or "").strip(),
+                    address=address,
+                )
+
     m = _INSTR_RE.match(stripped)
     if not m:
         return AsmLine(LineKind.COMMENT, stripped)
@@ -69,6 +102,7 @@ def parse_asm_line(line: str) -> AsmLine:
         mnemonic=m.group("mnemonic") or "",
         operands=(m.group("operands") or "").strip(),
         trailing_comment=(m.group("comment") or "").strip(),
+        address=address,
     )
 
 
@@ -366,6 +400,7 @@ class AnnotateOptions:
     block: bool = False  # otherwise inline
     unknown: str = "mark"  # "keep" | "drop" | "mark"
     fmt: str = "sa"  # "sa" | "md" | "json"
+    track_positions: bool = False
 
 
 def _annotate_instruction(
@@ -384,10 +419,17 @@ def _annotate_instruction(
             marker = "# ??"
             if parsed.trailing_comment:
                 return parsed.raw, None
-            return f"{parsed.raw}   {marker}", {
+            unknown_rec: dict[str, Any] = {
                 "mnemonic": parsed.mnemonic,
                 "known": False,
             }
+            if parsed.address is not None:
+                unknown_rec["address"] = f"0x{parsed.address:x}"
+            if parsed.source_file:
+                unknown_rec["source_file"] = parsed.source_file
+            if parsed.source_line is not None:
+                unknown_rec["source_line"] = parsed.source_line
+            return f"{parsed.raw}   {marker}", unknown_rec
         return parsed.raw, None
 
     if not (opts.performance or opts.docs):
@@ -404,12 +446,18 @@ def _annotate_instruction(
     if not annotation:
         return parsed.raw, None
 
-    json_record = {
+    json_record: dict[str, Any] = {
         "mnemonic": parsed.mnemonic,
         "known": True,
         "summary": record.summary,
         "annotation": annotation,
     }
+    if parsed.address is not None:
+        json_record["address"] = f"0x{parsed.address:x}"
+    if parsed.source_file:
+        json_record["source_file"] = parsed.source_file
+    if parsed.source_line is not None:
+        json_record["source_line"] = parsed.source_line
 
     if opts.block:
         block_line = f"{parsed.indent}# {annotation}"
@@ -430,9 +478,25 @@ def annotate_stream(
     """Yield annotated lines for each input line (newline-terminated)."""
     json_records: list[dict[str, Any]] = []
     collecting_json = opts.fmt == "json"
+    pending_src_file: str | None = None
+    pending_src_line: int | None = None
 
     for line in lines:
-        parsed = parse_asm_line(line)
+        if opts.track_positions:
+            src_m = _OBJDUMP_SRC_RE.match(line.rstrip("\n"))
+            if src_m:
+                pending_src_file = src_m.group("file").strip()
+                try:
+                    pending_src_line = int(src_m.group("line"))
+                except ValueError:
+                    pending_src_line = None
+                if not collecting_json:
+                    yield line if line.endswith("\n") else line + "\n"
+                continue
+        parsed = parse_asm_line(line, track_positions=opts.track_positions)
+        if opts.track_positions and parsed.kind == LineKind.INSTRUCTION:
+            parsed.source_file = pending_src_file
+            parsed.source_line = pending_src_line
         if parsed.kind != LineKind.INSTRUCTION:
             if not collecting_json:
                 yield parsed.raw + "\n"

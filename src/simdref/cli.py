@@ -695,6 +695,11 @@ def annotate(
     block: bool = typer.Option(False, "--block/--inline", help="Emit annotation as a comment block above each instruction (default: inline trailing)."),
     unknown: str = typer.Option("mark", "--unknown", help="Handling of unknown mnemonics: keep|drop|mark."),
     fmt: str = typer.Option("sa", "--format", help="Output format: sa|md|json."),
+    track_positions: bool = typer.Option(
+        False,
+        "--track-positions",
+        help="Parse objdump-style input: thread VAs and source-file:line through the output (join key for `simdref profile merge`).",
+    ),
 ) -> None:
     """Annotate a ``.s`` assembly file with instruction summaries and perf data.
 
@@ -738,6 +743,7 @@ def annotate(
         block=block,
         unknown=unknown,
         fmt=fmt,
+        track_positions=track_positions,
     )
 
     with open_db(SQLITE_PATH) as conn:
@@ -1252,6 +1258,142 @@ def llm_schema() -> None:
 
 
 app.add_typer(llm_app, name="llm", rich_help_panel=_LLM_HELP_PANEL)
+
+
+# ---------------------------------------------------------------------------
+# `simdref profile` — runtime profile ingestion, hot-loop detection, merge
+# ---------------------------------------------------------------------------
+
+profile_app = typer.Typer(
+    help=(
+        "Link runtime profilers (perf / VTune / uProf / xctrace / llvm-mca) "
+        "to annotated assembly. Ingest samples, detect hot loops, merge "
+        "observed hotness back into the annotation stream."
+    ),
+    invoke_without_command=False,
+)
+
+
+@profile_app.command("ingest", rich_help_panel="Profile")
+def profile_ingest(
+    adapter: str = typer.Option(..., "--adapter", help="Adapter id: perf|vtune|uprof|xctrace|mca|exegesis."),
+    input_path: Path = typer.Option(..., "--input", help="Input file (perf.data, CSV, JSON, ...)."),
+    output: Path = typer.Option(..., "-o", "--output", help="Output samples JSON."),
+    binary: Path | None = typer.Option(None, "--binary", help="Program binary (used for addr2line)."),
+) -> None:
+    """Ingest profiler output into a normalized SampleRow JSON file."""
+    from simdref.profile import get_profiler
+    from simdref.profile.model import write_samples
+
+    if not input_path.exists():
+        err_console.print(f"input not found: {input_path}", style="red")
+        raise typer.Exit(code=1)
+    try:
+        ad = get_profiler(adapter)
+    except KeyError as exc:
+        err_console.print(str(exc), style="red")
+        raise typer.Exit(code=1) from exc
+    samples = list(ad.ingest(input_path, binary=binary))
+    write_samples(samples, output)
+    err_console.print(f"wrote {len(samples)} samples to {output}", style="green")
+
+
+@profile_app.command("hotloops", rich_help_panel="Profile")
+def profile_hotloops(
+    disasm: Path = typer.Argument(..., help="objdump -d output (with or without -S)."),
+    samples: Path = typer.Argument(..., help="samples JSON from `simdref profile ingest`."),
+    output: Path = typer.Option(..., "-o", "--output", help="Output loops JSON."),
+    event: str = typer.Option("cycles", "--event", help="Event name to rank by (cycles|instructions|cache-misses|mca:cycles...)."),
+    top: int = typer.Option(3, "--top", help="Keep top-N ranked loops."),
+) -> None:
+    """Detect natural loops in a disassembly and rank them by sample weight."""
+    from simdref.profile.hotloop import detect_and_rank
+    from simdref.profile.model import read_samples, write_loops
+
+    if not disasm.exists() or not samples.exists():
+        err_console.print("disasm or samples file not found", style="red")
+        raise typer.Exit(code=1)
+    sample_rows = read_samples(samples)
+    loops = detect_and_rank(disasm, sample_rows, event=event, top=top)
+    write_loops(loops, output)
+    err_console.print(f"detected {len(loops)} hot loops, wrote {output}", style="green")
+
+
+@profile_app.command("merge", rich_help_panel="Profile")
+def profile_merge(
+    annotated: Path = typer.Argument(..., help="Annotated JSON from `simdref annotate --format json --track-positions`."),
+    samples: Path = typer.Argument(..., help="Samples JSON from `simdref profile ingest`."),
+    output: Path = typer.Option(..., "-o", "--output", help="Output file."),
+    fmt: str = typer.Option("sa", "--format", help="Output format: sa|json."),
+    restrict_to: Path | None = typer.Option(None, "--restrict-to", help="loops JSON: mark instructions inside these loops."),
+) -> None:
+    """Attach hotness data to the annotated instruction stream."""
+    import json as _json
+
+    from simdref.profile.merge import merge, render_sa, write_merged_json
+    from simdref.profile.model import read_loops, read_samples
+
+    if not annotated.exists() or not samples.exists():
+        err_console.print("annotated or samples file not found", style="red")
+        raise typer.Exit(code=1)
+    annotated_records = _json.loads(annotated.read_text())
+    if isinstance(annotated_records, dict):
+        annotated_records = annotated_records.get("records") or annotated_records.get("instructions") or []
+    sample_rows = read_samples(samples)
+    loops = read_loops(restrict_to) if restrict_to else None
+    merged = merge(annotated_records, sample_rows, restrict_to=loops)
+
+    if fmt == "sa":
+        output.write_text(render_sa(merged))
+    elif fmt == "json":
+        write_merged_json(merged, output)
+    else:
+        err_console.print(f"invalid --format: {fmt}", style="red")
+        raise typer.Exit(code=1)
+    err_console.print(f"wrote merged output to {output}", style="green")
+
+
+@profile_app.command("run", rich_help_panel="Profile")
+def profile_run(
+    target: Path = typer.Option(..., "--target", help="Program binary to profile."),
+    program_args: str = typer.Option("", "--args", help="Arguments to pass to the target (space-separated)."),
+    adapter: str = typer.Option("perf", "--adapter", help="Profiler adapter: perf|mca."),
+    events: str = typer.Option("cycles:pp,instructions", "--event", help="Comma-separated perf events to record."),
+    duration: float | None = typer.Option(None, "--duration", help="Max runtime in seconds (uses `timeout`)."),
+    arch: str | None = typer.Option(None, "--arch", help="Pin annotations to a microarch (zen4, skylake-x, ...)."),
+    top: int = typer.Option(3, "--top", help="Top-N hot loops to keep."),
+    outdir: Path = typer.Option(Path("report"), "-o", "--outdir", help="Output directory."),
+) -> None:
+    """Compile→profile→disassemble→annotate→merge, all in one command."""
+    from simdref.profile.orchestrate import run_pipeline
+
+    ensure_runtime()
+    if not target.exists():
+        err_console.print(f"target not found: {target}", style="red")
+        raise typer.Exit(code=1)
+
+    prog_args = [a for a in program_args.split() if a]
+    try:
+        results = run_pipeline(
+            target=target,
+            args=prog_args,
+            outdir=outdir,
+            adapter=adapter,
+            events=events,
+            duration=duration,
+            arch=arch,
+            top_loops=top,
+        )
+    except RuntimeError as exc:
+        err_console.print(f"pipeline failed: {exc}", style="red")
+        raise typer.Exit(code=1) from exc
+
+    for r in results:
+        tag = "cached" if r.cached else "ran"
+        err_console.print(f"[{tag}] {r.name}: {r.output}", style="cyan")
+
+
+app.add_typer(profile_app, name="profile", rich_help_panel="Commands")
 
 
 # ---------------------------------------------------------------------------

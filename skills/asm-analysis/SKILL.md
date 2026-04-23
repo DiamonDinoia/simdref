@@ -209,6 +209,78 @@ Use as-is.
 
 ---
 
+## 2b. Profile-driven region selection (OPTIONAL; skips 3 when available)
+
+If the user can run the binary and you have access to a profiler, let the
+tooling pick the hot region instead of hand-selecting one. Build with
+`-g -fno-omit-frame-pointer` so addr2line and perf call-graphs work.
+
+```bash
+# All-in-one: record, disassemble, annotate, detect hot loops, merge.
+simdref profile run --target ./a.out --args "input.dat" \
+                    --adapter perf --event "cycles:u,instructions:u" \
+                    --duration 10 --arch <resolved> --top 5 -o report/
+```
+
+Artifacts in `report/`:
+- `perf.data`, `disasm.s`, `annotated.json`, `samples.json`
+- `loops.json` — top-N natural loops ranked by cumulative sample weight
+- `hot.sa` — side-annotated listing with per-line hotness bars
+- `merged.json` — per-instruction `{annotation, hotness:{event:{samples,weight,source_kind}, rank, in_hot_loop}}`
+- `summary.md` — top loops + hottest instructions rollup
+
+Read `summary.md` first, then `hot.sa` for the full inlined hot region.
+Do **not** hand-edit or regex `hot.sa`; reach for `merged.json` when you
+need structured data.
+
+### Reading the output
+
+- **Low FMA / high load-store share** (e.g. `vmovups` > `vfmadd213ps`) →
+  memory-bound inner loop; suggest tiling, prefetch, or layout changes
+  before touching ISA choice.
+- **High `mov`/`cmp` share, no SIMD mnemonics** → scalar branch-bound
+  loop; intrinsic vectorisation is on the table.
+- **AVX2 `vpack*`/`vpunpck*`/`vpshuf*` chains dominating** → compiler
+  auto-vectorised a scalar kernel with a costly pack/unpack shuffle
+  path; a hand-written intrinsic version may beat it.
+
+### Event names
+
+perf event names vary by hardware. The ``perf`` adapter normalises
+Intel hybrid-CPU PMU names (``cpu_core/cycles/u`` → ``cycles``,
+``cpu_atom/instructions/u`` → ``instructions``) and strips the ``:u``
+/``:pp`` modifier suffixes, so downstream tools can always rank with
+``--event cycles`` or ``--event instructions``.
+
+### Fallback paths (no perf, no root, CI containers)
+
+```bash
+simdref profile ingest --adapter mca     --input mca.json        -o samples.json
+simdref profile ingest --adapter vtune   --input r000hs.csv      -o samples.json
+simdref profile ingest --adapter uprof   --input uprof.csv       -o samples.json
+simdref profile ingest --adapter exegesis --input exegesis.json  -o samples.json
+simdref profile ingest --adapter xctrace --input trace.xml       -o samples.json  # macOS
+
+simdref profile hotloops disasm.s samples.json --event cycles --top 3 -o loops.json
+simdref profile merge    annotated.json samples.json --restrict-to loops.json \
+                         --format sa -o hot.sa
+```
+
+`--adapter mca` is the universal static-only fallback — it works wherever
+`llvm-mca` works and tags its output `source_kind=modeled`.
+
+### PIE binaries and address joining
+
+`simdref annotate` parses objdump output with `--track-positions`. The
+perf adapter resolves each sample's `(sym, symoff)` through the binary's
+own symbol table so address-level joins work on PIE/ASLR targets
+without any manual base-offset arithmetic. Just pass `--binary <path>`
+to `profile ingest` (the `profile run` wrapper does this for you).
+
+When hot loops are known, skip §3 and annotate just the loop bodies in §4.
+
+---
+
 ## 3. Region selection (MANDATORY above ~500 lines)
 
 Annotating a whole TU wastes tokens and buries the answer.

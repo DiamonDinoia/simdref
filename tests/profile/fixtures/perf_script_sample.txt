@@ -1,0 +1,7 @@
+    100000 cycles:pp: 4011a0 saxpy+0x10 (/tmp/a.out)
+    100000 cycles:pp: 4011a4 saxpy+0x14 (/tmp/a.out)
+    100000 cycles:pp: 4011a4 saxpy+0x14 (/tmp/a.out)
+    100000 cycles:pp: 4011a4 saxpy+0x14 (/tmp/a.out)
+    100000 cycles:pp: 4011a0 saxpy+0x10 (/tmp/a.out)
+    100000 cycles:pp: 4011b0 saxpy+0x20 (/tmp/a.out)
+         1 instructions: 4011a4 saxpy+0x14 (/tmp/a.out)
