@@ -68,16 +68,13 @@ jobs:
       - name: Re-run coverage audit
         run: python tools/audit_coverage.py fetch
 
-      - name: Enforce committed thresholds
-        # Loud failure: if any source regressed below its threshold the
-        # job turns the run red. `continue-on-error` used to mask this.
-        run: python tools/audit_coverage.py diff
-
       - name: Detect drift
         id: drift
         run: |
           if ! git diff --quiet docs/coverage/; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "=== coverage drift detected ==="
+            git --no-pager diff docs/coverage/ | head -200
           else
             echo "drift=false" >> "$GITHUB_OUTPUT"
           fi
@@ -93,6 +90,8 @@ jobs:
           body: |
             Automated upstream parity audit detected coverage drift.
             See `docs/coverage/summary.json` for the updated per-source numbers.
+            If any source also tripped a threshold, the parent workflow run
+            is red — review the numbers before merging this PR.
           add-paths: docs/coverage/
 
       - name: Enable auto-merge on the drift PR
@@ -102,3 +101,9 @@ jobs:
           PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
         run: |
           gh pr merge "$PR_NUMBER" --auto --squash --delete-branch || true
+
+      - name: Enforce committed thresholds
+        # Runs last so a drift PR still gets opened even when a source
+        # regressed below its floor. Previously `continue-on-error: true`
+        # masked this check entirely — keeping it loud is the whole point.
+        run: python tools/audit_coverage.py diff
