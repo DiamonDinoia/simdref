@@ -1,12 +1,23 @@
-name: Nightly coverage audit
+name: Coverage audit
 
 # Re-runs tools/audit_coverage.py against live upstream feeds and opens a
 # PR if docs/coverage/summary.json drifts. Offline CI (ci.yml) enforces the
-# thresholds committed in docs/coverage/thresholds.toml on every PR.
+# thresholds committed in docs/coverage/thresholds.toml on every PR, so
+# this job only needs to refresh the committed snapshot when upstreams or
+# the local catalog change.
+#
+# Triggers:
+#   - workflow_run on CI (main, success) → rebuild data ⇒ re-audit.
+#   - schedule (weekly) → catch upstream-only drift when main is idle.
+#   - workflow_dispatch → manual.
 
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   schedule:
-    - cron: '0 5 * * *'  # 05:00 UTC, daily
+    - cron: '0 5 * * 1'  # 05:00 UTC Monday — weekly safety net
   workflow_dispatch:
 
 permissions:
@@ -15,10 +26,11 @@ permissions:
 
 jobs:
   audit:
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    # Drift is purely informational — the PR itself enforces review/merge,
-    # and a missing-upstream-feed failure should not turn the repo badge red.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
@@ -32,14 +44,26 @@ jobs:
           activate-environment: true
           python-version: "3.12"
 
+      - name: Install LLVM 22 toolchain
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+
       - name: Install package
         run: uv pip install -e .
 
       - name: Build local catalog
-        run: python -m simdref build
+        run: python -u -m simdref build
 
       - name: Re-run coverage audit
         run: python tools/audit_coverage.py fetch
+
+      - name: Enforce committed thresholds
+        # Loud failure: if any source regressed below its threshold the
+        # job turns the run red. `continue-on-error` used to mask this.
+        run: python tools/audit_coverage.py diff
 
       - name: Detect drift
         id: drift
@@ -55,9 +79,9 @@ jobs:
         if: steps.drift.outputs.drift == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          branch: nightly-coverage-drift
+          branch: coverage-drift
           commit-message: "chore: refresh docs/coverage/ snapshot"
-          title: "chore: nightly coverage drift"
+          title: "chore: coverage drift"
           body: |
             Automated upstream parity audit detected coverage drift.
             See `docs/coverage/summary.json` for the updated per-source numbers.
