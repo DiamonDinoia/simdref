@@ -26,36 +26,37 @@ for LLM skills.
 
 `skills/asm-analysis/` ships a Claude Code skill that drives the
 compile → objdump → `simdref annotate` → `simdref profile` → LLM-batch
-pipeline automatically. Install it into your per-user skill directory so
-Claude Code picks it up in any project:
+pipeline automatically. This repo publishes it as a Claude Code plugin,
+so the one-liner install is:
 
-```bash
-# from a simdref checkout (recommended — always current with main):
-mkdir -p ~/.claude/skills
-ln -sf "$PWD/skills/asm-analysis" ~/.claude/skills/asm-analysis
-
-# or copy a snapshot if you don't want the symlink to track the repo:
-cp -r skills/asm-analysis ~/.claude/skills/
+```
+/plugin marketplace add DiamonDinoia/simdref
+/plugin install asm-analysis@simdref
 ```
 
-To install straight from GitHub without a local checkout:
+Run those at the Claude Code prompt. The marketplace add fetches this
+repo; the install wires up the skill so Claude picks it up automatically
+on performance-oriented prompts like *"why is this loop slow"*,
+*"vectorise this"*, *"look at the asm"*.
+
+### Manual install (no marketplace)
+
+If you prefer a hand-managed copy:
 
 ```bash
-mkdir -p ~/.claude/skills && \
+# symlink from a checkout — always current with main:
+git clone https://github.com/DiamonDinoia/simdref.git ~/src/simdref
+mkdir -p ~/.claude/skills
+ln -sf ~/src/simdref/skills/asm-analysis ~/.claude/skills/asm-analysis
+
+# or pull a one-off snapshot:
+mkdir -p ~/.claude/skills/asm-analysis && \
   curl -fsSL https://raw.githubusercontent.com/DiamonDinoia/simdref/main/skills/asm-analysis/SKILL.md \
   -o ~/.claude/skills/asm-analysis/SKILL.md
 ```
 
-Verify Claude Code sees it:
-
-```bash
-claude /help   # then type: skills
-```
-
-The skill triggers on prompts like *"why is this loop slow"*, *"vectorise this"*,
-*"look at the asm"*, or any hardware-aware performance request. See
-[`skills/asm-analysis/SKILL.md`](skills/asm-analysis/SKILL.md) for the
-full trigger list and pipeline stages.
+See [`skills/asm-analysis/SKILL.md`](skills/asm-analysis/SKILL.md) for
+the full trigger list and pipeline stages.
 
 ## Install
 
