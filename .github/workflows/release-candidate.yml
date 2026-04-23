@@ -1,12 +1,30 @@
-name: Release Candidate
+name: Release
 
-# Human-dispatched release gate. Verifies that the current HEAD has a
-# green CI run, validates version/tag/PyPI preconditions, builds and
-# smoke-tests the wheel, and — only when dry_run=false — pushes the
-# v<version> tag. The tag push then triggers release.yml (PyPI publish)
-# and re-triggers ci.yml under the release event (publishes data-v<ver>).
+# Atomic human-dispatched release.
 #
-# Default dry_run=true — first run is a no-side-effect validation.
+# The tag `v<version>` is created ONLY after every step that can
+# plausibly fail has succeeded: preflight → build → smoke →
+# PyPI publish → tag push → GitHub Release create. If anything upstream
+# fails, the tag is never pushed, so v<version> is a reliable marker for
+# "this release is complete and on PyPI".
+#
+# Dispatch with dry_run=true to prove every gate without side effects
+# (no PyPI publish, no tag, no GitHub Release).
+#
+# Preconditions handled by the `preflight` job:
+#   - pyproject.toml version matches the `version` input
+#   - .claude-plugin/marketplace.json and plugin.json versions match
+#   - v<version> tag does not already exist
+#   - <version> is not already on PyPI
+#   - the HEAD commit has a green CI run
+#
+# IMPORTANT: first run requires the `simdref` project on PyPI configured
+# with trusted publishing for this workflow file. See:
+#   https://docs.pypi.org/trusted-publishers/
+#   - Owner:            DiamonDinoia
+#   - Repository:       simdref
+#   - Workflow name:    release-candidate.yml
+#   - Environment name: pypi
 
 on:
   workflow_dispatch:
@@ -17,14 +35,14 @@ on:
       dry_run:
         type: boolean
         default: true
-        description: "If true, do all checks but don't create the tag."
+        description: "If true, run every check and build but skip PyPI publish, tag, and GitHub Release."
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: release-candidate-${{ inputs.version }}
+  group: release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -53,7 +71,7 @@ jobs:
       - name: Verify .claude-plugin metadata matches pyproject
         run: |
           if ! python scripts/check-version-sync.py; then
-            echo "::error::plugin metadata out of sync with pyproject. Easiest fix: dispatch the Bump Version workflow with version=${{ inputs.version }} (Actions -> Bump Version -> Run workflow). Or run scripts/bump-version.py ${{ inputs.version }} locally."
+            echo "::error::plugin metadata out of sync. Dispatch the Bump Version workflow with version=${{ inputs.version }}, or run scripts/bump-version.py ${{ inputs.version }} locally."
             exit 1
           fi
 
@@ -77,8 +95,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find the most recent CI workflow run for this exact SHA and
-          # require it to have concluded successfully. No green CI → no tag.
           sha="${{ github.sha }}"
           run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=5" \
             --jq '[.workflow_runs[] | select(.event=="push" or .event=="workflow_dispatch" or .event=="schedule")][0] // empty')
@@ -122,7 +138,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wheel
+          name: dist
           path: dist/
 
   install-smoke:
@@ -131,7 +147,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v5
         with:
-          name: wheel
+          name: dist
           path: dist/
 
       - uses: actions/setup-python@v6
@@ -145,8 +161,60 @@ jobs:
           simdref --version
           simdref doctor || true
 
-  tag:
-    needs: install-smoke
+  # Tag + PyPI publish live in the SAME job so they share a success
+  # boundary: if PyPI publish fails, the tag is rolled back immediately.
+  # Failure semantics:
+  #   - tag push fails  -> PyPI never attempted, nothing to undo
+  #   - PyPI fails      -> tag deleted from origin, job reports failure
+  #   - both succeed    -> tag stands, release is on PyPI
+  # There is a ~seconds window where the tag exists before PyPI settles,
+  # but if publish fails the rollback step removes it. "Tag exists" is
+  # therefore a reliable signal that the release is on PyPI.
+  publish-and-tag:
+    needs: [preflight, install-smoke]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/simdref
+    permissions:
+      id-token: write   # PyPI OIDC trusted publishing
+      contents: write   # tag push
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.sha }}
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create and push tag
+        id: tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to PyPI
+        id: pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Rollback tag on PyPI failure
+        if: failure() && steps.tag.outputs.pushed == 'true'
+        run: |
+          echo "::warning::PyPI publish failed — deleting tag v${{ inputs.version }} to keep the tag/release invariant"
+          git push --delete origin "v${{ inputs.version }}" || true
+
+  # Best-effort: GitHub Release creation uses the tag that now exists.
+  # If this step fails the tag + PyPI are still intact and the release
+  # page can be created by hand via `gh release create v<version> ...`.
+  github-release:
+    needs: [preflight, publish-and-tag]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
@@ -154,14 +222,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           ref: ${{ needs.preflight.outputs.sha }}
 
-      - name: Create and push tag
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          tag="v${{ inputs.version }}"
+          if [ -f CHANGELOG.md ]; then
+            gh release create "$tag" \
+              --title "simdref $tag" \
+              --notes-file CHANGELOG.md \
+              dist/*
+          else
+            gh release create "$tag" \
+              --title "simdref $tag" \
+              --generate-notes \
+              dist/*
+          fi

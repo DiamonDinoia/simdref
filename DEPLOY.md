@@ -60,16 +60,17 @@ schema/ingestion regression.
 
 ## Release flow
 
+Single atomic workflow — tag and PyPI publish share a success
+boundary. If PyPI fails the tag is rolled back, so `v<version>`
+existing on origin is a reliable signal that the release is on PyPI.
+
 ```
  human: gh workflow run release-candidate.yml -f version=X.Y.Z -f dry_run=true
                  │
                  ▼
    ┌──────────────────────┐
-   │   preflight          │  — version match, tag absent, PyPI absent
-   └──────────┬───────────┘
-              ▼
-   ┌──────────────────────┐
-   │   ci (reusable)      │  — full ci.yml pipeline (phases 1–2)
+   │   preflight          │  — version match, plugin sync, tag absent,
+   │                      │    PyPI absent, CI green on HEAD
    └──────────┬───────────┘
               ▼
    ┌──────────────────────┐
@@ -80,14 +81,18 @@ schema/ingestion regression.
    │   install-smoke      │  — pip install wheel, simdref --version
    └──────────┬───────────┘
               ▼       (only when dry_run=false)
-   ┌──────────────────────┐
-   │   tag                │  — git tag -a vX.Y.Z && push
-   └──────────┬───────────┘
+   ┌──────────────────────────────────┐
+   │   publish-and-tag                │
+   │   1. git tag -a vX.Y.Z && push   │
+   │   2. pypa/gh-action-pypi-publish │
+   │   3. on PyPI failure: delete tag │  — `pypi` environment approval
+   └──────────┬───────────────────────┘
               ▼
-     tag push triggers release.yml → PyPI publish (gated by `pypi`
-     environment approval) + GitHub Release creation → triggers ci.yml
-     with `release: published` → publishes `data-v<version>` +
-     refreshes `data-latest`.
+   ┌──────────────────────┐
+   │   github-release     │  — gh release create vX.Y.Z dist/*
+   │                      │    triggers ci.yml `release: published`
+   │                      │    → publishes data-v<version>
+   └──────────────────────┘
 ```
 
 ## Cutting a release

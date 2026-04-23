@@ -2,8 +2,9 @@ name: Bump Version
 
 # Human-dispatched version bump. Runs scripts/bump-version.py on a fresh
 # main checkout, commits, pushes. After the bump lands and CI goes green
-# on the new HEAD, dispatch release-candidate.yml with the same version
-# to tag; the tag push triggers release.yml which publishes to PyPI.
+# on the new HEAD, dispatch the Release workflow
+# (release-candidate.yml) with the same version — it publishes to PyPI
+# and pushes the v<version> tag atomically.
 #
 # Single click; no need to edit pyproject.toml locally.
 
@@ -77,5 +78,5 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "::notice::dry run — re-dispatch with dry_run=false to actually commit."
           else
-            echo "::notice::version bumped and pushed. Wait for CI to go green, then dispatch release-candidate.yml with version=${{ inputs.version }} and dry_run=false to cut the tag."
+            echo "::notice::version bumped and pushed. Wait for CI to go green, then dispatch the Release workflow with version=${{ inputs.version }} and dry_run=false — it atomically publishes to PyPI and pushes v${{ inputs.version }}."
           fi
