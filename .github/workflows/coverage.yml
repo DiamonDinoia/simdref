@@ -54,6 +54,14 @@ jobs:
       - name: Install package
         run: uv pip install -e .
 
+      - name: Vendor RISC-V sources
+        # Mirrors ci.yml:build-catalog. `simdref build` otherwise fetches
+        # these feeds live and is flaky when upstream momentarily 404s.
+        run: |
+          git clone --depth 1 https://github.com/riscv/riscv-unified-db /tmp/riscv-unified-db
+          git clone --depth 1 https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc /tmp/riscv-rvv-intrinsic-doc
+          python tools/vendor_riscv_sources.py
+
       - name: Build local catalog
         run: python -u -m simdref build
 
