@@ -49,11 +49,15 @@ jobs:
 
       - name: Compute dev stamp
         id: stamp
-        # Include the UTC minute and the GitHub run number so two pushes
-        # on the same day still produce distinct, monotonically-increasing
-        # version strings that TestPyPI will accept.
+        # PEP 440 only accepts a single non-negative integer after `.dev`,
+        # so we concatenate UTC minute + zero-padded run number into one
+        # monotonically-increasing value. Distinct for pushes within the
+        # same minute as long as run numbers are unique, which GitHub
+        # Actions guarantees per repository.
         run: |
-          stamp="$(date -u +%Y%m%d%H%M).${GITHUB_RUN_NUMBER}"
+          ts="$(date -u +%Y%m%d%H%M)"
+          run_padded="$(printf '%05d' "${GITHUB_RUN_NUMBER}")"
+          stamp="${ts}${run_padded}"
           echo "value=${stamp}" >> "$GITHUB_OUTPUT"
           echo "dev stamp: ${stamp}"
 
