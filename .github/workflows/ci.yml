@@ -242,7 +242,7 @@ jobs:
   # Skipped entirely for pull_request and reusable workflow_call.
   # ───────────────────────────────────────────────────────────────────
   publish-data:
-    needs: [test, package]
+    needs: [build-catalog, test, package]
     # Phase 3 only runs when ci.yml is the top-level workflow — i.e.,
     # not when invoked via workflow_call from release-candidate.yml.
     # github.workflow reflects the top-level caller's name.
