@@ -44,9 +44,22 @@ class CoresTests(unittest.TestCase):
         self.assertEqual(core_architecture("c908"), "riscv")
         self.assertIsNone(core_architecture("nope"))
 
-    def test_aarch64_and_riscv_cores_disjoint(self):
+    def test_canonical_cores_cover_x86_aarch64_riscv(self):
         arches = {c.architecture for c in CANONICAL_CORES}
-        self.assertEqual(arches, {"aarch64", "riscv"})
+        self.assertEqual(arches, {"aarch64", "riscv", "x86"})
+
+    def test_x86_core_aliases_resolve(self):
+        # Canonical ids use uops.info short codes; aliases cover LLVM
+        # -march names and marketing names (case-insensitive).
+        self.assertEqual(canonical_core_id("sapphirerapids"), "EMR")
+        self.assertEqual(canonical_core_id("sapphire-rapids"), "EMR")
+        self.assertEqual(canonical_core_id("SPR"), "EMR")
+        self.assertEqual(canonical_core_id("skylake-x"), "SKX")
+        self.assertEqual(canonical_core_id("skylake-avx512"), "SKX")
+        self.assertEqual(canonical_core_id("zen4"), "ZEN4")
+        self.assertEqual(canonical_core_id("znver5"), "ZEN5")
+        self.assertEqual(core_architecture("EMR"), "x86")
+        self.assertEqual(core_architecture("ZEN4"), "x86")
 
 
 class MergeTests(unittest.TestCase):

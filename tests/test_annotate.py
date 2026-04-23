@@ -48,6 +48,28 @@ def test_parse_asm_line_classifies_lines():
     assert "%ymm0" in ins.operands
 
 
+def test_parse_asm_line_objdump_mode_rejects_source_interleave():
+    # `objdump -dS` interleaves C/C++ source lines between instruction
+    # blocks. Under --track-positions these are NOT AT&T instructions and
+    # must not be classified as mnemonics ("return", "if", "for", ...).
+    src_lines = [
+        "    return __x >> __count;",
+        "  const size_t __k = __b / __log_r;",
+        "    if (low_bits == 0) continue;",
+        "0000000000013610 <deregister_tm_clones>:",
+    ]
+    for line in src_lines:
+        parsed = parse_asm_line(line, track_positions=True)
+        assert parsed.kind != LineKind.INSTRUCTION, f"false-positive on {line!r}"
+
+    # But real objdump instruction lines still parse with an address.
+    objdump = "   13917:	vaddps %ymm2,%ymm1,%ymm0"
+    ins = parse_asm_line(objdump, track_positions=True)
+    assert ins.kind == LineKind.INSTRUCTION
+    assert ins.mnemonic == "vaddps"
+    assert ins.address == 0x13917
+
+
 def test_aggregate_perf_modes():
     rec = _make_record(
         arch_details={

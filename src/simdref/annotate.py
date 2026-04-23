@@ -91,6 +91,11 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
                     trailing_comment=(m.group("comment") or "").strip(),
                     address=address,
                 )
+        # In objdump mode, any non-matching line is an objdump header,
+        # `-S` source interleave, or an inline symbol annotation — never
+        # an AT&T instruction. Bailing out here avoids classifying C++
+        # source keywords ("return", "if", "for", ...) as mnemonics.
+        return AsmLine(LineKind.COMMENT, stripped)
 
     m = _INSTR_RE.match(stripped)
     if not m:

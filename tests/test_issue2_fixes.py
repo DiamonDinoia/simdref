@@ -101,12 +101,18 @@ def test_json_record_none_when_perf_missing(monkeypatch):
     assert "[missing:sapphirerapids]" in records[0]["annotation"]
 
 
-def test_supported_core_ids_contains_aarch64_and_riscv():
+def test_supported_core_ids_contains_aarch64_riscv_x86():
     ids = supported_core_ids()
     assert "cortex-a72" in ids
     assert "sifive-u74" in ids
-    # x86 SPR is NOT in the catalog (tracked separately).
-    assert canonical_core_id("sapphirerapids") is None
+    # x86 cores are carried under uops.info short codes (EMR, SKX, ZEN4, ...).
+    # Sapphire Rapids uses the Golden Cove P-core microarchitecture and maps
+    # to EMR (Emerald Rapids) since uops.info has no dedicated SPR row.
+    assert "EMR" in ids
+    assert "ZEN4" in ids
+    assert canonical_core_id("sapphirerapids") == "EMR"
+    assert canonical_core_id("skylake-x") == "SKX"
+    assert canonical_core_id("zen4") == "ZEN4"
 
 
 def test_smart_lookup_does_not_launch_tui_on_non_tty(monkeypatch, capsys):
