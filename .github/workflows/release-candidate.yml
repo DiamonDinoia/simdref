@@ -50,6 +50,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify .claude-plugin metadata matches pyproject
+        run: python scripts/check-version-sync.py
+
       - name: Refuse if tag already exists
         run: |
           if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then

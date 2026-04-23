@@ -162,6 +162,9 @@ jobs:
       - name: Verify restored catalog schema
         run: python -c "from simdref.storage import sqlite_schema_is_current; assert sqlite_schema_is_current(), 'schema mismatch after artifact restore'"
 
+      - name: Verify plugin metadata version sync
+        run: python scripts/check-version-sync.py
+
       - name: Run Python test suite
         run: python -m pytest tests
 

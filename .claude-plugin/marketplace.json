@@ -9,7 +9,7 @@
       "name": "asm-analysis",
       "source": "./",
       "description": "Compile -> objdump -> simdref annotate -> simdref profile pipeline. Finds hot loops from perf/VTune/uProf/llvm-mca, cites latency/CPI from uops.info, proposes intrinsic-level rewrites. Triggers on 'why is this slow', 'vectorise this', 'look at the asm', and other performance prompts.",
-      "version": "0.2.0",
+      "version": "0.0.0",
       "homepage": "https://github.com/DiamonDinoia/simdref",
       "license": "GPL-3.0-or-later"
     }
