@@ -147,7 +147,10 @@ class LlmCliIntegrationTests(unittest.TestCase):
     def test_llm_invalid_preset_exits_usage(self):
         result = runner.invoke(app, ["llm", "query", "_mm_add_epi32", "--preset", "not_a_real_preset"])
         self.assertEqual(result.exit_code, LLM_EXIT_USAGE, result.output)
-        self.assertIn("unknown --preset", (result.output + (result.stderr or "")))
+        # CliRunner defaults to mix_stderr=True in click<8.2, so stderr is
+        # already folded into result.output. Accessing result.stderr in that
+        # mode raises ValueError, so don't — result.output is sufficient.
+        self.assertIn("unknown --preset", result.output)
 
     def test_llm_list_pattern_emits_ndjson(self):
         result = runner.invoke(app, ["llm", "list", "--pattern", "_mm_add_epi32"])
