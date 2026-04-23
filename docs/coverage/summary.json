@@ -1,24 +1,75 @@
 {
   "catalog": {
-    "generated_at": "2026-04-21T06:58:59+00:00",
-    "instructions": 22299,
-    "intrinsics": 18568
+    "generated_at": "2026-04-23T23:43:36+00:00",
+    "instructions": 29423,
+    "intrinsics": 92867
   },
   "sources": {
     "arm-a64": {
-      "coverage": 1.0,
-      "extra_sample": [],
-      "extra_total": 0,
-      "fetched_url": "fixture:arm_a64_instructions_sample.json",
-      "fetched_version": "fixture",
+      "coverage": 0.04477611940298507,
+      "extra_sample": [
+        "ABS",
+        "ADC",
+        "ADCLB",
+        "ADCLT",
+        "ADCS",
+        "ADDG",
+        "ADDHA",
+        "ADDHNB",
+        "ADDHNT",
+        "ADDP",
+        "ADDPL",
+        "ADDPT",
+        "ADDQP",
+        "ADDQV",
+        "ADDS",
+        "ADDSPL",
+        "ADDSUBP",
+        "ADDSVL",
+        "ADDV",
+        "ADDVA",
+        "ADDVL",
+        "ADR",
+        "ADRP",
+        "AESD",
+        "AESDIMC"
+      ],
+      "extra_total": 1473,
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/arm/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz",
+      "fetched_version": "archive:AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz:Instructions.json",
       "label": "Arm AARCHMRS A64",
-      "local": 2,
-      "matched": 2,
-      "missing_sample": [],
-      "missing_total": 0,
+      "local": 1500,
+      "matched": 27,
+      "missing_sample": [
+        "A",
+        "A1B",
+        "A1C",
+        "A2B",
+        "A32",
+        "A32ENCODINGEXISTS",
+        "A64",
+        "AC",
+        "ADDB",
+        "ADDPCSP16",
+        "ADJSP16",
+        "ADVSIMDDP",
+        "ADVSIMDEXT",
+        "ADVSIMDLS",
+        "ALIGN",
+        "APAS",
+        "ASIMDALL",
+        "ASIMDDIFF",
+        "ASIMDELEM",
+        "ASIMDEXT",
+        "ASIMDIMM",
+        "ASIMDINS",
+        "ASIMDMISC",
+        "ASIMDMISCFP16",
+        "ASIMDPERM"
+      ],
+      "missing_total": 576,
       "threshold": 0.9,
-      "upstream": 2,
-      "used_fixture": true
+      "upstream": 603
     },
     "arm-intrinsics": {
       "coverage": 0.6998341625207297,
@@ -84,8 +135,7 @@
       ],
       "missing_total": 1991,
       "threshold": 0.65,
-      "upstream": 6633,
-      "used_fixture": false
+      "upstream": 6633
     },
     "intel-intrinsics": {
       "coverage": 1.0,
@@ -99,38 +149,35 @@
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 7381,
-      "used_fixture": false
+      "upstream": 7381
     },
     "riscv-rvv": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "fixture:riscv_rvv_intrinsics_sample.json",
-      "fetched_version": "fixture",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/riscv/rvv_intrinsics_bundle.json",
+      "fetched_version": "local-json:rvv_intrinsics_bundle.json",
       "label": "RISC-V RVV intrinsics",
-      "local": 20,
-      "matched": 20,
+      "local": 74319,
+      "matched": 74319,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 20,
-      "used_fixture": true
+      "upstream": 74319
     },
     "riscv-unified-db": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "fixture:riscv_unified_db_sample.json",
-      "fetched_version": "fixture",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/riscv/unified_db_bundle.json",
+      "fetched_version": "local-json:unified_db_bundle.json",
       "label": "RISC-V unified DB",
-      "local": 16,
-      "matched": 16,
+      "local": 672,
+      "matched": 672,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 16,
-      "used_fixture": true
+      "upstream": 672
     },
     "uops-info": {
       "coverage": 0.9942074776197999,
@@ -182,8 +229,7 @@
       ],
       "missing_total": 11,
       "threshold": 0.98,
-      "upstream": 1899,
-      "used_fixture": false
+      "upstream": 1899
     }
   }
 }
