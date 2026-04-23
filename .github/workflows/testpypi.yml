@@ -1,0 +1,98 @@
+name: TestPyPI (main)
+
+# Publishes a dated dev build of the wheel to TestPyPI after every green
+# CI run on main, plus a daily safety-net at 00:00 UTC. TestPyPI accepts
+# uploads in seconds, so there is no reason to wait for the nightly cron
+# before downstream consumers can pick up a new commit.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * *"  # 00:00 UTC daily — safety net when no commits land
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    # Post-CI path: only run if CI succeeded on main. Schedule/dispatch
+    # paths fall through with no workflow_run context and are always run.
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/simdref
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          activate-environment: true
+          python-version: "3.12"
+
+      - name: Compute dev stamp
+        id: stamp
+        # Include the UTC minute and the GitHub run number so two pushes
+        # on the same day still produce distinct, monotonically-increasing
+        # version strings that TestPyPI will accept.
+        run: |
+          stamp="$(date -u +%Y%m%d%H%M).${GITHUB_RUN_NUMBER}"
+          echo "value=${stamp}" >> "$GITHUB_OUTPUT"
+          echo "dev stamp: ${stamp}"
+
+      - name: Stamp dev version
+        env:
+          STAMP: ${{ steps.stamp.outputs.value }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          stamp = os.environ["STAMP"]
+          path = pathlib.Path("pyproject.toml")
+          text = path.read_text()
+          new_text, n = re.subn(
+              r'^version = "([^"]+)"',
+              lambda m: f'version = "{m.group(1)}.dev{stamp}"',
+              text,
+              count=1,
+              flags=re.M,
+          )
+          if n != 1:
+              raise SystemExit("failed to stamp version in pyproject.toml")
+          path.write_text(new_text)
+          init = pathlib.Path("src/simdref/__init__.py")
+          init.write_text(
+              re.sub(
+                  r'^__version__ = "([^"]+)"',
+                  lambda m: f'__version__ = "{m.group(1)}.dev{stamp}"',
+                  init.read_text(),
+                  count=1,
+                  flags=re.M,
+              )
+          )
+          PY
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
