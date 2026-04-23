@@ -53,7 +53,7 @@ jobs:
       - name: Verify .claude-plugin metadata matches pyproject
         run: |
           if ! python scripts/check-version-sync.py; then
-            echo "::error::plugin metadata out of sync with pyproject. Run: scripts/bump-version.py ${{ inputs.version }} && git commit -am 'chore(release): bump to ${{ inputs.version }}' && git push"
+            echo "::error::plugin metadata out of sync with pyproject. Easiest fix: dispatch the Bump Version workflow with version=${{ inputs.version }} (Actions -> Bump Version -> Run workflow). Or run scripts/bump-version.py ${{ inputs.version }} locally."
             exit 1
           fi
 

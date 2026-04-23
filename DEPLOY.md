@@ -92,16 +92,28 @@ schema/ingestion regression.
 
 ## Cutting a release
 
-1. Bump `pyproject.toml` → `[project].version = "X.Y.Z"`, commit to main.
-2. Wait for CI on main to go green.
-3. `gh workflow run release-candidate.yml -f version=X.Y.Z -f dry_run=true`
-   — proves every gate without side effects.
-4. Inspect the dry-run. If green, re-dispatch with `dry_run=false` to
-   push the tag.
+Two clicks, no local checkout needed:
+
+1. **Bump** — dispatch `bump-version.yml` from the Actions tab (or
+   `gh workflow run bump-version.yml -f version=X.Y.Z -f dry_run=false`).
+   This runs `scripts/bump-version.py X.Y.Z` on a fresh main checkout,
+   rewrites `pyproject.toml` + `.claude-plugin/marketplace.json` +
+   `.claude-plugin/plugin.json` in one commit, and pushes to main.
+   Guard rails: refuses if the tag already exists or the version is
+   already on PyPI.
+2. Wait for CI on the bump commit to go green.
+3. **Dry-run the release** —
+   `gh workflow run release-candidate.yml -f version=X.Y.Z -f dry_run=true`
+   proves every gate (green CI, matching versions, wheel builds, smoke
+   install) without side effects.
+4. If green, **re-dispatch with `dry_run=false`** to push the tag.
 5. `release.yml` fires on the tag → approve the `pypi` environment in
    the GitHub UI → PyPI publish + GitHub Release.
 6. The release-published event re-triggers `ci.yml` which publishes
    `data-v<version>` alongside the refreshed `data-latest`.
+
+Fully local alternative to step 1: `python scripts/bump-version.py
+X.Y.Z && git commit -am 'chore(release): bump to X.Y.Z' && git push`.
 
 ## Configured environments
 
