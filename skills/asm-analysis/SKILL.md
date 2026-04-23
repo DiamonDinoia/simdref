@@ -45,47 +45,64 @@ simdref --version   # or: simdref -V
 
 ### 0a. Not installed
 
-Ask the user which of these to use, then proceed:
+Ask the user which of these to use, then proceed. Prefer **installing
+from `main`** — the released PyPI build lags behind and omits the
+`simdref profile` subcommand the profile-driven workflow in §2b depends
+on.
 
-1. **Persistent install via pipx (recommended):**
+1. **From GitHub `main` via pipx (recommended):**
    ```bash
-   pipx install simdref
+   pipx install "git+https://github.com/DiamonDinoia/simdref.git@main"
    ```
-2. **Project-local venv:**
+2. **From GitHub `main` into a project-local venv:**
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   pip install simdref
+   pip install "git+https://github.com/DiamonDinoia/simdref.git@main"
    ```
    Subsequent `simdref …` calls require the venv to be active (or use the absolute path `.venv/bin/simdref`).
-3. **Transient per-invocation via uvx (no install state):**
+3. **From a local source checkout (if the user has the repo cloned):**
    ```bash
-   uvx --from simdref simdref <args...>
+   python -m simdref <args...>           # invoke from the repo root
+   # or editable inside a venv:
+   pip install -e /path/to/simdref
    ```
-   In this mode, prepend the `uvx --from simdref` prefix to every `simdref …` invocation in the rest of this skill.
-4. **Run without installing — from a source checkout:**
+4. **Released PyPI build (simplest, but missing `simdref profile`):**
    ```bash
-   python -m simdref <args...>
+   pipx install simdref
    ```
-   Invoke from the repo root. Alternatively, for an editable install inside a venv: `pip install -e .`.
+5. **Transient per-invocation via uvx (no install state):**
+   ```bash
+   uvx --from "git+https://github.com/DiamonDinoia/simdref.git@main" simdref <args...>
+   ```
+   In this mode, prepend the `uvx --from ...` prefix to every `simdref …` invocation in the rest of this skill.
 
-If real PyPI doesn't yet have simdref (pre-release window), fall back to:
+Pre-release PyPI builds live on TestPyPI:
 ```bash
 pipx install simdref --pip-args "--index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/"
 ```
 
 Never install without asking.
 
+**Feature check:** if the user's existing install doesn't respond to
+`simdref profile --help` but Stage 2b is needed, offer to upgrade to
+`main` via the first option above before falling back to the hand-picked
+region flow in §3.
+
 ### 0b. Already installed — check for a newer release
 
 Before the first real pipeline run in a conversation, offer (once) to
-upgrade:
+upgrade. Prefer pulling fresh from `main` since PyPI trails the repo:
 
 ```bash
-# pipx install:
+# pipx install from GitHub main (preferred):
+pipx install --force "git+https://github.com/DiamonDinoia/simdref.git@main"
+
+# pipx install from PyPI (trails main; may lack `simdref profile`):
 pipx upgrade simdref
 
-# uvx transient: upgrade happens automatically on next invocation
+# uvx transient: refresh on next invocation:
+uvx --refresh --from "git+https://github.com/DiamonDinoia/simdref.git@main" simdref <args...>
 ```
 
 If the user declines, note the installed version and move on. Don't
@@ -94,14 +111,27 @@ nag again in the same conversation.
 ### 0c. Skill self-update
 
 This skill file lives at `skills/asm-analysis/SKILL.md` inside the
-simdref source tree and ships as part of the PyPI release. When the
-user upgrades simdref, a fresh copy of this skill comes with it. If
-they installed the skill out-of-band (e.g., copied to
-`~/.claude/skills/`), offer:
+simdref source tree. For the always-current version, symlink from a
+checkout:
+```bash
+git clone https://github.com/DiamonDinoia/simdref.git ~/src/simdref
+mkdir -p ~/.claude/skills
+ln -sf ~/src/simdref/skills/asm-analysis ~/.claude/skills/asm-analysis
+# later: (cd ~/src/simdref && git pull)  # updates skill in place
+```
+
+Or fetch a one-off snapshot from `main`:
+```bash
+mkdir -p ~/.claude/skills/asm-analysis && \
+  curl -fsSL https://raw.githubusercontent.com/DiamonDinoia/simdref/main/skills/asm-analysis/SKILL.md \
+  -o ~/.claude/skills/asm-analysis/SKILL.md
+```
+
+If the user has an older PyPI-shipped copy, point them at the packaged
+location for the upgrade diff:
 ```bash
 pip show -f simdref | grep SKILL.md
 ```
-then point them at the packaged copy for the upgrade diff.
 
 ---
 

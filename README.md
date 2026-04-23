@@ -22,6 +22,41 @@ for LLM skills.
   <br><em>Interactive TUI with ISA filters, ranked results, and measured/modeled performance tables.</em>
 </p>
 
+## Install the Claude Code skill
+
+`skills/asm-analysis/` ships a Claude Code skill that drives the
+compile → objdump → `simdref annotate` → `simdref profile` → LLM-batch
+pipeline automatically. Install it into your per-user skill directory so
+Claude Code picks it up in any project:
+
+```bash
+# from a simdref checkout (recommended — always current with main):
+mkdir -p ~/.claude/skills
+ln -sf "$PWD/skills/asm-analysis" ~/.claude/skills/asm-analysis
+
+# or copy a snapshot if you don't want the symlink to track the repo:
+cp -r skills/asm-analysis ~/.claude/skills/
+```
+
+To install straight from GitHub without a local checkout:
+
+```bash
+mkdir -p ~/.claude/skills && \
+  curl -fsSL https://raw.githubusercontent.com/DiamonDinoia/simdref/main/skills/asm-analysis/SKILL.md \
+  -o ~/.claude/skills/asm-analysis/SKILL.md
+```
+
+Verify Claude Code sees it:
+
+```bash
+claude /help   # then type: skills
+```
+
+The skill triggers on prompts like *"why is this loop slow"*, *"vectorise this"*,
+*"look at the asm"*, or any hardware-aware performance request. See
+[`skills/asm-analysis/SKILL.md`](skills/asm-analysis/SKILL.md) for the
+full trigger list and pipeline stages.
+
 ## Install
 
 ```bash
@@ -29,6 +64,15 @@ pip install simdref
 isa update     # download the pre-built catalog
 isa doctor     # confirm everything is wired up
 isa            # open the TUI
+```
+
+For the bleeding-edge version with the `simdref profile` subcommand
+(runtime-profile → asm-annotation pipeline, Stage 2b of the skill),
+install from `main`:
+
+```bash
+pipx install git+https://github.com/DiamonDinoia/simdref.git@main
+# or editable: pip install -e git+https://github.com/DiamonDinoia/simdref.git@main#egg=simdref
 ```
 
 The package installs two equivalent executables, **`isa`** (short) and
