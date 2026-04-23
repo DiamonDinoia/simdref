@@ -1,7 +1,6 @@
 # simdref
 
 [![CI](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml)
-[![Pages](https://github.com/DiamonDinoia/simdref/actions/workflows/pages.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/pages.yml)
 [![TestPyPI](https://img.shields.io/pypi/v/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org&label=TestPyPI)](https://test.pypi.org/project/simdref/)
 [![Python](https://img.shields.io/pypi/pyversions/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org)](https://test.pypi.org/project/simdref/)
 

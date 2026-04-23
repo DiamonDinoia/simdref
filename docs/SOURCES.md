@@ -142,17 +142,6 @@ RVV mnemonic. RISC-V per-core rows therefore come only from the
 
 ---
 
-## Deferred sources
-
-- **dougallj/applecpu** — Apple-Silicon measured perf. Deferred pending
-  license clarification.
-- **Arm SWOGs (Software Optimization Guides)** — redistribution
-  restricted; surfaced as `pdf_refs` citation links only, never reparsed.
-- **Full RISC-V scalar measured perf** — no public source exists;
-  remains modeled-only via LLVM.
-
----
-
 ## How refresh works
 
 1. Edit `src/simdref/ingest_sources.py` candidate-URL lists when upstreams
