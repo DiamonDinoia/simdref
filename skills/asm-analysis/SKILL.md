@@ -89,24 +89,81 @@ Never install without asking.
 `main` via the first option above before falling back to the hand-picked
 region flow in §3.
 
-### 0b. Already installed — check for a newer release
+### 0b. Already installed — freshness probe (run at most once per session)
 
-Before the first real pipeline run in a conversation, offer (once) to
-upgrade. Prefer pulling fresh from `main` since PyPI trails the repo:
+Before the first real pipeline run in a conversation, check both the
+package *and* this skill for upstream changes. The probe below is
+self-contained: it compares installed state against
+`github.com/DiamonDinoia/simdref`, caches the result under
+`~/.cache/simdref-asm-skill/` with a 6-hour TTL, and surfaces exactly
+one notice when something is newer.
+
+**Run this block once per session (skip if the cache file is fresh):**
 
 ```bash
-# pipx install from GitHub main (preferred):
-pipx install --force "git+https://github.com/DiamonDinoia/simdref.git@main"
+mkdir -p ~/.cache/simdref-asm-skill
+if [ -f ~/.cache/simdref-asm-skill/disabled ]; then
+  echo "freshness probe disabled by user"
+  exit 0
+fi
+CACHE=~/.cache/simdref-asm-skill/last-check
+if [ -f "$CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$CACHE" 2>/dev/null || stat -f %m "$CACHE") )) -lt 21600 ]; then
+  echo "skipping freshness check (cached <6h ago)"
+else
+  # 1. Installed package version
+  installed=$(simdref --version 2>/dev/null | awk '{print $NF}')
 
-# pipx install from PyPI (trails main; may lack `simdref profile`):
-pipx upgrade simdref
+  # 2. Latest PyPI release
+  pypi=$(curl -fsSL https://pypi.org/pypi/simdref/json | python -c "import json,sys; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null || echo "?")
 
-# uvx transient: refresh on next invocation:
-uvx --refresh --from "git+https://github.com/DiamonDinoia/simdref.git@main" simdref <args...>
+  # 3. Latest main-branch commit touching any simdref source.
+  # /commits/main returns a single commit object, so index the dict directly.
+  main_sha=$(curl -fsSL "https://api.github.com/repos/DiamonDinoia/simdref/commits/main" | python -c "import json,sys; print(json.load(sys.stdin)['sha'][:7])" 2>/dev/null || echo "?")
+
+  # 4. Latest main-branch commit touching THIS skill file
+  skill_sha=$(curl -fsSL "https://api.github.com/repos/DiamonDinoia/simdref/commits?path=skills/asm-analysis/SKILL.md&per_page=1" | python -c "import json,sys; print(json.load(sys.stdin)[0]['sha'][:7])" 2>/dev/null || echo "?")
+
+  # 5. Number of unreleased commits on main past the latest tag
+  unreleased=$(curl -fsSL "https://api.github.com/repos/DiamonDinoia/simdref/compare/v${pypi}...main" | python -c "import json,sys; print(json.load(sys.stdin).get('ahead_by', 0))" 2>/dev/null || echo "?")
+
+  printf 'installed=%s  pypi=%s  main-HEAD=%s  skill-HEAD=%s  unreleased=%s\n' \
+    "$installed" "$pypi" "$main_sha" "$skill_sha" "$unreleased"
+  date +%s > "$CACHE"
+  echo "$installed|$pypi|$main_sha|$skill_sha|$unreleased" > "$CACHE.state"
+fi
 ```
 
-If the user declines, note the installed version and move on. Don't
-nag again in the same conversation.
+Decision table for what to surface to the user (pick the **first** row
+that matches; do not nag a second time in the same session):
+
+| Condition                              | Ask the user                                                                              |
+|----------------------------------------|-------------------------------------------------------------------------------------------|
+| `installed < pypi`                     | Minor-release available — offer `pipx upgrade simdref`.                                   |
+| `unreleased >= 1` and skill does not need `simdref profile` | Pre-release with N commits past `v$pypi`. Offer `pipx install --force git+https://github.com/DiamonDinoia/simdref.git@main`. Mention this is optional. |
+| `simdref profile --help` fails and Stage 2b is likely needed | **Required** upgrade to main to unlock the profile pipeline — install from `main`. |
+| `skill_sha` differs from the last one stored in `~/.cache/simdref-asm-skill/last-seen-skill-sha` | Skill itself has been updated upstream. Offer `/plugin marketplace update simdref` (then re-run to pick up the new SKILL.md), or `(cd ~/src/simdref && git pull)` for symlink installs. |
+| None of the above                      | Silent — record the state and continue.                                                   |
+
+After surfacing (and the user accepts or declines), record the seen
+skill SHA so we don't re-prompt on the same upstream update:
+
+```bash
+# Only after the user has seen the notice (accept or decline):
+echo "$skill_sha" > ~/.cache/simdref-asm-skill/last-seen-skill-sha
+```
+
+**Offline / rate-limited** (any `curl` above returns `?`): skip the
+check silently. Do not block the pipeline on network failures.
+
+**Privacy:** the probe only hits `pypi.org` and `api.github.com` with
+no authentication; it sends the installed version implicitly via
+User-Agent and nothing else. If the user objects, they can opt out by
+running:
+```bash
+touch ~/.cache/simdref-asm-skill/disabled
+```
+Check for this file before running the probe block; short-circuit if
+present.
 
 ### 0c. Skill self-update
 
