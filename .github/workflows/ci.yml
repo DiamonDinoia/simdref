@@ -61,12 +61,16 @@ jobs:
       # sources. Trades ~10 min of runtime for guaranteed freshness and
       # zero chance of a stale cache masking a schema or ingestion
       # regression.
-      - name: Install LLVM 22 toolchain
+      - name: Install LLVM nightly toolchain
+        # apt.llvm.org's llvm.sh maps version 23 to the empty
+        # "llvm-toolchain-<codename>" suffix, i.e. the active development
+        # branch. Binaries land under /usr/lib/llvm-23/bin as `clang-23`,
+        # `llvm-mca-23`, etc.
         run: |
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 22
-          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+          sudo /tmp/llvm.sh 23
+          echo "/usr/lib/llvm-23/bin" >> "$GITHUB_PATH"
 
       - name: Install package
         run: uv pip install -e .
