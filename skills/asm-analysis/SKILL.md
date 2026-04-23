@@ -13,6 +13,19 @@ description: |
   intrinsic would replace this", "annotate this .s file", "profile this
   hot path at the instruction level".
 
+  TRIGGER also when the user asks to optimise, vectorise, or maximise
+  performance of C/C++ — including generic prompts like "vectorise
+  this", "make this faster", "maximise throughput", "tune this loop",
+  as well as explicitly hardware-aware ones like "make this faster on
+  Zen4", "tune for Skylake-X", "use AVX-512 here", "why is this slow on
+  Apple M2", "avoid the port-5 bottleneck", "pick the right vector
+  width". Rationale: any serious "make this faster" answer requires
+  looking at generated code and instruction costs, not just
+  source-level reasoning. Default to this pipeline whenever the user's
+  goal is runtime performance of compiled C/C++, unless they
+  explicitly scope the request to source-only (readability,
+  algorithmic complexity, API ergonomics).
+
   DO NOT TRIGGER for pure source-level refactoring, style changes, or
   questions about C++ semantics that don't require reading generated code.
 ---
@@ -32,17 +45,29 @@ simdref --version   # or: simdref -V
 
 ### 0a. Not installed
 
-Ask the user which of these two to use, then proceed:
+Ask the user which of these to use, then proceed:
 
 1. **Persistent install via pipx (recommended):**
    ```bash
    pipx install simdref
    ```
-2. **Transient per-invocation via uvx (no install state):**
+2. **Project-local venv:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install simdref
+   ```
+   Subsequent `simdref …` calls require the venv to be active (or use the absolute path `.venv/bin/simdref`).
+3. **Transient per-invocation via uvx (no install state):**
    ```bash
    uvx --from simdref simdref <args...>
    ```
    In this mode, prepend the `uvx --from simdref` prefix to every `simdref …` invocation in the rest of this skill.
+4. **Run without installing — from a source checkout:**
+   ```bash
+   python -m simdref <args...>
+   ```
+   Invoke from the repo root. Alternatively, for an editable install inside a venv: `pip install -e .`.
 
 If real PyPI doesn't yet have simdref (pre-release window), fall back to:
 ```bash
@@ -116,11 +141,28 @@ Extract the record whose `file` matches the target source. From its `command` (o
   ```
   Then restart from step 1a.
 
-### 1c. No build system detected — try to *create* one before hand-compiling
+### 1c. No build system detected — recover flags from docs/`gcc -MM`, do NOT synthesise one
 
 If `CMakeLists.txt` exists → go to 1a (offer the `cmake -B build` step).
 Else if `Makefile` / `GNUmakefile` / `build.ninja` exists → go to 1b.
-Else if the file is a standalone TU with no includes outside the standard library → **last resort: hand-compile**, but before running, ask the user for:
+Else: **do NOT synthesise a build system.** Do not run `cmake -B build` on a project that doesn't ship CMake, and do not write a `Makefile`. Instead, recover the real compile line:
+
+1. Grep project docs for the canonical compile line:
+   - `README*`, `INSTALL*`, `BUILD*`
+   - `docs/`
+   - `.github/workflows/*.yml`
+   - `Dockerfile*`, `.devcontainer/`
+   - `conanfile.*`
+   - `pyproject.toml` (for extension modules), `setup.py`
+2. If the project is a single-file / header-only demo, ask the user for the known-good compile line they use. Do not guess.
+3. Use the compiler to enumerate what the TU needs, so a hand-compile at least gets include paths right:
+   ```bash
+   gcc -MM <source>          # dependencies (headers the TU actually includes)
+   gcc -H <source>           # include tree
+   gcc -v -E <source>        # default search paths and implicit flags
+   ```
+
+Only after the above steps fail, fall back to hand-compile. Before running, require the user to confirm each of:
 - `-O` level (default suggestion: `-O3`)
 - `-march` (default suggestion: probe from §2)
 - any `-I` include paths
@@ -147,6 +189,7 @@ Use as-is.
 - Output always goes to `/tmp/asm-analysis.s` — never inside the user's repo.
 - **AT&T syntax only** — simdref's parser expects it.
 - Never modify the user's build artefacts or `build/` directory beyond what `cmake -B build` creates.
+- Do not create `CMakeLists.txt`, `Makefile`, or `build.ninja` for the user. If the project has no build system, the user owns that decision; we only analyse what exists.
 - If the resolved compile line contains `-O0`, warn the user before proceeding — `-O0` codegen is rarely what anyone wants to analyse.
 
 ---
@@ -199,6 +242,16 @@ Read the JSON; do **not** regex the `.sa` file. JSON records already carry `{mne
 
 ---
 
+## 4a. Sanity-check the annotation
+
+`simdref annotate` can be wrong: mnemonics may be misclassified, the wrong uarch row may be joined, or measured/modeled rows may swap. Before quoting numbers in §7:
+
+- Spot-check 2–3 of the dominant mnemonics against their primary source (Intel Intrinsics Guide, uops.info page, Arm Exploration Tools, LLVM schedule model) via `simdref show <mnemonic> --arch <resolved>` and, where feasible, the original upstream URL.
+- If the annotation marks an instruction `unknown ??` that you recognise as standard, flag a catalog bug rather than silently skipping.
+- If any cross-checked number disagrees with simdref's payload by more than the measurement noise floor, surface the discrepancy in §7 instead of picking one.
+
+---
+
 ## 5. Batch-resolve mnemonics
 
 Extract distinct `mnemonic` values from the JSON, then:
@@ -242,3 +295,4 @@ After the user applies a change, offer to re-run stages 1–5 and produce a **be
 - No measured data for the resolved microarch → say so. Do not fall back to modeled without explicit user OK.
 - Inline asm or hand-written `.s` → confirm with the user before suggesting changes.
 - Files >5000 lines with no region specified → refuse whole-file annotation; require a symbol.
+- If the spot-checks in §4a contradict simdref's payload on the dominant mnemonic, stop and report the disagreement before proposing a swap.
