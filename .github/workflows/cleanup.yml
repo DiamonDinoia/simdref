@@ -24,10 +24,21 @@ on:
         required: false
         default: "14"
         type: string
+      run_grace_days:
+        description: "Delete workflow runs older than this many days"
+        required: false
+        default: "30"
+        type: string
+      deployment_keep:
+        description: "Keep this many most-recent github-pages deployments"
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: write
   actions: write
+  deployments: write
   pull-requests: read
 
 concurrency:
@@ -44,6 +55,8 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
           BRANCH_GRACE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch_grace_days || '14' }}
           ARTIFACT_GRACE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.artifact_grace_days || '14' }}
+          RUN_GRACE_DAYS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_grace_days || '30' }}
+          DEPLOYMENT_KEEP: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deployment_keep || '1' }}
         with:
           script: |
             const owner = context.repo.owner;
@@ -52,12 +65,17 @@ jobs:
             const dryRun = String(process.env.DRY_RUN).toLowerCase() === "true";
             const branchGraceDays = Number(process.env.BRANCH_GRACE_DAYS || "14");
             const artifactGraceDays = Number(process.env.ARTIFACT_GRACE_DAYS || "14");
+            const runGraceDays = Number(process.env.RUN_GRACE_DAYS || "30");
+            const deploymentKeep = Math.max(1, Number(process.env.DEPLOYMENT_KEEP || "1"));
             const now = Date.now();
             const branchCutoff = now - branchGraceDays * 24 * 60 * 60 * 1000;
             const artifactCutoff = now - artifactGraceDays * 24 * 60 * 60 * 1000;
+            const runCutoff = now - runGraceDays * 24 * 60 * 60 * 1000;
             const protectedBranches = new Set([defaultBranch, "gh-pages"]);
             let deletedBranches = 0;
             let deletedArtifacts = 0;
+            let deletedRuns = 0;
+            let deletedDeployments = 0;
 
             const openBranchSet = new Set();
             for await (const page of github.paginate.iterator(github.rest.pulls.list, {
@@ -125,10 +143,63 @@ jobs:
               }
             }
 
+            for await (const page of github.paginate.iterator(github.rest.actions.listWorkflowRunsForRepo, {
+              owner,
+              repo,
+              per_page: 100,
+            })) {
+              const runs = Array.isArray(page.data)
+                ? page.data
+                : Array.isArray(page.data?.workflow_runs)
+                  ? page.data.workflow_runs
+                  : [];
+              for (const run of runs) {
+                if (new Date(run.created_at).getTime() > runCutoff) continue;
+                if (run.status !== "completed") continue;
+
+                core.info(`${dryRun ? "[dry-run] would delete" : "deleting"} workflow run ${run.name} #${run.run_number} (${run.id})`);
+                if (!dryRun) {
+                  try {
+                    await github.rest.actions.deleteWorkflowRun({ owner, repo, run_id: run.id });
+                    deletedRuns += 1;
+                  } catch (error) {
+                    core.warning(`failed to delete run ${run.id}: ${error.message}`);
+                  }
+                }
+              }
+            }
+
+            const pagesDeployments = [];
+            for await (const page of github.paginate.iterator(github.rest.repos.listDeployments, {
+              owner,
+              repo,
+              environment: "github-pages",
+              per_page: 100,
+            })) {
+              for (const d of page.data) pagesDeployments.push(d);
+            }
+            pagesDeployments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            for (const d of pagesDeployments.slice(deploymentKeep)) {
+              core.info(`${dryRun ? "[dry-run] would delete" : "deleting"} github-pages deployment #${d.id} (${d.created_at})`);
+              if (!dryRun) {
+                try {
+                  await github.rest.repos.createDeploymentStatus({
+                    owner, repo, deployment_id: d.id, state: "inactive",
+                  });
+                  await github.rest.repos.deleteDeployment({ owner, repo, deployment_id: d.id });
+                  deletedDeployments += 1;
+                } catch (error) {
+                  core.warning(`failed to delete deployment ${d.id}: ${error.message}`);
+                }
+              }
+            }
+
             await core.summary
               .addHeading("Cleanup Summary")
               .addRaw(`dry_run=${dryRun}\n`)
               .addRaw(`deleted_branches=${deletedBranches}\n`)
               .addRaw(`deleted_artifacts=${deletedArtifacts}\n`)
+              .addRaw(`deleted_runs=${deletedRuns}\n`)
+              .addRaw(`deleted_deployments=${deletedDeployments}\n`)
               .addRaw("Immutable versioned data releases are intentionally left untouched; mutable schema-latest/data-latest releases are updated in place.\n")
               .write();
