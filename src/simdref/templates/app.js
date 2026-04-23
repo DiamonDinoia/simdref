@@ -1,4 +1,3 @@
-/* simdref – client-side SPA logic */
 "use strict";
 
 /* ── DOM refs ─────────────────────────────────────────────────────── */
@@ -100,6 +99,11 @@ function applyTheme(theme) {
   localStorage.setItem("simdref-theme", theme);
   themeIconLight.style.display = theme === "dark" ? "none" : "";
   themeIconDark.style.display = theme === "dark" ? "" : "none";
+  // Swap the hljs stylesheet if it's been loaded.
+  const light = document.getElementById("hljs-theme-light");
+  const dark  = document.getElementById("hljs-theme-dark");
+  if (light) light.disabled = theme === "dark";
+  if (dark)  dark.disabled  = theme !== "dark";
 }
 
 function toggleTheme() {
@@ -705,8 +709,7 @@ function renderDescriptionSections(description) {
   for (const key of descSectionOrder) {
     if (description[key]) {
       const isCode = codeSections.has(key);
-      const isFirst = key === "Description";
-      html += `<details class="desc-section"${isFirst ? " open" : ""}>
+      html += `<details class="desc-section">
         <summary>${esc(key)}</summary>
         ${isCode ? `<pre class="desc-code">${esc(description[key])}</pre>` : `<div class="desc-body">${esc(description[key])}</div>`}
       </details>`;
@@ -758,39 +761,41 @@ function renderIntrinsicDetail(item, detail) {
       </div>
     </div>
     <section class="section">
-      <h3>Description</h3>
+      <h3>Summary</h3>
       <div>${esc(detail ? detail.description : item.description)}</div>
     </section>
-    ${detail && detail.doc_sections && Object.keys(detail.doc_sections).length ? `<section class="section">
-      <h3>ACLE Documentation</h3>
-      ${renderDescriptionSections(detail.doc_sections)}
-    </section>` : ""}
-    ${detail && detail._instrDescription && Object.keys(detail._instrDescription).length ? `<section class="section">
-      <h3>Instruction Semantics</h3>
-      ${renderDescriptionSections(detail._instrDescription)}
-    </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
-      <dl class="kv">
-        <dt>Header</dt><dd>${esc(item.header || "-")}</dd>
-        <dt>Architecture</dt><dd>${esc(item.display_architecture || item.architecture || "-")}</dd>
-        <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
-        ${item.category ? `<dt>Category</dt><dd>${esc(item.subcategory ? `${item.subcategory} / ${item.category}` : item.category)}</dd>` : ""}
-        ${detail && detail.url ? `<dt>Source</dt><dd><a href="${esc(detail.url)}" target="_blank" rel="noreferrer">${esc(detail.url)}</a></dd>` : ""}
-        ${meta.reference_url ? `<dt>Reference</dt><dd><a href="${esc(meta.reference_url)}" target="_blank" rel="noreferrer">${esc(meta.reference_url)}</a></dd>` : ""}
-        ${meta.argument_preparation ? `<dt>Argument Prep</dt><dd>${esc(meta.argument_preparation)}</dd>` : ""}
-        ${meta.result ? `<dt>Result</dt><dd>${esc(meta.result)}</dd>` : ""}
-        ${meta.supported_architectures ? `<dt>Supported</dt><dd>${esc(meta.supported_architectures)}</dd>` : ""}
-        ${meta.classification_path ? `<dt>Section</dt><dd>${esc(meta.classification_path)}</dd>` : ""}
-        ${detail && detail.notes && detail.notes.length ? `<dt>Notes</dt><dd>${esc(detail.notes.join("; "))}</dd>` : ""}
-        ${detail && detail._linkedInstruction ? `<dt>Instruction</dt><dd>${esc(detail._linkedInstruction)}</dd>` : ""}
-        ${instrMeta.category ? `<dt>Instruction Category</dt><dd>${esc(instrMeta.category)}</dd>` : ""}
-        ${instrMeta.cpl ? `<dt>CPL</dt><dd>${esc(instrMeta.cpl)}</dd>` : ""}
-        ${instrMeta.url ? `<dt>Instruction Source</dt><dd><a href="${esc(canonUrl(instrMeta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(instrMeta.url))}</a></dd>` : ""}
-        ${instrMeta["url-ref"] ? `<dt>Instruction Reference</dt><dd><a href="${esc(canonUrl(instrMeta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(instrMeta["url-ref"]))}</a></dd>` : ""}
-        ${instrPdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("")}
-      </dl>
+      <div class="kv-compact">
+        ${kvChip("Arch", item.display_architecture || item.architecture)}
+        ${kvChip("ISA", item.display_isa || displayIsa(item.isa))}
+        ${item.header ? kvChip("Header", item.header) : ""}
+        ${item.category ? kvChip("Category", item.subcategory ? `${item.subcategory} / ${item.category}` : item.category) : ""}
+        ${instrMeta.category ? kvChip("Instr Cat", instrMeta.category) : ""}
+        ${instrMeta.cpl ? kvChip("CPL", instrMeta.cpl) : ""}
+        ${meta.supported_architectures ? kvChip("Supported", meta.supported_architectures) : ""}
+        ${meta.classification_path ? kvChip("Section", meta.classification_path) : ""}
+        ${detail && detail._linkedInstruction ? kvChip("Instruction", detail._linkedInstruction) : ""}
+        ${meta.argument_preparation ? kvChip("Arg Prep", meta.argument_preparation) : ""}
+        ${meta.result ? kvChip("Result", meta.result) : ""}
+        ${detail && detail.notes && detail.notes.length ? kvChip("Notes", detail.notes.join("; ")) : ""}
+      </div>
+      <div class="kv-links">
+        ${detail && detail.url ? kvLink("Source", detail.url) : ""}
+        ${meta.reference_url ? kvLink("Reference", meta.reference_url) : ""}
+        ${instrMeta.url ? kvLink("uops.info", canonUrl(instrMeta.url)) : ""}
+        ${instrMeta["url-ref"] ? kvLink("Instr Ref", canonUrl(instrMeta["url-ref"])) : ""}
+        ${instrPdfRefs.map(ref => `<a class="kv-link" href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">${esc(ref.label || ref.source_id || "PDF")}${ref.page_start ? ` p${esc(ref.page_start)}` : ""}</a>`).join("")}
+      </div>
     </section>
+    ${hasOperands ? `<section class="section">
+      <h3>Operands</h3>
+      ${renderTable(operandHeaders, detail._operands)}
+    </section>` : ""}
+    ${hasMeasurements ? `<section class="section">
+      <h3>Performance</h3>
+      ${renderMeasurements(detail._measurements)}
+    </section>` : ""}
     <section class="section">
       <h3>Instructions</h3>
       ${linked.length ? renderTable(
@@ -802,15 +807,23 @@ function renderIntrinsicDetail(item, detail) {
         linked
       ) : `<div style="color:var(--text-muted);font-size:0.82rem">No linked instructions.</div>`}
     </section>
-    ${hasOperands ? `<section class="section">
-      <h3>Operands</h3>
-      ${renderTable(operandHeaders, detail._operands)}
+    ${detail && detail.doc_sections && Object.keys(detail.doc_sections).length ? `<section class="section">
+      <h3>ACLE Documentation</h3>
+      ${renderDescriptionSections(detail.doc_sections)}
     </section>` : ""}
-    ${hasMeasurements ? `<section class="section">
-      <h3>Performance</h3>
-      ${renderMeasurements(detail._measurements)}
+    ${detail && detail._instrDescription && Object.keys(detail._instrDescription).length ? `<section class="section">
+      <h3>Instruction Semantics</h3>
+      ${renderDescriptionSections(detail._instrDescription)}
     </section>` : ""}
   `;
+}
+
+function kvChip(label, value) {
+  if (value == null || value === "" || value === "-") return "";
+  return `<span class="kv-chip"><span class="kv-chip-k">${esc(label)}</span><span class="kv-chip-v">${esc(value)}</span></span>`;
+}
+function kvLink(label, href) {
+  return `<a class="kv-link" href="${esc(href)}" target="_blank" rel="noreferrer">${esc(label)}</a>`;
 }
 
 function renderInstructionDetail(item, detail) {
@@ -844,22 +857,30 @@ function renderInstructionDetail(item, detail) {
       <h3>Summary</h3>
       <div>${esc(d.summary || item.summary || "-")}</div>
     </section>
-    ${d.description && Object.keys(d.description).length ? `<section class="section">
-      <h3>Instruction Semantics</h3>
-      ${renderDescriptionSections(d.description)}
-    </section>` : ""}
     <section class="section">
       <h3>Metadata</h3>
-      <dl class="kv">
-        <dt>Mnemonic</dt><dd class="mono">${esc(item.display_mnemonic || item.mnemonic)}</dd>
-        <dt>Form</dt><dd class="mono">${esc(d.display_form || item.display_form || d.form || item.form || "-")}</dd>
-        <dt>Architecture</dt><dd>${esc(item.display_architecture || item.architecture || "-")}</dd>
-        <dt>ISA</dt><dd>${esc(item.display_isa || displayIsa(item.isa))}</dd>
-        ${meta.url ? `<dt>uops.info</dt><dd><a href="${esc(canonUrl(meta.url))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta.url))}</a></dd>` : ""}
-        ${meta["url-ref"] ? `<dt>Reference</dt><dd><a href="${esc(canonUrl(meta["url-ref"]))}" target="_blank" rel="noreferrer">${esc(canonUrl(meta["url-ref"]))}</a></dd>` : ""}
-        ${pdfRefs.map(ref => `<dt>${esc(ref.label || ref.source_id || "PDF")}</dt><dd><a href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">Open PDF${ref.page_start ? ` (page ${esc(ref.page_start)})` : ""}</a></dd>`).join("")}
-      </dl>
+      <div class="kv-compact">
+        ${kvChip("Mnemonic", item.display_mnemonic || item.mnemonic)}
+        ${kvChip("Form", d.display_form || item.display_form || d.form || item.form)}
+        ${kvChip("Arch", item.display_architecture || item.architecture)}
+        ${kvChip("ISA", item.display_isa || displayIsa(item.isa))}
+        ${meta.category ? kvChip("Category", meta.category) : ""}
+        ${meta.cpl ? kvChip("CPL", meta.cpl) : ""}
+      </div>
+      <div class="kv-links">
+        ${meta.url ? kvLink("uops.info", canonUrl(meta.url)) : ""}
+        ${meta["url-ref"] ? kvLink("Reference", canonUrl(meta["url-ref"])) : ""}
+        ${pdfRefs.map(ref => `<a class="kv-link" href="${esc(ref.url || "")}" target="_blank" rel="noreferrer">${esc(ref.label || ref.source_id || "PDF")}${ref.page_start ? ` p${esc(ref.page_start)}` : ""}</a>`).join("")}
+      </div>
     </section>
+    ${operands.length ? `<section class="section">
+      <h3>Operands</h3>
+      ${renderTable(operandHeaders, operands)}
+    </section>` : ""}
+    ${measurements.length ? `<section class="section">
+      <h3>Performance</h3>
+      ${renderMeasurements(measurements)}
+    </section>` : ""}
     <section class="section">
       <h3>Intrinsics</h3>
       ${linked.length ? renderTable(
@@ -871,13 +892,9 @@ function renderInstructionDetail(item, detail) {
         linked
       ) : `<div style="color:var(--text-muted);font-size:0.82rem">No linked intrinsics.</div>`}
     </section>
-    ${operands.length ? `<section class="section">
-      <h3>Operands</h3>
-      ${renderTable(operandHeaders, operands)}
-    </section>` : ""}
-    ${measurements.length ? `<section class="section">
-      <h3>Performance</h3>
-      ${renderMeasurements(measurements)}
+    ${d.description && Object.keys(d.description).length ? `<section class="section">
+      <h3>Instruction Semantics</h3>
+      ${renderDescriptionSections(d.description)}
     </section>` : ""}
   `;
 }
@@ -1422,20 +1439,6 @@ for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
   });
 }
 
-/* Perf-kind filter — measured vs modeled perf tables (persisted). */
-for (const cb of document.querySelectorAll('#kind-bar input[data-perf-kind]')) {
-  cb.checked = enabledPerfKinds.has(cb.dataset.perfKind);
-  cb.parentElement.classList.toggle("active", cb.checked);
-  cb.addEventListener("change", () => {
-    const kind = cb.dataset.perfKind;
-    if (cb.checked) enabledPerfKinds.add(kind); else enabledPerfKinds.delete(kind);
-    cb.parentElement.classList.toggle("active", cb.checked);
-    persistPerfKinds();
-    const selected = resultPool.find(e => e.key === activeKey);
-    if (selected) renderDetail(selected);
-  });
-}
-
 /* ── Category panel toggle + presets ──────────────────────────────── */
 if ($("category-toggle")) {
   $("category-toggle").addEventListener("click", () => categoryPanel.classList.toggle("hidden"));
@@ -1557,12 +1560,15 @@ Promise.all([
     renderCategoryFilters();
     updateCategorySummary();
 
-    // Apply ?preset=NAME from URL, if provided and recognised.
+    // Apply ?preset=NAME from URL, else default to "intel" for a
+    // more responsive first load (smaller result set, fewer chips).
     try {
       const params = new URLSearchParams(location.search);
       const presetName = params.get("preset");
       if (presetName && ARCH_PRESETS[presetName]) {
         applyIsaPreset(presetName);
+      } else if (ARCH_PRESETS["intel"]) {
+        applyIsaPreset("intel");
       }
     } catch (_) { /* ignore malformed URL */ }
 
@@ -1588,3 +1594,627 @@ Promise.all([
       detailEmpty.style.display = "";
     }
   });
+
+/* ── Annotate tab ────────────────────────────────────────────────────
+ * Client-side port of src/simdref/annotate.py. Reuses the existing
+ * fetchJson, chunkPrefix, loadChunk helpers. Zero backend.
+ */
+const ANN_INSTR_RE = /^(?<indent>[ \t]*)(?<mnemonic>[A-Za-z][A-Za-z0-9_.]*)(?:[ \t]+(?<operands>[^#\n]*?))?(?:[ \t]*(?<trailing>#.*))?$/;
+const ANN_LABEL_RE = /^[ \t]*[A-Za-z_.$][\w.$]*:/;
+const ANN_ATT_SUFFIXES = new Set(["b", "w", "l", "q", "s", "d", "t"]);
+const ANN_STORAGE_KEY = "simdref:annotate:opts:v1";
+const ANN_INPUT_KEY   = "simdref:annotate:input:v1";
+const ANN_INPUT_MAX   = 256 * 1024;  // cap localStorage writes (256 KiB)
+
+const instructionsByMnem = Object.create(null);
+function buildInstructionsByMnem() {
+  if (Object.keys(instructionsByMnem).length) return;
+  for (const entry of (catalog.instructions || [])) {
+    const key = String(entry.mnemonic || "").toUpperCase();
+    if (!key) continue;
+    (instructionsByMnem[key] ||= []).push(entry);
+  }
+}
+
+function _archOf(entry) {
+  return String(entry.architecture || "").toLowerCase();
+}
+function _archMatches(entry, isa) {
+  if (!isa) return true;
+  const a = _archOf(entry);
+  if (isa === "x86")   return a === "x86";
+  if (isa === "arm")   return a === "arm" || a === "aarch64" || a === "arm64" || a === "a64" || a === "a32";
+  if (isa === "riscv") return a === "riscv" || a === "rvv";
+  return true;
+}
+
+function parseAsmLine(line) {
+  const raw = line.replace(/\n$/, "");
+  if (!raw.trim()) return { kind: "blank", raw };
+  const bare = raw.replace(/^[ \t]+/, "");
+  if (bare.startsWith("#") || bare.startsWith("//")) return { kind: "comment", raw };
+  if (bare.startsWith(".")) return { kind: "directive", raw };
+  if (ANN_LABEL_RE.test(raw)) return { kind: "label", raw };
+  const m = ANN_INSTR_RE.exec(raw);
+  if (!m) return { kind: "comment", raw };
+  return {
+    kind: "instruction",
+    raw,
+    indent: m.groups.indent || "",
+    mnemonic: m.groups.mnemonic || "",
+    operands: (m.groups.operands || "").trim(),
+    trailing: (m.groups.trailing || "").trim(),
+  };
+}
+
+function lookupForms(mnemonic, isa) {
+  const up = mnemonic.toUpperCase();
+  const filter = (arr) => (arr || []).filter(e => _archMatches(e, isa));
+  let forms = filter(instructionsByMnem[up]);
+  if (forms.length) return forms;
+  if (up.length > 2 && ANN_ATT_SUFFIXES.has(up.slice(-1).toLowerCase())) {
+    forms = filter(instructionsByMnem[up.slice(0, -1)]);
+    if (forms.length) return forms;
+  }
+  return [];
+}
+
+async function measurementsForEntry(entry) {
+  const prefix = chunkPrefix(entry.mnemonic);
+  const chunk = await loadChunk(prefix);
+  const record = chunk && chunk[entry.key];
+  return (record && Array.isArray(record.measurements)) ? record.measurements : [];
+}
+
+function _operandWidthTokens(operands) {
+  if (!operands) return [];
+  const s = operands.toLowerCase();
+  const tokens = [];
+  // Intel-syntax size specifiers: e.g. "QWORD PTR [rbp-8]".
+  const sizeMap = {byte:"8", word:"16", dword:"32", qword:"64", xmmword:"128", ymmword:"256", zmmword:"512"};
+  for (const [k, v] of Object.entries(sizeMap)) {
+    if (new RegExp(`\\b${k}\\s+ptr\\b`).test(s)) tokens.push(`M${v}`);
+  }
+  // Registers (x86 only for now). Order matters: match longer/wider names first.
+  const regPatterns = [
+    [/\b(?:r[abcd]x|r[sd]i|rbp|rsp|r(?:8|9|1[0-5]))\b/, "R64"],
+    [/\b(?:e[abcd]x|e[sd]i|ebp|esp|r(?:8|9|1[0-5])d)\b/, "R32"],
+    [/\b(?:[abcd]x|[sd]i|bp|sp|r(?:8|9|1[0-5])w)\b/, "R16"],
+    [/\b(?:[abcd][lh]|[sd]il|bpl|spl|r(?:8|9|1[0-5])b)\b/, "R8"],
+    [/\bxmm\d+\b/, "XMM"],
+    [/\bymm\d+\b/, "YMM"],
+    [/\bzmm\d+\b/, "ZMM"],
+    [/\bk[0-7]\b/, "K"],
+  ];
+  for (const [re, tok] of regPatterns) {
+    if (re.test(s)) tokens.push(tok);
+  }
+  return tokens;
+}
+
+function _formOperandScore(form, opTokens) {
+  if (!opTokens.length) return 0;
+  const key = (form.display_key || form.key || "").toUpperCase();
+  let score = 0;
+  for (const tok of opTokens) {
+    // Exact token hit = strong signal. R64 must match R64, not R8.
+    if (new RegExp(`\\b${tok}\\b`).test(key)) score += 10;
+    else if (tok.startsWith("R") && key.includes("M" + tok.slice(1))) score += 2; // reg→mem of same width
+  }
+  return score;
+}
+
+function pickForm(forms, arch, measurementsByKey, opTokens) {
+  if (!forms.length) return null;
+  const candidates = forms.slice();
+  if (arch) {
+    const archPinned = candidates.filter(f => (measurementsByKey.get(f.key) || []).some(r => r.uarch === arch));
+    if (archPinned.length) candidates.length = 0, candidates.push(...archPinned);
+  }
+  let best = candidates[0];
+  let bestScore = -Infinity;
+  for (const f of candidates) {
+    const m = measurementsByKey.get(f.key) || [];
+    const measured = m.filter(r => (r.sourceKind || "measured") === "measured").length;
+    const opScore = _formOperandScore(f, opTokens || []);
+    // Operand match dominates; measurement coverage is the tiebreaker.
+    const score = opScore * 10000 + measured * 100 + m.length;
+    if (score > bestScore) { best = f; bestScore = score; }
+  }
+  return best;
+}
+
+function _cpiValue(row) {
+  for (const k of ["tpUnrolled", "tpLoop", "tpPorts"]) {
+    const v = row[k];
+    if (v != null && v !== "" && v !== "-" && !isNaN(parseFloat(v))) return parseFloat(v);
+  }
+  return null;
+}
+
+function _latValue(row) {
+  const v = row.latency;
+  if (v == null || v === "" || v === "-") return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+
+function aggregatePerf(measurements, { mode, includeModeled }) {
+  function collect(kinds) {
+    const lats = [], cpis = [], archs = [];
+    for (const row of measurements) {
+      const kind = row.sourceKind || "measured";
+      if (!kinds.has(kind)) continue;
+      const lat = _latValue(row);
+      const cpi = _cpiValue(row);
+      if (lat == null && cpi == null) continue;
+      archs.push(row.uarch || "?");
+      if (lat != null) lats.push(lat);
+      if (cpi != null) cpis.push(cpi);
+    }
+    return { lats, cpis, archs };
+  }
+  let got = collect(new Set(["measured"]));
+  let sourceKind = "measured";
+  if (!got.archs.length && includeModeled) {
+    got = collect(new Set(["modeled"]));
+    sourceKind = "modeled";
+  }
+  if (!got.archs.length) {
+    got = collect(new Set(["measured", "modeled"]));
+    sourceKind = "mixed";
+  }
+  function reduce(vals) {
+    if (!vals.length) return null;
+    if (mode === "best")   return Math.min(...vals);
+    if (mode === "worst")  return Math.max(...vals);
+    if (mode === "median") {
+      const s = [...vals].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    }
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+  return {
+    latency: reduce(got.lats),
+    cpi: reduce(got.cpis),
+    nArchs: got.archs.length,
+    sourceKind,
+    archs: got.archs,
+  };
+}
+
+function _fmtNum(x) {
+  if (x == null) return "-";
+  return Number.isInteger(x) ? x.toFixed(1) : (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(2));
+}
+
+/* The SDM ingest propagates a generic blurb (e.g. "Move 32-bit integer
+ * operands.") to every MOV variant, including forms like MOV (M64, R64)
+ * where it's plainly wrong. If the summary's stated N-bit width doesn't
+ * match any width in the form's display_key, drop it — a wrong blurb is
+ * worse than none. */
+function _summaryMatchesForm(summary, form) {
+  const m = /(\d+)\s*-?\s*bit/i.exec(summary || "");
+  if (!m) return true;
+  const declared = m[1];
+  const key = String(form.display_key || form.key || "");
+  const widths = [...key.matchAll(/[MRI](\d+)/g)].map(x => x[1]);
+  if (!widths.length) return true;
+  return widths.includes(declared);
+}
+
+function formatAnnotation(entry, measurements, opts) {
+  const parts = [];
+  if (opts.docs && entry.summary && _summaryMatchesForm(entry.summary, entry)) {
+    parts.push(entry.summary.trim());
+  }
+  if (opts.perf) {
+    let lat, cpi, tag;
+    if (opts.arch) {
+      const row = measurements.find(r => r.uarch === opts.arch);
+      lat = row ? _latValue(row) : null;
+      cpi = row ? _cpiValue(row) : null;
+      const kind = row ? (row.sourceKind || "measured") : "no data";
+      tag = `[${opts.arch}, ${kind}]`;
+    } else {
+      const summary = aggregatePerf(measurements, { mode: opts.agg, includeModeled: opts.includeModeled });
+      lat = summary.latency; cpi = summary.cpi;
+      tag = summary.nArchs === 0
+        ? "[no data]"
+        : `[${opts.agg} of ${summary.nArchs} archs, ${summary.sourceKind}]`;
+    }
+    parts.push(`lat=${_fmtNum(lat)}c cpi=${_fmtNum(cpi)} ${tag}`);
+  }
+  return parts.join(" | ");
+}
+
+function readAnnotateOpts() {
+  return {
+    perf:           $("ann-perf").checked,
+    docs:           $("ann-docs").checked,
+    isa:            $("ann-isa").value || "",
+    arch:           $("ann-arch").value || "",
+    agg:            $("ann-agg").value || "avg",
+    includeModeled: $("ann-modeled").checked,
+  };
+}
+
+function persistAnnotateOpts() {
+  try { localStorage.setItem(ANN_STORAGE_KEY, JSON.stringify(readAnnotateOpts())); }
+  catch (_) { /* quota / disabled */ }
+}
+
+function persistAnnotateInput() {
+  try {
+    const v = $("ann-input").value || "";
+    if (!v) { localStorage.removeItem(ANN_INPUT_KEY); return; }
+    localStorage.setItem(ANN_INPUT_KEY, v.slice(0, ANN_INPUT_MAX));
+  } catch (_) { /* quota / disabled */ }
+}
+
+function restoreAnnotateInput() {
+  try {
+    const raw = localStorage.getItem(ANN_INPUT_KEY);
+    if (raw == null) return false;
+    $("ann-input").value = raw;
+    return true;
+  } catch (_) { return false; }
+}
+
+function restoreAnnotateOpts() {
+  try {
+    const raw = localStorage.getItem(ANN_STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (typeof saved.perf === "boolean")           $("ann-perf").checked = saved.perf;
+    if (typeof saved.docs === "boolean")           $("ann-docs").checked = saved.docs;
+    if (typeof saved.includeModeled === "boolean") $("ann-modeled").checked = saved.includeModeled;
+    if (typeof saved.agg === "string")             $("ann-agg").value = saved.agg;
+    if (typeof saved.isa === "string")             $("ann-isa").value = saved.isa;
+    if (typeof saved.arch === "string")            $("ann-arch").dataset.pendingArch = saved.arch;
+  } catch (_) { /* ignore */ }
+}
+
+let archSelectPopulated = false;
+async function populateArchSelect() {
+  if (archSelectPopulated || !catalog || !catalog.instructions) return;
+  archSelectPopulated = true;
+  // Build arch set from the search-index's `cores` / measurement uarch
+  // hints when available; otherwise peek at one chunk per isa-family.
+  // Fastest reliable source: iterate measurements we've already fetched
+  // in this session. If none yet, warm a couple of popular prefixes.
+  const uarchSet = new Set();
+  const seed = ["ADD", "VAD", "MUL", "MOV"];
+  await Promise.all(seed.map(async (p) => {
+    const chunk = await loadChunk(p).catch(() => ({}));
+    for (const rec of Object.values(chunk || {})) {
+      for (const row of (rec.measurements || [])) {
+        if (row && row.uarch) uarchSet.add(row.uarch);
+      }
+    }
+  }));
+  const sel = $("ann-arch");
+  const prior = sel.dataset.pendingArch || sel.value || "";
+  const archs = [...uarchSet].sort();
+  for (const a of archs) {
+    const opt = document.createElement("option");
+    opt.value = a; opt.textContent = a;
+    sel.appendChild(opt);
+  }
+  if (prior && archs.includes(prior)) sel.value = prior;
+  delete sel.dataset.pendingArch;
+}
+
+function escAnn(s) {
+  return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+}
+
+/* Lazy-load highlight.js (core + x86asm + armasm) from jsDelivr on the
+ * first Annotate-tab activation. Falls back to escaped plain text if
+ * the CDN is unreachable — highlighting is a nicety, not essential. */
+const HLJS_BASE = "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0";
+let _hljsPromise = null;
+function ensureHljs() {
+  if (_hljsPromise) return _hljsPromise;
+  _hljsPromise = new Promise((resolve) => {
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    const light = document.createElement("link");
+    light.id = "hljs-theme-light"; light.rel = "stylesheet";
+    light.href = `${HLJS_BASE}/styles/github.min.css`;
+    light.disabled = isDark;
+    document.head.appendChild(light);
+    const dark = document.createElement("link");
+    dark.id = "hljs-theme-dark"; dark.rel = "stylesheet";
+    dark.href = `${HLJS_BASE}/styles/github-dark.min.css`;
+    dark.disabled = !isDark;
+    document.head.appendChild(dark);
+
+    const loadScript = (src) => new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.async = true; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+
+    loadScript(`${HLJS_BASE}/highlight.min.js`)
+      .then(() => Promise.all([
+        loadScript(`${HLJS_BASE}/languages/x86asm.min.js`),
+        loadScript(`${HLJS_BASE}/languages/armasm.min.js`),
+      ]))
+      .then(() => resolve(!!window.hljs))
+      .catch(() => resolve(false));
+  });
+  return _hljsPromise;
+}
+
+function highlightAsm(text, isa) {
+  if (window.hljs) {
+    const lang = isa === "arm" ? "armasm" : "x86asm";
+    try {
+      return window.hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+    } catch (_) { /* fall through */ }
+  }
+  return escAnn(text);
+}
+
+function syncInputHighlight() {
+  const ta   = $("ann-input");
+  const code = $("ann-input-hl-code");
+  if (!ta || !code) return;
+  // Append a trailing space if the textarea ends on a newline, otherwise
+  // the mirror <pre> collapses the last empty line and scroll-syncs drift.
+  const text = ta.value.endsWith("\n") ? ta.value + " " : ta.value;
+  const isa = $("ann-isa").value || "";
+  code.innerHTML = highlightAsm(text, isa);
+  syncInputScroll();
+}
+
+function syncInputScroll() {
+  const ta = $("ann-input");
+  if (!ta) return;
+  const mirror = ta.parentElement && ta.parentElement.querySelector(".ann-input-hl");
+  if (mirror) { mirror.scrollTop = ta.scrollTop; mirror.scrollLeft = ta.scrollLeft; }
+}
+
+async function runAnnotate() {
+  const input = $("ann-input").value;
+  const out   = $("ann-output");
+  const status = $("ann-status");
+  status.textContent = "parsing…";
+  buildInstructionsByMnem();
+
+  const lines = input.split("\n");
+  const parsed = lines.map(parseAsmLine);
+  const mnems = new Set();
+  for (const p of parsed) if (p.kind === "instruction") mnems.add(p.mnemonic.toUpperCase());
+
+  const isa = $("ann-isa").value || "";
+
+  // Dedup prefix fetches up-front.
+  const prefixes = new Set();
+  for (const m of mnems) {
+    const forms = lookupForms(m, isa);
+    for (const f of forms) prefixes.add(chunkPrefix(f.mnemonic));
+  }
+  status.textContent = `fetching ${prefixes.size} chunk${prefixes.size === 1 ? "" : "s"}…`;
+  await Promise.all([...prefixes].map(p => loadChunk(p)));
+
+  // Build measurement cache keyed by instruction-record key.
+  const measurementsByKey = new Map();
+  for (const p of prefixes) {
+    const chunk = await loadChunk(p);
+    for (const [k, rec] of Object.entries(chunk || {})) {
+      if (Array.isArray(rec.measurements)) measurementsByKey.set(k, rec.measurements);
+    }
+  }
+
+  const opts = readAnnotateOpts();
+  let known = 0, unknown = 0;
+  const outLines = [];
+  for (const p of parsed) {
+    if (p.kind !== "instruction") {
+      outLines.push(highlightAsm(p.raw, isa));
+      continue;
+    }
+    const forms = lookupForms(p.mnemonic, isa);
+    const opTokens = isa === "x86" ? _operandWidthTokens(p.operands) : [];
+    const form = forms.length ? pickForm(forms, opts.arch, measurementsByKey, opTokens) : null;
+    if (!form) {
+      unknown++;
+      outLines.push(`${highlightAsm(p.raw, isa)}   <span class="hl-unknown">${p.trailing ? "" : "# ??"}</span>`);
+      continue;
+    }
+    if (!opts.perf && !opts.docs) {
+      outLines.push(highlightAsm(p.raw, isa));
+      continue;
+    }
+    const measurements = measurementsByKey.get(form.key) || [];
+    const annotation = formatAnnotation(form, measurements, opts);
+    if (!annotation || p.trailing) {
+      outLines.push(highlightAsm(p.raw, isa));
+      continue;
+    }
+    known++;
+    outLines.push(`${highlightAsm(p.raw, isa)}   <span class="hl-comment"># ${escAnn(annotation)}</span>`);
+  }
+  out.innerHTML = outLines.join("\n");
+  status.textContent = `annotated ${known} / ${known + unknown} (${unknown} unknown)`;
+}
+
+function outputAsText() {
+  // Strip highlighting spans from <pre> to get the plain .sa payload.
+  const clone = $("ann-output").cloneNode(true);
+  return clone.textContent;
+}
+
+let _annDebounce = null;
+function scheduleAutoAnnotate(delay = 350) {
+  if (_annDebounce) clearTimeout(_annDebounce);
+  _annDebounce = setTimeout(() => { _annDebounce = null; runAnnotate(); }, delay);
+}
+
+const ANN_SPLIT_KEY = "simdref:annotate:split:v1";
+function applySplit(ratio) {
+  const r = Math.min(0.85, Math.max(0.15, ratio));
+  const panes = $("ann-panes");
+  if (!panes) return;
+  panes.style.setProperty("--ann-split",   `${r}fr`);
+  panes.style.setProperty("--ann-split-r", `${1 - r}fr`);
+}
+function restoreSplit() {
+  let r = 1 / 3;  // default: left 1/3, right 2/3
+  try {
+    const raw = localStorage.getItem(ANN_SPLIT_KEY);
+    if (raw) {
+      const parsed = parseFloat(raw);
+      if (isFinite(parsed) && parsed > 0 && parsed < 1) r = parsed;
+    }
+  } catch (_) { /* ignore */ }
+  applySplit(r);
+}
+function wireSplitter() {
+  const splitter = $("ann-splitter");
+  const panes = $("ann-panes");
+  if (!splitter || !panes) return;
+  let dragging = false;
+  splitter.addEventListener("mousedown", (e) => {
+    dragging = true;
+    splitter.classList.add("dragging");
+    document.body.classList.add("ann-resizing");
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = panes.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = (e.clientX - rect.left) / rect.width;
+    applySplit(ratio);
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    splitter.classList.remove("dragging");
+    document.body.classList.remove("ann-resizing");
+    // Persist current ratio derived from the CSS var.
+    const cur = panes.style.getPropertyValue("--ann-split").trim();
+    const r = parseFloat(cur);
+    if (isFinite(r)) {
+      try { localStorage.setItem(ANN_SPLIT_KEY, String(r)); } catch (_) { /* ignore */ }
+    }
+  });
+  splitter.addEventListener("dblclick", () => {
+    applySplit(1 / 3);
+    try { localStorage.setItem(ANN_SPLIT_KEY, String(1 / 3)); } catch (_) { /* ignore */ }
+  });
+}
+
+function wireAnnotateTab() {
+  const body = document.body;
+  const tabSearch = $("tab-search");
+  const tabAnnotate = $("tab-annotate");
+
+  function setTab(name, { push = true } = {}) {
+    const active = name === "annotate" ? "annotate" : "search";
+    body.dataset.tab = active;
+    tabSearch.setAttribute("aria-selected", active === "search" ? "true" : "false");
+    tabAnnotate.setAttribute("aria-selected", active === "annotate" ? "true" : "false");
+    if (push && location.hash.replace(/^#/, "") !== (active === "annotate" ? "annotate" : "")) {
+      // Preserve hash-as-search-query for the search tab; only rewrite
+      // when leaving/entering annotate explicitly.
+      if (active === "annotate") history.replaceState(null, "", "#annotate");
+      else if (location.hash === "#annotate") history.replaceState(null, "", location.pathname);
+    }
+    if (active === "annotate") {
+      populateArchSelect();
+      ensureHljs().then((ok) => {
+        syncInputHighlight();
+        if (ok && $("ann-input").value.trim()) runAnnotate();
+      });
+      setTimeout(() => $("ann-input").focus(), 0);
+    }
+  }
+
+  tabSearch.addEventListener("click",   () => setTab("search"));
+  tabAnnotate.addEventListener("click", () => setTab("annotate"));
+
+  $("ann-run").addEventListener("click", runAnnotate);
+  $("ann-clear").addEventListener("click", () => {
+    $("ann-input").value = "";
+    $("ann-output").textContent = "";
+    $("ann-status").textContent = "";
+    syncInputHighlight();
+  });
+  $("ann-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(outputAsText());
+      $("ann-status").textContent = "copied.";
+    } catch (_) { $("ann-status").textContent = "copy failed"; }
+  });
+  $("ann-download").addEventListener("click", () => {
+    const blob = new Blob([outputAsText()], { type: "text/plain;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = "annotated.sa";
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 0);
+  });
+
+  // Persist toolbar state + auto-annotate on toolbar change.
+  for (const id of ["ann-perf", "ann-docs", "ann-modeled", "ann-isa", "ann-arch", "ann-agg"]) {
+    $(id).addEventListener("change", () => {
+      persistAnnotateOpts();
+      if (id === "ann-isa") syncInputHighlight();
+      scheduleAutoAnnotate(150);
+    });
+  }
+
+  // Auto-annotate with debounce as the user types / pastes, and keep the
+  // input's syntax-highlighted mirror in sync immediately.
+  $("ann-input").addEventListener("input", () => {
+    syncInputHighlight();
+    persistAnnotateInput();
+    scheduleAutoAnnotate();
+  });
+  $("ann-input").addEventListener("scroll", syncInputScroll);
+  // Ctrl+Enter still forces an immediate run.
+  $("ann-input").addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runAnnotate(); }
+  });
+
+  /* Ctrl+A inside the annotate panes: scope the select-all to the
+   * current pane rather than the whole document. The input textarea's
+   * native select-all already does the right thing, but the output
+   * <pre> is a focusable static element where Ctrl+A would otherwise
+   * fall through to document.execCommand('selectAll'). */
+  function selectAllIn(node) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  $("ann-output").addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      selectAllIn(e.currentTarget);
+    }
+  });
+
+  wireSplitter();
+  restoreAnnotateOpts();
+  restoreSplit();
+  const hadSavedInput = restoreAnnotateInput();
+  if (hadSavedInput) syncInputHighlight();
+
+  // Initial tab from URL hash: only #annotate activates the annotate
+  // tab; other hashes are search queries (existing behavior).
+  if (location.hash === "#annotate") setTab("annotate", { push: false });
+  else setTab("search", { push: false });
+}
+
+// Wire once the DOM is ready; the catalog may still be loading.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", wireAnnotateTab);
+} else {
+  wireAnnotateTab();
+}

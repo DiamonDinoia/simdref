@@ -10,9 +10,19 @@
   <header class="header">
     <div class="header-left">
       <span class="logo">simdref</span>
+      <nav class="tabs" role="tablist" aria-label="Main views">
+        <button id="tab-search" class="tab-btn" type="button" role="tab" aria-selected="true" data-tab="search">Search</button>
+        <button id="tab-annotate" class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="annotate">Annotate</button>
+      </nav>
     </div>
     <div class="header-right">
       <span class="meta" id="meta">Loading...</span>
+      <a class="icon-btn" href="https://github.com/DiamonDinoia/simdref" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub repository">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <a class="icon-btn" href="https://pypi.org/project/simdref/" target="_blank" rel="noreferrer" title="PyPI" aria-label="PyPI package">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 0h5.4c.9 0 1.6.7 1.6 1.6V4h-1v-.5H5v1.4h4.6c.9 0 1.6.7 1.6 1.6v3c0 .9-.7 1.6-1.6 1.6H4.2c-.9 0-1.6-.7-1.6-1.6V1.6C2.6.7 3.3 0 4.2 0zM4.3 1.2c-.3 0-.5.2-.5.5s.2.5.5.5.5-.2.5-.5-.2-.5-.5-.5zM11.8 5.5h-1v2.2H6.4v1.4h4.6c.9 0 1.6-.7 1.6-1.6V5.5zM6.4 14.8h5.4c.9 0 1.6-.7 1.6-1.6V10h-1v2.5H7.8v-1.4h4.6c.9 0 1.6-.7 1.6-1.6v-.5h-1v.5H6.4c-.9 0-1.6.7-1.6 1.6v2.1c0 .9.7 1.6 1.6 1.6zm5.3-1.3c-.3 0-.5-.2-.5-.5s.2-.5.5-.5.5.2.5.5-.2.5-.5.5z"/></svg>
+      </a>
       <button id="theme-toggle" class="icon-btn" type="button" title="Toggle dark mode (d)" aria-label="Toggle dark mode">
         <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
         <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="display:none"><path d="M13.5 8.5a5.5 5.5 0 01-7.5 2A5.5 5.5 0 018.5 2a4 4 0 005 6.5z"/></svg>
@@ -36,7 +46,7 @@
     </button>
   </div>
 
-  <div id="isa-panel" class="isa-panel">
+  <div id="isa-panel" class="isa-panel hidden">
     <div class="isa-toolbar">
       <div id="isa-families" class="isa-family-chips"></div>
       <div class="isa-presets">
@@ -82,6 +92,48 @@
       <div class="detail-empty" id="detail-empty">Select a result or search for an intrinsic / instruction.</div>
     </main>
   </div>
+
+  <section id="annotate-view" role="tabpanel" aria-labelledby="tab-annotate">
+    <div class="annotate-toolbar">
+      <label>ISA
+        <select id="ann-isa" title="Architecture family of the pasted assembly. AT&T .s from gcc/clang is usually x86.">
+          <option value="x86" selected>x86</option>
+          <option value="arm">Arm</option>
+          <option value="riscv">RISC-V</option>
+          <option value="">any</option>
+        </select>
+      </label>
+      <label>Arch
+        <select id="ann-arch" title="Pin perf to one microarch, or aggregate across all measured archs for the chosen ISA">
+          <option value="">All measured archs</option>
+        </select>
+      </label>
+      <label>Aggregation
+        <select id="ann-agg" title="How to reduce perf across archs when Arch = All">
+          <option value="avg" selected>avg</option>
+          <option value="median">median</option>
+          <option value="best">best (min)</option>
+          <option value="worst">worst (max)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="ann-perf" checked> perf</label>
+      <label><input type="checkbox" id="ann-docs" checked> docs</label>
+      <label title="Fall back to Intel-modeled numbers when no measured data exists for the mnemonic"><input type="checkbox" id="ann-modeled" checked> include modeled</label>
+      <button id="ann-run" type="button" class="primary" title="Annotate (Ctrl+Enter)">Annotate</button>
+      <button id="ann-clear" type="button" title="Clear input + output">Clear</button>
+      <button id="ann-copy" type="button" title="Copy annotated output">Copy .sa</button>
+      <button id="ann-download" type="button" title="Download annotated output as annotated.sa">Download .sa</button>
+      <span id="ann-status" class="annotate-status" aria-live="polite"></span>
+    </div>
+    <div class="annotate-panes" id="ann-panes">
+      <div class="ann-input-wrap">
+        <pre class="ann-input-hl" aria-hidden="true"><code id="ann-input-hl-code"></code></pre>
+        <textarea id="ann-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Paste GAS/AT&T .s here, e.g.&#10;&#10;    vmovups (%rdi), %ymm0&#10;    vmulps  %ymm1, %ymm0, %ymm0&#10;    vaddps  %ymm0, %ymm0, %ymm0"></textarea>
+      </div>
+      <div id="ann-splitter" class="ann-splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize"></div>
+      <pre id="ann-output" tabindex="0"></pre>
+    </div>
+  </section>
 
   <div id="shortcuts-overlay" class="overlay hidden">
     <div class="overlay-content">
