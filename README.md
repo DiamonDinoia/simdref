@@ -17,6 +17,7 @@ for LLM skills.
 
 <!-- Screenshots are hosted on the `docs-assets` branch so the main
      branch stays lightweight to clone. -->
+
 <p align="center">
   <img alt="simdref TUI" src="https://raw.githubusercontent.com/DiamonDinoia/simdref/docs-assets/img/tui.svg" width="720">
   <br><em>Interactive TUI with ISA filters, ranked results, and measured/modeled performance tables.</em>
@@ -57,6 +58,39 @@ mkdir -p ~/.claude/skills/asm-analysis && \
 
 See [`skills/asm-analysis/SKILL.md`](skills/asm-analysis/SKILL.md) for
 the full trigger list and pipeline stages.
+
+## Install the Codex skill
+
+This repo also ships the same pipeline as an OpenAI Codex plugin, so
+the one-liner install from a Codex CLI prompt is:
+
+```
+codex plugin marketplace add DiamonDinoia/simdref
+/plugins
+```
+
+Pick `asm-analysis` in the browser and enable it. Codex picks up the
+skill automatically on performance-oriented prompts (*"why is this
+loop slow"*, *"vectorise this"*, *"look at the asm"*).
+
+### Manual install (no marketplace)
+
+```bash
+# user-scoped symlink — applies to every repo, always current with main:
+git clone https://github.com/DiamonDinoia/simdref.git ~/src/simdref
+mkdir -p ~/.agents/skills
+ln -sf ~/src/simdref/codex-skills/asm-analysis/skills/asm-analysis \
+       ~/.agents/skills/asm-analysis
+
+# or scope the skill to a single repo:
+mkdir -p .agents/skills
+ln -sf ~/src/simdref/codex-skills/asm-analysis/skills/asm-analysis \
+       .agents/skills/asm-analysis
+```
+
+See
+[`codex-skills/asm-analysis/skills/asm-analysis/SKILL.md`](codex-skills/asm-analysis/skills/asm-analysis/SKILL.md)
+for the trigger list and pipeline stages.
 
 ## Install
 
@@ -184,37 +218,37 @@ and `ld` still consume it.
 
 **Commands**
 
-| Command | Description |
-|---------|-------------|
-| `isa` / `isa <query>` | Open the TUI, pre-filling the query when one is given |
-| `isa doctor` | Check the installation — pass/fail per component, non-zero exit on failure |
-| `isa update` | Download the pre-built release catalog (no `llvm-mca` required) |
-| `isa llm query <q>` | Strict lookup → JSON/NDJSON/Markdown (see [docs/LLM.md](docs/LLM.md)) |
-| `isa llm batch` | Resolve many queries from stdin in one invocation (NDJSON out) |
-| `isa llm list` | Dump the `FilterSpec` or stream matching catalog entries |
-| `isa llm schema` | Print the JSON schema for `llm` payloads |
+| Command                 | Description                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `isa` / `isa <query>`   | Open the TUI, pre-filling the query when one is given                                             |
+| `isa doctor`            | Check the installation — pass/fail per component, non-zero exit on failure                        |
+| `isa update`            | Download the pre-built release catalog (no `llvm-mca` required)                                   |
+| `isa llm query <q>`     | Strict lookup → JSON/NDJSON/Markdown (see [docs/LLM.md](docs/LLM.md))                             |
+| `isa llm batch`         | Resolve many queries from stdin in one invocation (NDJSON out)                                    |
+| `isa llm list`          | Dump the `FilterSpec` or stream matching catalog entries                                          |
+| `isa llm schema`        | Print the JSON schema for `llm` payloads                                                          |
 | `isa annotate <file.s>` | Annotate a `.s` assembly file with per-instruction summaries and latency/CPI — writes `<file>.sa` |
 
 **Dev commands**
 
-| Command | Description |
-|---------|-------------|
-| `isa build` | Full local rebuild from upstream sources, including Intel SDM parsing (`llvm-mca` 18+ required) |
-| `isa web` | Export the static web app under `web/` |
-| `isa serve` | Serve the exported web app locally (gzip-aware) |
-| `isa completion install [SHELL]` | Install shell completion into the user's profile |
-| `isa completion show [SHELL]` | Print the completion script for a shell |
+| Command                          | Description                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `isa build`                      | Full local rebuild from upstream sources, including Intel SDM parsing (`llvm-mca` 18+ required) |
+| `isa web`                        | Export the static web app under `web/`                                                          |
+| `isa serve`                      | Serve the exported web app locally (gzip-aware)                                                 |
+| `isa completion install [SHELL]` | Install shell completion into the user's profile                                                |
+| `isa completion show [SHELL]`    | Print the completion script for a shell                                                         |
 
 ## Data sources
 
-| Source | What | Entries¹ |
-|--------|------|----------|
-| Intel Intrinsics Guide | Signatures, descriptions, ISA, categories | 7,146 intrinsics |
-| uops.info | Instructions, operands, latency, throughput, ports | 22,276 instructions |
-| Arm ACLE (NEON/SVE) | Intrinsic signatures and descriptions | 10,791 intrinsics |
-| Arm AARCHMRS (A64) | Base instruction forms and operand tables | live-only² |
-| riscv-rvv-intrinsic-doc | RVV intrinsics with deterministic instruction refs | 74,319 intrinsics |
-| RISC-V unified-db | RVV instruction forms, ISA tags, Description/Operation | 2,868 instructions |
+| Source                  | What                                                   | Entries¹            |
+| ----------------------- | ------------------------------------------------------ | ------------------- |
+| Intel Intrinsics Guide  | Signatures, descriptions, ISA, categories              | 7,146 intrinsics    |
+| uops.info               | Instructions, operands, latency, throughput, ports     | 22,276 instructions |
+| Arm ACLE (NEON/SVE)     | Intrinsic signatures and descriptions                  | 10,791 intrinsics   |
+| Arm AARCHMRS (A64)      | Base instruction forms and operand tables              | live-only²          |
+| riscv-rvv-intrinsic-doc | RVV intrinsics with deterministic instruction refs     | 74,319 intrinsics   |
+| RISC-V unified-db       | RVV instruction forms, ISA tags, Description/Operation | 2,868 instructions  |
 
 ¹ Counts from the current vendored snapshot. See
 [`docs/coverage/summary.json`](docs/coverage/summary.json) for live

@@ -1,0 +1,26 @@
+{
+  "name": "asm-analysis",
+  "version": "0.0.0-dev",
+  "description": "Compile -> annotate -> profile -> llm-batch pipeline for analysing and optimising assembly. Wraps simdref's annotate, profile, and llm subcommands around gcc/objdump/perf/llvm-mca; auto-detects hot loops via CFG back-edges; proposes intrinsic-level replacements with cited latency/CPI.",
+  "author": {
+    "name": "Marco Barbone",
+    "email": "mbarbone@flatironinstitute.org"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": "https://github.com/DiamonDinoia/simdref",
+  "homepage": "https://github.com/DiamonDinoia/simdref",
+  "keywords": ["asm", "simd", "intrinsics", "performance", "x86", "arm", "riscv"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "simdref asm-analysis",
+    "shortDescription": "Analyse generated assembly and SIMD costs",
+    "longDescription": "Drives the compile -> objdump -> simdref annotate -> simdref profile -> LLM-batch pipeline. Finds hot loops from perf/VTune/uProf/llvm-mca, cites latency/CPI from uops.info, and proposes intrinsic-level rewrites.",
+    "developerName": "Marco Barbone",
+    "category": "Coding",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/DiamonDinoia/simdref",
+    "defaultPrompt": [
+      "Inspect the generated assembly for this hot loop and propose SIMD-oriented optimisations."
+    ]
+  }
+}
