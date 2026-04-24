@@ -144,15 +144,6 @@ _SIZE_SPECIFIER_RE = re.compile(
     r"\b(byte|word|dword|qword|xmmword|ymmword|zmmword)\s+ptr\b",
     re.IGNORECASE,
 )
-_SIZE_TO_BITS = {
-    "byte": "8",
-    "word": "16",
-    "dword": "32",
-    "qword": "64",
-    "xmmword": "128",
-    "ymmword": "256",
-    "zmmword": "512",
-}
 # Register classes ordered so longer/wider names match first.
 _REG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:r[abcd]x|r[sd]i|rbp|rsp|r(?:8|9|1[0-5]))\b"), "R64"),
@@ -166,30 +157,200 @@ _REG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def _operand_width_tokens(operands: str) -> list[str]:
+# ---- Operand-shape parser for variant selection ----------------------------
+#
+# We split an operand string like ``%eax, %eax`` or ``(%rdi), %xmm0`` into
+# typed slots so we can reject variants whose shape doesn't match (e.g. a
+# memory-destination form when there's no memory operand in the input) and
+# recognise zeroing idioms (``xor %eax, %eax``) by operand aliasing.
+
+
+_REG_TOKEN_RE = re.compile(
+    r"%(?P<name>"
+    r"[abcd][lh]|[sd]il|bpl|spl|r(?:8|9|1[0-5])b|"  # r8
+    r"[abcd]x|[sd]i|bp|sp|r(?:8|9|1[0-5])w|"  # r16
+    r"e[abcd]x|e[sd]i|ebp|esp|r(?:8|9|1[0-5])d|"  # r32
+    r"r[abcd]x|r[sd]i|rbp|rsp|r(?:8|9|1[0-5])|"  # r64
+    r"[xyz]mm\d+|k[0-7]"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _split_operands(operands: str) -> list[str]:
+    """Split by commas that are outside parentheses/brackets."""
+    parts: list[str] = []
+    depth = 0
+    buf: list[str] = []
+    for ch in operands:
+        if ch in "([":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _classify_operand(op: str) -> tuple[str, str | None]:
+    """Return ``(kind, reg_name_lower)`` for one operand.
+
+    ``kind`` is one of ``R8``/``R16``/``R32``/``R64``/``XMM``/``YMM``/
+    ``ZMM``/``K``/``M``/``I``/``REL``/``?``.
+    ``reg_name_lower`` is the lowercase register name when ``kind`` is a
+    register class (for alias detection), else ``None``.
+    """
+    s = op.strip()
+    if not s:
+        return "?", None
+    # AT&T immediate: $... ; Intel immediate: bare number / 0x... / '$'-less literal
+    if s.startswith("$") or re.fullmatch(r"-?0x[0-9a-fA-F]+|-?\d+", s):
+        return "I", None
+    # AT&T memory: ``(%reg)``, ``disp(%reg,%idx,scale)``, or plain symbol
+    # with a ``(...)`` section; Intel memory: ``[...]`` or explicit size ptr.
+    if "(" in s or "[" in s or _SIZE_SPECIFIER_RE.search(s):
+        return "M", None
+    # Pure register?
+    rm = _REG_TOKEN_RE.fullmatch(s) or _REG_TOKEN_RE.fullmatch("%" + s)
+    if rm:
+        name = rm.group("name").lower()
+        for regex, tok in _REG_PATTERNS:
+            if regex.fullmatch(name):
+                return tok, name
+        return "?", name
+    # Plain symbol (branch target) or unknown.
+    if re.fullmatch(r"[A-Za-z_.$][\w.$@]*", s):
+        return "REL", None
+    return "?", None
+
+
+def _operand_shape(operands: str) -> tuple[list[tuple[str, str | None]], bool]:
+    """Parse *operands* into ``(kind, reg_name)`` slots and a "aliased" flag.
+
+    ``aliased`` is true iff the expression has >= 2 register operands and
+    they all refer to the same register (e.g. ``%eax, %eax`` or
+    ``%ymm1, %ymm1, %ymm1``). This is the zeroing-idiom signal for
+    xor/pxor/vpxor/vxorps/subtract-self families on modern x86.
+    """
     if not operands:
+        return [], False
+    slots = [_classify_operand(p) for p in _split_operands(operands)]
+    reg_names = [n for k, n in slots if n is not None and k not in ("M",)]
+    aliased = len(reg_names) >= 2 and len(set(reg_names)) == 1
+    return slots, aliased
+
+
+_FORM_OPS_RE = re.compile(r"\(([^)]*)\)\s*$")
+
+
+def _form_operand_tokens(form_or_key: str) -> list[str]:
+    """Extract the comma-separated operand tokens from a catalog form/key.
+
+    For ``"XOR (R32, 0)"`` this returns ``["R32", "0"]``; for
+    ``"RET_NEAR"`` returns ``[]``. Tokens are upper-cased.
+    """
+    s = str(form_or_key or "")
+    m = _FORM_OPS_RE.search(s)
+    if not m:
         return []
-    s = operands.lower()
-    tokens: list[str] = []
-    for m in _SIZE_SPECIFIER_RE.finditer(s):
-        bits = _SIZE_TO_BITS[m.group(1).lower()]
-        tokens.append(f"M{bits}")
-    for regex, tok in _REG_PATTERNS:
-        if regex.search(s):
-            tokens.append(tok)
-    return tokens
+    inner = m.group(1)
+    return [t.strip().upper() for t in inner.split(",") if t.strip()]
 
 
-def _operand_match_score(record: InstructionRecord, tokens: list[str]) -> int:
-    if not tokens:
+def _token_matches_slot(form_tok: str, slot_kind: str) -> bool:
+    """True when a catalog operand token matches a parsed input slot kind."""
+    ft = form_tok.upper()
+    sk = slot_kind.upper()
+    if ft == sk:
+        return True
+    # Accumulator shorthand: AL/AX/EAX/RAX match Rn of same width.
+    if ft in ("AL",) and sk == "R8":
+        return True
+    if ft in ("AX",) and sk == "R16":
+        return True
+    if ft in ("EAX",) and sk == "R32":
+        return True
+    if ft in ("RAX",) and sk == "R64":
+        return True
+    # R8h/R8l both map to R8.
+    if ft in ("R8H", "R8L") and sk == "R8":
+        return True
+    # Mn forms: M32 matches a memory slot regardless of inferred width.
+    if ft.startswith("M") and sk == "M":
+        return True
+    # Immediate forms: In or the literal "0" both match an immediate slot.
+    if (ft.startswith("I") or ft == "0") and sk == "I":
+        return True
+    return False
+
+
+def _operand_match_score(
+    record: InstructionRecord,
+    slots: list[tuple[str, str | None]],
+    *,
+    aliased: bool = False,
+) -> int:
+    """Score how well *record*'s form matches the parsed input *slots*.
+
+    Exact operand-shape match dominates. Length mismatches, extra
+    memory/immediate operands the input doesn't carry, etc. are penalised.
+    When the input is an aliased-register zeroing idiom (e.g. ``xor
+    %eax, %eax``) and the form's trailing operand is the literal ``0``,
+    a strong bonus is applied so uops.info's zero-idiom rows
+    (``XOR (R32, 0)``, ``VPXOR (YMM, YMM, YMM)`` etc.) win the tiebreak.
+    """
+    form_tokens = _form_operand_tokens(getattr(record, "key", "") or "")
+    if not slots and not form_tokens:
         return 0
-    key = str(getattr(record, "key", "") or "").upper()
+    if not slots:
+        # Preserve a tiny signal so n-ary forms lose to zero-ary ones.
+        return -len(form_tokens)
+
     score = 0
-    for tok in tokens:
-        if re.search(rf"\b{tok}\b", key):
+    matched_slots = 0
+    for i, (kind, _) in enumerate(slots):
+        if i < len(form_tokens) and _token_matches_slot(form_tokens[i], kind):
             score += 10
-        elif tok.startswith("R") and ("M" + tok[1:]) in key:
+            matched_slots += 1
+        elif (
+            kind.startswith("R")
+            and i < len(form_tokens)
+            and ("M" + kind[1:]) == form_tokens[i].upper()
+        ):
+            # Register-vs-memory near-miss (e.g. mov r,r against MOV (M32, R32))
+            # still counts a little — better than an unrelated form.
             score += 2
+
+    # Penalise operand-count mismatch — heavily for extra slots in the form.
+    len_delta = len(form_tokens) - len(slots)
+    if len_delta > 0:
+        score -= 20 * len_delta
+    elif len_delta < 0:
+        score -= 5 * (-len_delta)
+
+    # If the form carries a memory operand but the input has none, reject
+    # hard — this is what made "xor %eax,%eax" resolve to "XOR (M32, R32)".
+    input_has_mem = any(k == "M" for k, _ in slots)
+    form_has_mem = any(t.startswith("M") and t not in {"MM"} for t in form_tokens)
+    if form_has_mem and not input_has_mem:
+        score -= 50
+
+    # Zero-idiom: aliased register operands, form's tail operand is 0.
+    if aliased and form_tokens and form_tokens[-1] == "0":
+        score += 30
+
+    # Fully matched every slot is meaningful: small bonus on top.
+    if matched_slots == len(slots) and matched_slots > 0:
+        score += 5
+
     return score
 
 
@@ -207,7 +368,7 @@ def pick_record(
         if pinned:
             candidates = pinned
 
-    op_tokens = _operand_width_tokens(operands)
+    slots, aliased = _operand_shape(operands)
 
     def score(rec: InstructionRecord) -> tuple[int, int, int]:
         measured = sum(
@@ -215,7 +376,7 @@ def pick_record(
             for d in (rec.arch_details or {}).values()
             if (d.get("source_kind") or "measured") == "measured"
         )
-        op_score = _operand_match_score(rec, op_tokens)
+        op_score = _operand_match_score(rec, slots, aliased=aliased)
         # Operand match dominates; measurement coverage tiebreaks.
         return (op_score, measured, len(rec.arch_details or {}))
 

@@ -92,8 +92,28 @@ def best_numeric(values: list[str]) -> str:
     return values[0]
 
 
+# Upstream uops.info measurements of control-flow instructions (RET, some
+# CALL/JMP forms) are recorded inside a call/ret loop harness, so the raw
+# ``uops`` count and ``TP_unrolled``/``TP_loop`` figures describe the
+# entire harness rather than the single measured instruction — RET_NEAR on
+# HSW reports ``uops=20``, ``TP_unrolled=33.35``. When the measurement
+# clearly can't be a single-instruction figure, drop the measured CPI
+# fields so callers fall back to modeled/IACA sources (or display ``-``).
+_HARNESS_UOPS_THRESHOLD = 8
+
+
+def _measurement_is_harness_contaminated(measurement: dict[str, Any]) -> bool:
+    try:
+        uops = int(float(measurement.get("uops", 0) or 0))
+    except (TypeError, ValueError):
+        return False
+    return uops >= _HARNESS_UOPS_THRESHOLD
+
+
 def _cpi_values(details: dict[str, Any]) -> list[str]:
     measurement = details.get("measurement") or {}
+    if _measurement_is_harness_contaminated(measurement):
+        return []
     out: list[str] = []
     for key in ("TP_unrolled", "TP_loop", "TP_ports", "TP"):
         value = measurement.get(key)

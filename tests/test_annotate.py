@@ -101,6 +101,57 @@ def test_pick_record_prefers_named_arch():
     assert pick_record([a, b], arch="ZEN4") is b
 
 
+def _xor_record(key: str) -> InstructionRecord:
+    return InstructionRecord(
+        mnemonic="XOR",
+        form=key,
+        summary="Logical Exclusive OR.",
+        arch_details={"HSW": _arch_entry("1", "0.25")},
+    )
+
+
+def test_pick_record_zero_idiom_picks_imm_zero_variant():
+    # `xor %eax, %eax` — two aliased R32 operands. The catalog has no
+    # ``(R32, R32)`` form; uops.info records this case as ``(R32, 0)``
+    # (literal imm=0). Before the fix, the picker tied on every R32-
+    # bearing form and picked ``XOR (M32, R32)`` by iteration order,
+    # giving lat=6.0 / cpi=1.10.
+    recs = [
+        _xor_record("XOR (M32, R32)"),
+        _xor_record("XOR (R32, 0)"),
+        _xor_record("XOR (R32, M32)"),
+        _xor_record("XOR (R32, I32)"),
+        _xor_record("XOR (R32, I8)"),
+    ]
+    picked = pick_record(recs, arch="HSW", operands="%eax, %eax")
+    assert picked is not None
+    assert picked.key == "XOR (R32, 0)"
+
+
+def test_pick_record_rejects_memory_form_when_no_mem_operand():
+    # `xor %rax, %rax` must not resolve to a memory-destination form.
+    recs = [
+        _xor_record("XOR (M64, R64)"),
+        _xor_record("XOR (R64, 0)"),
+        _xor_record("XOR (R64, M64)"),
+    ]
+    picked = pick_record(recs, arch="HSW", operands="%rax, %rax")
+    assert picked is not None
+    assert "M64" not in picked.key or picked.key == "XOR (R64, 0)"
+
+
+def test_pick_record_vector_zero_idiom_single_variant():
+    # vpxor %ymm1,%ymm1,%ymm1 — only one form exists, must still resolve.
+    rec = InstructionRecord(
+        mnemonic="VPXOR",
+        form="VPXOR (YMM, YMM, YMM)",
+        summary="Packed XOR.",
+        arch_details={"HSW": _arch_entry("1", "0.33")},
+    )
+    picked = pick_record([rec], arch="HSW", operands="%ymm1, %ymm1, %ymm1")
+    assert picked is rec
+
+
 def test_format_annotation_has_summary_and_perf():
     rec = _make_record(
         arch_details={

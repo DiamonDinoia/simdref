@@ -73,6 +73,24 @@ class PerfTests(unittest.TestCase):
         }
         self.assertEqual(best_cpi(arch_details), "0.5")
 
+    def test_best_cpi_drops_harness_contaminated_measurement(self):
+        # Upstream uops.info records RET inside a call/ret loop harness;
+        # the raw measurement block reports harness-wide ``uops=20`` with
+        # ``TP_unrolled=33.35``. That figure is meaningless for the lone
+        # ret, so ``_cpi_values`` must drop the measurement and let the
+        # caller surface "-" rather than a nonsense CPI.
+        arch_details = {
+            "HSW": {
+                "measurement": {
+                    "TP_loop": "28.91",
+                    "TP_ports": "3.00",
+                    "TP_unrolled": "33.35",
+                    "uops": "20",
+                },
+            },
+        }
+        self.assertEqual(best_cpi(arch_details), "-")
+
     def test_variant_perf_summary(self):
         arch_details = {
             "SKL": {
