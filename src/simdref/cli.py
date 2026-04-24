@@ -182,30 +182,75 @@ def _release_asset_url(tag: str, asset_name: str) -> str:
 
 
 def _download_from_release() -> None:
-    """Download pre-built catalog and database from GitHub Release."""
+    """Download pre-built catalog and database from GitHub Release.
+
+    Emits a Rich progress bar (bytes + transfer speed + ETA) on a TTY.
+    In non-TTY contexts (CI, agent harnesses) falls back to one plain
+    ``downloading X... N.N MB`` line per asset at completion so log
+    scrapers observe that something is happening — issue #5.
+    """
     from simdref.storage import ensure_dir
 
     ensure_dir(DATA_DIR)
 
-    for asset in ("catalog.msgpack", "catalog.db"):
-        dest = DATA_DIR / asset
+    is_tty = err_console.is_terminal and os.environ.get("GITHUB_ACTIONS") != "true"
+
+    def _fetch_into(asset: str, dest: Path) -> bool:
         for tag in _release_tag_candidates():
             url = _release_asset_url(tag, asset)
-            err_console.print(f"downloading {asset} from {tag}...", style="dim")
             try:
                 with httpx.stream("GET", url, follow_redirects=True, timeout=120) as resp:
+                    if resp.status_code == 404:
+                        continue
                     resp.raise_for_status()
-                    with open(dest, "wb") as f:
-                        for chunk in resp.iter_bytes(chunk_size=1024 * 64):
-                            f.write(chunk)
-                break
+                    total_header = resp.headers.get("content-length")
+                    total = int(total_header) if total_header and total_header.isdigit() else None
+
+                    if is_tty:
+                        progress = Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            DownloadColumn(),
+                            TransferSpeedColumn(),
+                            TimeRemainingColumn(),
+                            console=err_console,
+                            transient=True,
+                        )
+                        with progress:
+                            task = progress.add_task(f"downloading {asset} ({tag})", total=total)
+                            with open(dest, "wb") as f:
+                                for chunk in resp.iter_bytes(chunk_size=1024 * 64):
+                                    f.write(chunk)
+                                    progress.update(task, advance=len(chunk))
+                    else:
+                        err_console.print(f"downloading {asset} from {tag}...", style="dim")
+                        written = 0
+                        with open(dest, "wb") as f:
+                            for chunk in resp.iter_bytes(chunk_size=1024 * 64):
+                                f.write(chunk)
+                                written += len(chunk)
+                        if total:
+                            err_console.print(
+                                f"downloaded {asset}: {written / 1_048_576:.1f} MB "
+                                f"({written}/{total} bytes)", style="dim")
+                        else:
+                            err_console.print(
+                                f"downloaded {asset}: {written / 1_048_576:.1f} MB", style="dim")
+                    return True
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
                     continue
-                err_console.print(f"failed to download {asset}: {exc.response.status_code}", style="red")
+                err_console.print(
+                    f"failed to download {asset}: {exc.response.status_code}", style="red")
                 raise typer.Exit(code=1) from exc
-        else:
-            err_console.print(f"failed to download {asset}: no compatible release asset found", style="red")
+        return False
+
+    for asset in ("catalog.msgpack", "catalog.db"):
+        dest = DATA_DIR / asset
+        if not _fetch_into(asset, dest):
+            err_console.print(
+                f"failed to download {asset}: no compatible release asset found", style="red")
             err_console.print("try 'simdref build' to build locally", style="yellow")
             raise typer.Exit(code=1)
     err_console.print("download complete", style="green")
@@ -411,16 +456,26 @@ def _download_release_or_fallback(*, man_dir: Path) -> None:
 
 
 def _bootstrap_interactive() -> None:
-    """Bootstrap runtime data with a lightweight default path."""
-    err_console.print("\n[bold]No catalog found.[/bold] Downloading pre-built data if available...\n")
-    # Harnesses that capture only stdout see nothing of the stderr Rich
-    # progress bar; emit one-line start/end markers on stdout in non-TTY
-    # contexts so callers can observe that the download is running.
-    non_tty = not sys.stdout.isatty()
-    if non_tty:
+    """Bootstrap runtime data with a lightweight default path.
+
+    Emits an explicit banner on stderr (Rich) and stdout (plain) so
+    harnesses that capture only one stream can still observe that
+    simdref is doing a one-time catalog download — issue #5.
+    """
+    err_console.print(
+        "\n[bold]No catalog found.[/bold] Running one-time bootstrap: "
+        "downloading pre-built data (~minutes on first run)...\n"
+    )
+    err_console.print(f"  target: {DATA_DIR}", style="dim")
+    err_console.print(
+        "  to pre-fetch explicitly next time, run [cyan]simdref update[/cyan].\n",
+        style="dim",
+    )
+    non_tty_stdout = not sys.stdout.isatty()
+    if non_tty_stdout:
         typer.echo(f"simdref: bootstrapping catalog (downloading release assets to {DATA_DIR}) ...")
     _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
-    if non_tty:
+    if non_tty_stdout:
         typer.echo("simdref: catalog bootstrap complete")
 
 
