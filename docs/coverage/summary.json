@@ -1,24 +1,49 @@
 {
   "catalog": {
-    "generated_at": "2026-04-21T06:58:59+00:00",
-    "instructions": 22299,
-    "intrinsics": 18568
+    "generated_at": "2026-04-21T15:44:44+00:00",
+    "instructions": 29423,
+    "intrinsics": 92256
   },
   "sources": {
     "arm-a64": {
-      "coverage": 1.0,
+      "coverage": 0.9823182711198428,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "fixture:arm_a64_instructions_sample.json",
-      "fetched_version": "fixture",
+      "fetched_url": "/home/marco/repos/simdref/vendor/arm/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz",
+      "fetched_version": "archive:AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz:Instructions.json",
       "label": "Arm AARCHMRS A64",
-      "local": 2,
-      "matched": 2,
-      "missing_sample": [],
-      "missing_total": 0,
+      "local": 1500,
+      "matched": 1500,
+      "missing_sample": [
+        "ADDHN",
+        "BC",
+        "BTI",
+        "CLREX",
+        "ISB",
+        "RADDHN",
+        "RET",
+        "RSHRN",
+        "RSUBHN",
+        "SABDL",
+        "SADDL",
+        "SADDW",
+        "SHLL",
+        "SHRN",
+        "SMULL",
+        "SSHLL",
+        "SSUBL",
+        "SSUBW",
+        "SUBHN",
+        "UABDL",
+        "UADDL",
+        "UADDW",
+        "UMULL",
+        "USHLL",
+        "USUBL"
+      ],
+      "missing_total": 27,
       "threshold": 0.9,
-      "upstream": 2,
-      "used_fixture": true
+      "upstream": 1527
     },
     "arm-intrinsics": {
       "coverage": 0.6998341625207297,
@@ -50,7 +75,7 @@
         "svabalb_s64"
       ],
       "extra_total": 6149,
-      "fetched_url": "/home/runner/work/simdref/simdref/vendor/arm",
+      "fetched_url": "/home/marco/repos/simdref/vendor/arm",
       "fetched_version": "local-json-bundle",
       "label": "Arm ACLE intrinsics",
       "local": 10791,
@@ -84,53 +109,49 @@
       ],
       "missing_total": 1991,
       "threshold": 0.65,
-      "upstream": 6633,
-      "used_fixture": false
+      "upstream": 6633
     },
     "intel-intrinsics": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip",
-      "fetched_version": "offline-zip-download",
+      "fetched_url": "/home/marco/repos/simdref/vendor/intel/Intel-Intrinsics-Guide-Offline-3.6.9.zip",
+      "fetched_version": "offline-package:Intel-Intrinsics-Guide-Offline-3.6.9",
       "label": "Intel Intrinsics Guide",
-      "local": 7381,
-      "matched": 7381,
+      "local": 7126,
+      "matched": 7126,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 7381,
-      "used_fixture": false
+      "upstream": 7126
     },
     "riscv-rvv": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "fixture:riscv_rvv_intrinsics_sample.json",
-      "fetched_version": "fixture",
+      "fetched_url": "/home/marco/repos/simdref/vendor/riscv/rvv_intrinsics_bundle.json",
+      "fetched_version": "local-json:rvv_intrinsics_bundle.json",
       "label": "RISC-V RVV intrinsics",
-      "local": 20,
-      "matched": 20,
+      "local": 74319,
+      "matched": 74319,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 20,
-      "used_fixture": true
+      "upstream": 74319
     },
     "riscv-unified-db": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "fixture:riscv_unified_db_sample.json",
-      "fetched_version": "fixture",
+      "fetched_url": "/home/marco/repos/simdref/vendor/riscv/unified_db_bundle.json",
+      "fetched_version": "local-json:unified_db_bundle.json",
       "label": "RISC-V unified DB",
-      "local": 16,
-      "matched": 16,
+      "local": 672,
+      "matched": 672,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 16,
-      "used_fixture": true
+      "upstream": 672
     },
     "uops-info": {
       "coverage": 0.9942074776197999,
@@ -162,8 +183,8 @@
         "REPE CMPSW"
       ],
       "extra_total": 670,
-      "fetched_url": "https://uops.info/instructions.xml",
-      "fetched_version": "live",
+      "fetched_url": "/home/marco/repos/simdref/vendor/uops/instructions.xml",
+      "fetched_version": "local-xml:instructions.xml",
       "label": "uops.info instructions.xml",
       "local": 2558,
       "matched": 1888,
@@ -182,8 +203,7 @@
       ],
       "missing_total": 11,
       "threshold": 0.98,
-      "upstream": 1899,
-      "used_fixture": false
+      "upstream": 1899
     }
   }
 }

@@ -112,24 +112,109 @@ def _extract_arm_a64_mnemonics(text: str) -> set[str]:
 
     names: set[str] = set()
 
-    def _walk(node: Any) -> None:
+    def _is_aarchmrs(node: Any) -> bool:
+        if not isinstance(node, dict):
+            return False
+        top = node.get("instructions")
+        if not isinstance(top, list) or not top:
+            return False
+        return all(
+            isinstance(n, dict) and str(n.get("_type", "")).endswith("InstructionSet")
+            for n in top
+        )
+
+    def _first_literal_mnemonic(assembly: Any) -> str | None:
+        """Pull the first Literal token out of an AARCHMRS assembly symbols
+        list. That token is the mnemonic; everything after it (spaces,
+        operands, rule references) is irrelevant here."""
+        if not isinstance(assembly, dict):
+            return None
+        symbols = assembly.get("symbols")
+        if not isinstance(symbols, list):
+            return None
+        for sym in symbols:
+            if not isinstance(sym, dict):
+                continue
+            if not str(sym.get("_type", "")).endswith("Literal"):
+                continue
+            value = str(sym.get("value", "")).strip()
+            if not value:
+                continue
+            token = value.split()[0].upper()
+            if re.fullmatch(r"[A-Z][A-Z0-9]*", token):
+                return token
+            return None
+        return None
+
+    def _walk_aarchmrs(node: Any, in_a64: bool = False) -> None:
+        """AARCHMRS FAT archives contain A64, A32 and T32 InstructionSets.
+        The ``arm-a64`` source only covers AArch64, so scope the walk to the
+        A64 subtree."""
+        if isinstance(node, dict):
+            node_type = str(node.get("_type", ""))
+            if node_type.endswith("InstructionSet"):
+                name = str(node.get("name") or "").strip().upper()
+                in_a64 = name == "A64"
+                for child in node.get("children") or []:
+                    _walk_aarchmrs(child, in_a64)
+                return
+            if not in_a64:
+                return
+            if node_type.endswith("Instruction") and not node_type.endswith("InstructionAlias"):
+                mnemonic = _first_literal_mnemonic(node.get("assembly"))
+                if mnemonic:
+                    names.add(mnemonic)
+                return
+            if node_type.endswith("InstructionAlias"):
+                return
+            for child in node.get("children") or []:
+                _walk_aarchmrs(child, in_a64)
+        elif isinstance(node, list):
+            for item in node:
+                _walk_aarchmrs(item, in_a64)
+
+    def _walk_aarchmrs_root(payload: Any) -> None:
+        if isinstance(payload, dict) and isinstance(payload.get("instructions"), list):
+            for top in payload["instructions"]:
+                _walk_aarchmrs(top, in_a64=False)
+
+    def _walk_fallback(node: Any) -> None:
+        """For non-AARCHMRS payloads (fixtures, ``instructions_json`` wrappers):
+        trust explicit ``mnemonic`` / ``name`` fields on dict entries."""
         if isinstance(node, dict):
             for key in ("mnemonic", "name"):
                 val = node.get(key)
                 if isinstance(val, str) and val:
                     names.add(val.split()[0].upper())
-            if "instructions_json" in node and isinstance(node["instructions_json"], str):
+            if isinstance(node.get("instructions_json"), str):
                 try:
-                    _walk(json.loads(node["instructions_json"]))
+                    _walk_fallback(json.loads(node["instructions_json"]))
                 except Exception:
                     pass
             for v in node.values():
-                _walk(v)
+                _walk_fallback(v)
         elif isinstance(node, list):
             for item in node:
-                _walk(item)
+                _walk_fallback(item)
 
-    _walk(payload)
+    if _is_aarchmrs(payload):
+        _walk_aarchmrs_root(payload)
+    elif (
+        isinstance(payload, dict)
+        and payload.get("format") == "arm-aarchmrs-instructions-v1"
+        and isinstance(payload.get("instructions_json"), str)
+    ):
+        try:
+            inner = json.loads(payload["instructions_json"])
+        except Exception:
+            inner = None
+        if _is_aarchmrs(inner):
+            _walk_aarchmrs_root(inner)
+        else:
+            _walk_fallback(inner)
+    else:
+        _walk_fallback(payload)
+
     return {n for n in names if re.fullmatch(r"[A-Z][A-Z0-9]*", n)}
 
 
