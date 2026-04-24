@@ -94,6 +94,32 @@ from simdref.storage import (
 from simdref.web import export_web
 
 
+def _tui_preset_pref_path() -> "Path":
+    """Location of the persisted last-used TUI preset."""
+    from pathlib import Path
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    return Path(base) / "simdref" / "last-preset"
+
+
+def _load_last_preset() -> str | None:
+    try:
+        text = _tui_preset_pref_path().read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+    return text or None
+
+
+def _save_last_preset(name: str) -> None:
+    try:
+        path = _tui_preset_pref_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name.strip() + "\n", encoding="utf-8")
+    except OSError:
+        pass  # best-effort — preset persistence must not break startup
+
+
 def _run_tui(
     *,
     initial_query: str = "",
@@ -102,6 +128,11 @@ def _run_tui(
     initial_asm: str = "",
 ):
     from simdref.tui import run_tui
+
+    # Preset precedence: explicit --preset wins, then last-used from state
+    # file, then "intel" as first-run default.
+    if initial_preset is None:
+        initial_preset = _load_last_preset() or "intel"
 
     return run_tui(
         initial_query=initial_query,
@@ -1956,6 +1987,8 @@ def main() -> int:
         )
     if not argv:
         ensure_runtime()
-        return _run_tui(initial_preset=initial_preset or "intel")
+        # Pass initial_preset through verbatim — _run_tui handles the
+        # (explicit --preset > last-used state > "intel") precedence.
+        return _run_tui(initial_preset=initial_preset)
     app()
     return 0

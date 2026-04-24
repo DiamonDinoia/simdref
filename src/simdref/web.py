@@ -25,6 +25,7 @@ from pathlib import Path
 
 from simdref import __version__
 from simdref.filters import FilterSpec, CategorySpec
+from simdref.ui_labels import as_json_dict as _ui_labels_payload
 from simdref.models import Catalog
 from simdref.display import (
     display_architecture,
@@ -41,12 +42,21 @@ from simdref.storage import derive_arm_arch
 
 
 def _load_template() -> str:
-    """Assemble the HTML template from shell + CSS + JS source files."""
+    """Assemble the HTML template from shell + CSS + JS source files.
+
+    Injects ``UI_LABELS`` + ``KEYMAP`` as a ``window.SIMDREF_UI`` JSON blob
+    before the app script so the SPA and TUI share the same vocabulary.
+    """
     tpl = resources.files("simdref.templates")
     html = tpl.joinpath("index.html").read_text()
     css = tpl.joinpath("style.css").read_text()
     js = tpl.joinpath("app.js").read_text()
-    return html.replace("/* __CSS__ */", css).replace("/* __JS__ */", js)
+    ui_blob = json.dumps(_ui_labels_payload(), separators=(",", ":"))
+    js_with_labels = f"window.SIMDREF_UI = {ui_blob};\n{js}"
+    return (
+        html.replace("/* __CSS__ */", css)
+            .replace("/* __JS__ */", js_with_labels)
+    )
 
 
 def _latency_value(latencies: list[dict]) -> str:

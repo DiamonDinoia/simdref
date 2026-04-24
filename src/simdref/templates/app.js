@@ -40,7 +40,7 @@ const LOAD_MORE_THRESHOLD_PX = 600;
 /* Viewport virtualisation — keep only rows inside the visible window
  * (plus a small buffer) in the DOM. Row height must match .result in
  * style.css. */
-const ROW_HEIGHT_PX = 88;
+const ROW_HEIGHT_PX = 56;
 const VIEWPORT_BUFFER_ROWS = 30;
 let virtualWrap = null;
 let virtualRange = { start: -1, end: -1 };
@@ -1420,13 +1420,21 @@ detailNode.addEventListener("click", (e) => {
 
 /* ── ISA panel toggle ─────────────────────────────────────────────── */
 $("isa-toggle").addEventListener("click", () => isaPanel.classList.toggle("hidden"));
-$("isa-default").addEventListener("click", () => applyIsaPreset("default"));
-if ($("isa-intel")) $("isa-intel").addEventListener("click", () => applyIsaPreset("intel"));
-if ($("isa-arm32")) $("isa-arm32").addEventListener("click", () => applyIsaPreset("arm32"));
-if ($("isa-arm64")) $("isa-arm64").addEventListener("click", () => applyIsaPreset("arm64"));
-if ($("isa-riscv")) $("isa-riscv").addEventListener("click", () => applyIsaPreset("riscv"));
-$("isa-none").addEventListener("click", () => applyIsaPreset("none"));
-$("isa-all").addEventListener("click", () => applyIsaPreset("all"));
+
+/* Apply a preset from a user click: re-apply and persist so the next
+   visit lands on the same preset. ``none`` and ``all`` are persisted too
+   — if the user explicitly asked for those, respect it. */
+function _pickPreset(name) {
+  applyIsaPreset(name);
+  try { localStorage.setItem("simdref-last-preset", name); } catch (_) { /* ignore */ }
+}
+$("isa-default").addEventListener("click", () => _pickPreset("default"));
+if ($("isa-intel")) $("isa-intel").addEventListener("click", () => _pickPreset("intel"));
+if ($("isa-arm32")) $("isa-arm32").addEventListener("click", () => _pickPreset("arm32"));
+if ($("isa-arm64")) $("isa-arm64").addEventListener("click", () => _pickPreset("arm64"));
+if ($("isa-riscv")) $("isa-riscv").addEventListener("click", () => _pickPreset("riscv"));
+$("isa-none").addEventListener("click", () => _pickPreset("none"));
+$("isa-all").addEventListener("click", () => _pickPreset("all"));
 
 /* Kind filter — intrinsics vs instructions/asm */
 for (const cb of document.querySelectorAll('#kind-bar input[data-kind]')) {
@@ -1560,16 +1568,19 @@ Promise.all([
     renderCategoryFilters();
     updateCategorySummary();
 
-    // Apply ?preset=NAME from URL, else default to "intel" for a
-    // more responsive first load (smaller result set, fewer chips).
+    // Preset selection precedence:
+    //   1. ?preset=NAME URL param (always wins — shareable link)
+    //   2. last-used preset in localStorage (remember the user's choice)
+    //   3. "intel" on first load (smaller result set, fewer chips)
     try {
       const params = new URLSearchParams(location.search);
-      const presetName = params.get("preset");
-      if (presetName && ARCH_PRESETS[presetName]) {
-        applyIsaPreset(presetName);
-      } else if (ARCH_PRESETS["intel"]) {
-        applyIsaPreset("intel");
-      }
+      const urlPreset = params.get("preset");
+      let stored = null;
+      try { stored = localStorage.getItem("simdref-last-preset"); } catch (_) { /* ignore */ }
+      const candidate = (urlPreset && ARCH_PRESETS[urlPreset]) ? urlPreset
+                      : (stored && ARCH_PRESETS[stored]) ? stored
+                      : (ARCH_PRESETS["intel"] ? "intel" : null);
+      if (candidate) applyIsaPreset(candidate);
     } catch (_) { /* ignore malformed URL */ }
 
     rebuildVisibleSet();

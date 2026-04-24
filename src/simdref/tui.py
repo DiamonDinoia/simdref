@@ -139,6 +139,7 @@ from simdref.storage import (
 )
 
 from simdref.models import InstructionRecord, IntrinsicRecord
+from simdref.ui_labels import UI_LABELS
 
 _INITIAL_RESULT_BATCH = 50
 _RESULT_BATCH_SIZE = 10
@@ -569,14 +570,42 @@ class SearchInput(Input):
 
 
 class ResultItem(ListItem):
-    """A search result list item carrying the underlying SearchResult."""
+    """A search result list item carrying the underlying SearchResult.
+
+    Row format (single line, plus a dim summary on a second line): the
+    mnemonic/name on the left, then a right-aligned ``kind · arch · ISA · perf``
+    strip. Perf slots (``lat``/``tput``) are emitted only when present —
+    missing values are not rendered as "—" (prevents noise on Arm/RISC-V
+    rows where perf is usually absent).
+    """
 
     def __init__(self, result: SearchResult, index: int) -> None:
         self.result = result
         title_color = "cyan" if result.kind == "intrinsic" else "magenta"
         subtitle = (result.subtitle or "").split("\n")[0]
-        label = f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]  [dim italic]{subtitle}[/]"
-        super().__init__(Static(label, markup=True))
+        # Right-side chips. ``arch`` / ``isa`` come off the SearchResult
+        # if present; perf only if non-empty / non-placeholder.
+        chips: list[str] = [f"[dim]{result.kind}[/]"]
+        arch = getattr(result, "architecture", "") or getattr(result, "arch", "")
+        if arch:
+            chips.append(f"[dim]{arch}[/]")
+        isa = getattr(result, "isa_display", "") or ""
+        if isa:
+            chips.append(f"[dim]{isa}[/]")
+        lat = getattr(result, "lat", "") or ""
+        cpi = getattr(result, "cpi", "") or ""
+        if lat and lat != "-":
+            chips.append(f"[yellow]lat {lat}c[/]")
+        if cpi and cpi != "-":
+            chips.append(f"[yellow]tput {cpi}[/]")
+        right = "  ".join(chips)
+        head = (
+            f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]"
+            f"    {right}"
+        )
+        if subtitle:
+            head = f"{head}\n     [dim italic]{subtitle}[/]"
+        super().__init__(Static(head, markup=True))
 
 
 class _AnnInput(TextArea):
@@ -842,9 +871,11 @@ class SimdrefApp(App):
         margin: 0 0 0 1;
         text-style: bold;
     }
+    /* Plan: results + detail each get 1fr of remaining vertical space;
+       the 20% cap used to leave ~8 rows on a 40-row terminal. The two
+       panes now share the leftover rows evenly. */
     #results-list {
-        height: auto;
-        max-height: 20%;
+        height: 1fr;
         border: solid $accent;
         margin: 0 1;
         overflow-y: scroll;
@@ -954,8 +985,8 @@ class SimdrefApp(App):
                 yield VerticalScroll(id="sub-isa-container")
                 with Horizontal(id="kind-bar"):
                     yield ToggleAllLabel("Kind:", classes="isa-label", id="kind-label")
-                    yield KindToggle("intrinsic", "intrinsics", enabled="intrinsic" in self._enabled_kinds)
-                    yield KindToggle("instruction", "asm", enabled="instruction" in self._enabled_kinds)
+                    yield KindToggle("intrinsic", UI_LABELS["kind_intrinsic"].lower(), enabled="intrinsic" in self._enabled_kinds)
+                    yield KindToggle("instruction", UI_LABELS["kind_instruction"].lower(), enabled="instruction" in self._enabled_kinds)
                 yield ListView(id="results-list")
                 yield VerticalScroll(id="detail-scroll")
             with Vertical(id="view-annotate"):
@@ -967,16 +998,16 @@ class SimdrefApp(App):
                         allow_blank=False,
                         id="ann-isa",
                     )
-                    yield Label("Agg")
+                    yield Label(UI_LABELS["aggregation"])
                     yield Select(
                         [("avg", "avg"), ("median", "median"), ("best", "best"), ("worst", "worst")],
                         value="avg",
                         allow_blank=False,
                         id="ann-agg",
                     )
-                    yield Checkbox("perf", value=True, id="ann-perf")
-                    yield Checkbox("docs", value=True, id="ann-docs")
-                    yield Checkbox("modeled", value=True, id="ann-modeled")
+                    yield Checkbox(UI_LABELS["toggle_perf"], value=True, id="ann-perf")
+                    yield Checkbox(UI_LABELS["toggle_docs"], value=True, id="ann-docs")
+                    yield Checkbox(UI_LABELS["toggle_modeled"], value=True, id="ann-modeled")
                     yield Button("Annotate", id="ann-run", variant="primary")
                     yield Button("Clear", id="ann-clear")
                 with Horizontal(id="ann-panes"):
@@ -1258,8 +1289,18 @@ class SimdrefApp(App):
 
     @on(PresetButton.Clicked)
     def on_preset_clicked(self, event: PresetButton.Clicked) -> None:
-        """Apply ISA presets — families + subs + arm_arch + kind in one step."""
+        """Apply ISA presets — families + subs + arm_arch + kind in one step.
+
+        Also persist the choice so the next ``isa`` launch lands on the same
+        preset (see ``_save_last_preset`` in ``cli.py``).
+        """
         from simdref.filters import ARCH_PRESETS
+
+        try:
+            from simdref.cli import _save_last_preset
+            _save_last_preset(event.mode)
+        except Exception:
+            pass  # best-effort; must not break preset application
 
         preset = ARCH_PRESETS.get(event.mode) or ARCH_PRESETS["default"]
         if event.mode == "all":
@@ -1368,7 +1409,11 @@ class SimdrefApp(App):
         for i, result in enumerate(results, 1):
             results_list.append(ResultItem(result, i))
         suffix = " +" if self._has_more_results else ""
-        self.query_one("#status-label", Label).update(f"  {len(results)}{suffix} results for '{query}'")
+        if not results:
+            status_text = f"  {UI_LABELS['no_matches']} for '{query}'"
+        else:
+            status_text = f"  {len(results)}{suffix} {UI_LABELS['results_for']} '{query}'"
+        self.query_one("#status-label", Label).update(status_text)
         if results:
             results_list.index = 0
             self._show_detail(results[0])

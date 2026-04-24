@@ -278,7 +278,7 @@ body {
 }
 .isa-group {
   display: grid;
-  grid-template-columns: 5.5rem minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   column-gap: 0.5rem;
   row-gap: 0.2rem;
@@ -354,20 +354,25 @@ body {
   outline: none;
 }
 .result {
-  padding: 0.5rem 0.75rem;
+  padding: 0.35rem 0.75rem;
   border-left: 3px solid transparent;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
-  /* Fixed height enables O(1) viewport virtualisation (see app.js). */
+  /* Fixed height enables O(1) viewport virtualisation (see app.js).
+     Must match ROW_HEIGHT_PX there. */
   box-sizing: border-box;
-  height: 88px;
+  height: 56px;
   overflow: hidden;
   contain: layout paint style;
-  /* Skip layout + paint for rows outside the viewport. The fixed
-   * 88px intrinsic-size tells the browser not to reflow the page
-   * when a row enters/leaves view. */
   content-visibility: auto;
-  contain-intrinsic-size: 88px;
+  contain-intrinsic-size: 56px;
+}
+.result-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
 }
 .results-virtual {
   position: relative;
