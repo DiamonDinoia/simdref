@@ -667,33 +667,103 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _smart_lookup(query: str, preset: str | None = None) -> int:
-    """Open the TUI pre-filled with the given query.
+def _smart_lookup(
+    query: str,
+    preset: str | None = None,
+    arch: str | None = None,
+    as_json: bool = False,
+) -> int:
+    """Dispatch a bare query.
 
-    When stdio is not a TTY (agent harness, CI, pipe) the TUI would block
-    forever waiting on terminal input, so instead we print a plain-text
-    summary of the best-matching instruction to stdout and exit.
+    If ``query`` resolves to known instruction records, print a plain-text
+    (or JSON) summary to stdout and exit — never blocks on a TUI. Only
+    open the TUI when the query is unknown and stdio is a TTY, so the user
+    can explore; in non-TTY contexts an unknown query exits with code 2.
     """
     ensure_runtime()
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return _print_non_interactive_summary(query)
-    return _run_tui(initial_query=query, initial_preset=preset)
-
-
-def _print_non_interactive_summary(query: str) -> int:
-    """Plain-text fallback for bare queries in non-TTY contexts.
-
-    Returns 0 on match, 2 on no match (mirrors `simdref llm` exit codes).
-    """
-    from simdref.annotate import aggregate_perf, collect_ports, _fmt_num
-
     records = _find_instructions_fast(query)
-    if not records:
+    if records:
+        return _print_non_interactive_summary(query, records=records, arch=arch, as_json=as_json)
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
         err_console.print(
-            f"no instruction match for {query!r} (non-interactive; run in a TTY for TUI search).",
+            f"no instruction match for {query!r} (non-interactive; run in a TTY to search).",
             style="yellow",
         )
         return 2
+    return _run_tui(initial_query=query, initial_preset=preset)
+
+
+def _print_non_interactive_summary(
+    query: str,
+    *,
+    records=None,
+    arch: str | None = None,
+    as_json: bool = False,
+) -> int:
+    """Plain-text (or JSON) fallback for bare queries.
+
+    Returns 0 on match, 2 on no match (mirrors `simdref llm` exit codes).
+    When ``arch`` is set, emits per-arch lat/cpi pinned to that arch;
+    otherwise reports the average across all archs with measured data.
+    """
+    from simdref.annotate import aggregate_perf, arch_perf, collect_ports, _fmt_num
+    from simdref.perf_sources.cores import canonical_core_id, supported_core_ids
+
+    canonical_arch: str | None = None
+    if arch is not None:
+        canonical_arch = canonical_core_id(arch)
+        if canonical_arch is None:
+            err_console.print(
+                f"arch {arch!r} is not in the local catalog.", style="red"
+            )
+            err_console.print(
+                f"supported cores: {', '.join(supported_core_ids())}", style="yellow"
+            )
+            return 1
+
+    if records is None:
+        records = _find_instructions_fast(query)
+    if not records:
+        err_console.print(f"no instruction match for {query!r}", style="yellow")
+        return 2
+
+    if as_json:
+        import json as _json
+        payload = {
+            "query": query,
+            "arch": canonical_arch,
+            "variants": [],
+        }
+        for rec in records:
+            iter_archs = [canonical_arch] if canonical_arch else sorted((rec.arch_details or {}).keys())
+            per_arch = []
+            for core in iter_archs:
+                if core is None:
+                    continue
+                lat, cpi, kind = arch_perf(rec, core)
+                ports = collect_ports(rec, arch=core, archs_used=[core])
+                per_arch.append({
+                    "arch": core,
+                    "latency_cycles": lat,
+                    "tput_cpi": cpi,
+                    "source_kind": kind,
+                    "ports": ports,
+                })
+            summary = aggregate_perf(rec, mode="avg", include_modeled=False)
+            payload["variants"].append({
+                "key": rec.key,
+                "summary": (rec.summary or "").strip() or None,
+                "aggregate": {
+                    "latency_cycles": summary.latency,
+                    "tput_cpi": summary.cpi,
+                    "n_archs": summary.n_archs,
+                    "source_kind": summary.source_kind,
+                    "archs_used": summary.archs_used,
+                },
+                "per_arch": per_arch,
+            })
+        typer.echo(_json.dumps(payload, indent=2, default=str))
+        return 0
 
     typer.echo(f"# {query}  ({len(records)} variant{'s' if len(records) != 1 else ''})")
     for rec in records:
@@ -701,15 +771,24 @@ def _print_non_interactive_summary(query: str) -> int:
         typer.echo(f"[{rec.key}]")
         if rec.summary:
             typer.echo(f"  {rec.summary.strip()}")
-        summary = aggregate_perf(rec, mode="avg", include_modeled=False)
-        ports = collect_ports(rec, arch=None, archs_used=summary.archs_used)
-        ports_str = ",".join(ports) if ports else "-"
-        typer.echo(
-            f"  avg over {summary.n_archs} arch(s) [{summary.source_kind}]: "
-            f"lat={_fmt_num(summary.latency)}c cpi={_fmt_num(summary.cpi)} ports={ports_str}"
-        )
-        if summary.archs_used:
-            typer.echo(f"  archs: {', '.join(summary.archs_used)}")
+        if canonical_arch is not None:
+            lat, cpi, kind = arch_perf(rec, canonical_arch)
+            ports = collect_ports(rec, arch=canonical_arch, archs_used=[canonical_arch])
+            ports_str = ",".join(ports) if ports else "-"
+            typer.echo(
+                f"  {canonical_arch} [{kind}]: "
+                f"lat={_fmt_num(lat)}c cpi={_fmt_num(cpi)} ports={ports_str}"
+            )
+        else:
+            summary = aggregate_perf(rec, mode="avg", include_modeled=False)
+            ports = collect_ports(rec, arch=None, archs_used=summary.archs_used)
+            ports_str = ",".join(ports) if ports else "-"
+            typer.echo(
+                f"  avg over {summary.n_archs} arch(s) [{summary.source_kind}]: "
+                f"lat={_fmt_num(summary.latency)}c cpi={_fmt_num(summary.cpi)} ports={ports_str}"
+            )
+            if summary.archs_used:
+                typer.echo(f"  archs: {', '.join(summary.archs_used)}")
     return 0
 
 
@@ -1760,10 +1839,13 @@ def main() -> int:
     if "--full" in argv or "-f" in argv:
         FULL_MODE = True
         argv = [arg for arg in argv if arg not in ("--full", "-f")]
-    # Pre-parse top-level --preset NAME / --preset=NAME for bare-query TUI mode.
-    # Subcommands (llm, etc.) handle their own --preset via Typer, so only
-    # strip it here when it would otherwise reach the smart-lookup dispatch.
+    # Pre-parse top-level --preset / --arch / --json for bare-query mode.
+    # Subcommands (llm, annotate, etc.) handle their own flags via Typer,
+    # so only strip these when they would otherwise reach the smart-lookup
+    # dispatch.
     initial_preset: str | None = None
+    bare_arch: str | None = None
+    bare_json = False
     _cleaned: list[str] = []
     _i = 0
     while _i < len(argv):
@@ -1776,11 +1858,23 @@ def main() -> int:
             initial_preset = arg.split("=", 1)[1]
             _i += 1
             continue
+        if arg == "--arch" and _i + 1 < len(argv):
+            bare_arch = argv[_i + 1]
+            _i += 2
+            continue
+        if arg.startswith("--arch="):
+            bare_arch = arg.split("=", 1)[1]
+            _i += 1
+            continue
+        if arg == "--json":
+            bare_json = True
+            _i += 1
+            continue
         _cleaned.append(arg)
         _i += 1
     # Only consume --preset at the top level when the remainder is a bare
     # query or empty; otherwise leave it for the subcommand (e.g. `llm query`).
-    subcommand_consumers = {"llm"}
+    subcommand_consumers = {"llm", "annotate", "profile"}
     if _cleaned and _cleaned[0] in subcommand_consumers:
         # Restore; let Typer subcommand parse it.
         pass
@@ -1797,7 +1891,14 @@ def main() -> int:
     sys.argv = [sys.argv[0], *argv]
     commands = _registered_command_names()
     if argv and argv[0] not in commands and not argv[0].startswith("-"):
-        return _smart_lookup(" ".join(argv), preset=initial_preset)
+        # Tolerate ``simdref show <mnemonic>`` / ``simdref lookup <mnemonic>``:
+        # users reach for a verb, but there's no ``show`` subcommand — just
+        # drop a recognised lookup verb so the remainder hits smart-lookup.
+        if len(argv) > 1 and argv[0].lower() in {"show", "lookup", "info"}:
+            argv = argv[1:]
+        return _smart_lookup(
+            " ".join(argv), preset=initial_preset, arch=bare_arch, as_json=bare_json
+        )
     if not argv:
         ensure_runtime()
         return _run_tui(initial_preset=initial_preset or "intel")
