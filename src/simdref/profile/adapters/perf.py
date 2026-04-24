@@ -159,11 +159,7 @@ class _PerfAdapter:
             head = path.read_text(errors="replace")[:4096]
         except OSError:
             return False
-        return (
-            "cycles" in head
-            or "instructions" in head
-            or "perf script" in head
-        )
+        return "cycles" in head or "instructions" in head or "perf script" in head
 
     def ingest(self, path: Path, *, binary: Path | None) -> Iterable[SampleRow]:
         if _looks_like_perf_data(path):
@@ -176,18 +172,13 @@ class _PerfAdapter:
         binary_abs = str(binary.resolve()) if binary else None
 
         # Aggregate per (file-offset address, event).
-        agg: dict[tuple[int, str], tuple[int, int, str]] = defaultdict(
-            lambda: (0, 0, "")
-        )
+        agg: dict[tuple[int, str], tuple[int, int, str]] = defaultdict(lambda: (0, 0, ""))
         for ip, event, period, sym, symoff, dso in _parse_script_lines(text):
             if binary_basename is not None:
                 # Keep only samples attributable to our binary.
                 if not dso:
                     continue
-                if (
-                    os.path.basename(dso) != binary_basename
-                    and dso != binary_abs
-                ):
+                if os.path.basename(dso) != binary_basename and dso != binary_abs:
                     continue
                 # Prefer sym_va + symoff; fall back to raw ip if we can't resolve.
                 base = sym_va.get(sym)

@@ -144,9 +144,7 @@ def _hex_to_byte_line(data: bytes) -> str:
     return " ".join(f"0x{b:02X}" for b in data)
 
 
-def build_byte_lines(
-    entries: list[dict[str, str]], architecture: str
-) -> list[str]:
+def build_byte_lines(entries: list[dict[str, str]], architecture: str) -> list[str]:
     """Map exegesis entries to disassembly-ready hex-byte lines.
 
     Dedupes identical byte sequences across opcodes — different MC
@@ -195,9 +193,7 @@ def _run_exegesis(core: CoreSpec, output: Path, *, executable: str) -> None:
         f"--benchmarks-file={output}",
     ]
     try:
-        proc = subprocess.run(
-            cmd, check=False, capture_output=True, text=True, timeout=600
-        )
+        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=600)
     except (subprocess.SubprocessError, OSError) as exc:
         raise LLVMMcaUnavailable(f"{executable} failed: {exc}") from exc
     if proc.returncode != 0 or not output.exists():
@@ -208,9 +204,7 @@ def _run_exegesis(core: CoreSpec, output: Path, *, executable: str) -> None:
         )
 
 
-def _run_disassemble(
-    hex_lines: list[str], core: CoreSpec, *, executable: str
-) -> str:
+def _run_disassemble(hex_lines: list[str], core: CoreSpec, *, executable: str) -> str:
     _require(executable)
     stdin = "\n".join(hex_lines) + "\n"
     cmd = [
@@ -295,9 +289,7 @@ def _merge_mca_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]:
         region = regions[0]
         offset = len(merged_info)
         merged_instructions.extend(region.get("Instructions") or [])
-        merged_info.extend(
-            (region.get("InstructionInfoView") or {}).get("InstructionList") or []
-        )
+        merged_info.extend((region.get("InstructionInfoView") or {}).get("InstructionList") or [])
         # ``ResourcePressureInfo`` entries carry a per-payload
         # ``InstructionIndex``. Re-index into the merged space so the
         # join in :func:`_pressure_by_index` stays consistent.
@@ -394,7 +386,9 @@ def _format_port_name(name: str) -> str:
     returned unchanged — a slightly longer label is still readable.
     """
     prefix, sep, suffix = name.partition("Unit")
-    core = suffix if sep and suffix and prefix and len(prefix) <= 5 and prefix[0].isupper() else name
+    core = (
+        suffix if sep and suffix and prefix and len(prefix) <= 5 and prefix[0].isupper() else name
+    )
     if "." in core:
         head, _, tail = core.partition(".")
         # Map ``D.\x00`` / ``D.\x01`` → ``D0`` / ``D1`` so the column stays
@@ -596,9 +590,7 @@ def collect_core_schedule(
     if not disasm_path.exists():
         hex_lines = build_byte_lines(entries, core.architecture)
         if not hex_lines:
-            raise LLVMSchedulingError(
-                f"could not extract any opcode bytes from {exegesis_path}"
-            )
+            raise LLVMSchedulingError(f"could not extract any opcode bytes from {exegesis_path}")
         raw = _run_disassemble(hex_lines, core, executable=executable_mc)
         disasm_path.write_text(_filter_disassembly(raw))
 
@@ -615,9 +607,7 @@ def collect_core_schedule(
     else:
         payload = json.loads(mca_path.read_text())
 
-    rows = _build_perf_rows(
-        payload, asm_lines, core=core, mca_version=mca_version
-    )
+    rows = _build_perf_rows(payload, asm_lines, core=core, mca_version=mca_version)
     if not rows:
         raise LLVMSchedulingError(
             f"{executable_mca} produced no schedule rows for {core.canonical_id}"

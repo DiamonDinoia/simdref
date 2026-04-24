@@ -76,11 +76,11 @@ The search pipeline in `search.py` scores candidates through multiple factors:
 
 1. **Intent detection** -- queries starting with `_mm` bias towards intrinsics;
    mnemonic-like queries (`add`, `vmov`) bias towards instructions.
-2. **Exact/prefix/substring matching** -- strong bonuses (220/175/135 points).
-3. **Normalised token matching** -- splits on `_`, `,`, `{}` and compares tokens.
-4. **Fuzzy matching** -- rapidfuzz `token_set_ratio`, `partial_ratio`, `ratio`.
-5. **Width family bonus** -- +22 for matching SIMD width (`mm256`, `ymm`).
-6. **Score threshold** -- results below 35 points are discarded.
+1. **Exact/prefix/substring matching** -- strong bonuses (220/175/135 points).
+1. **Normalised token matching** -- splits on `_`, `,`, `{}` and compares tokens.
+1. **Fuzzy matching** -- rapidfuzz `token_set_ratio`, `partial_ratio`, `ratio`.
+1. **Width family bonus** -- +22 for matching SIMD width (`mm256`, `ymm`).
+1. **Score threshold** -- results below 35 points are discarded.
 
 For runtime search, FTS5 provides the candidate set (up to 12x the limit) and
 the scoring pipeline re-ranks them.
@@ -116,27 +116,27 @@ Status meanings:
 - `strong`: good source authority and regression coverage exist, but coverage is still representative rather than exhaustive for some subfamilies.
 - `partial`: supported in ingest or presentation, but validation or semantic coverage is still incomplete.
 
-| Area | Source authority | Status | Validation gate |
-| --- | --- | --- | --- |
-| Ingestion | Intel Intrinsics Guide + uops.info | complete | `tools/validate_sources.py` raw-source checks under `tests/test_source_validation.py` |
-| Linking | Intel Intrinsics Guide refs -> parsed uops.info forms | strong | exhaustive x86 intrinsic-link validation plus targeted ambiguity tests |
-| SDM semantics | Intel SDM PDF/cache | strong | section/anchor validation and coverage thresholds in the same validator path |
-| Perf | uops.info measurements | complete | parse validation plus runtime rendering checks |
-| Search | catalog search + web ranking heuristics | strong | pytest regressions for intrinsic-first and instruction-first behavior |
-| Rendering | CLI/TUI/web/manpage detail surfaces | strong | pytest regression checks for description sections, intrinsic equivalents, and perf tables |
+| Area          | Source authority                                      | Status   | Validation gate                                                                           |
+| ------------- | ----------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| Ingestion     | Intel Intrinsics Guide + uops.info                    | complete | `tools/validate_sources.py` raw-source checks under `tests/test_source_validation.py`     |
+| Linking       | Intel Intrinsics Guide refs -> parsed uops.info forms | strong   | exhaustive x86 intrinsic-link validation plus targeted ambiguity tests                    |
+| SDM semantics | Intel SDM PDF/cache                                   | strong   | section/anchor validation and coverage thresholds in the same validator path              |
+| Perf          | uops.info measurements                                | complete | parse validation plus runtime rendering checks                                            |
+| Search        | catalog search + web ranking heuristics               | strong   | pytest regressions for intrinsic-first and instruction-first behavior                     |
+| Rendering     | CLI/TUI/web/manpage detail surfaces                   | strong   | pytest regression checks for description sections, intrinsic equivalents, and perf tables |
 
 ### x86 family status
 
-| Family | Status | Notes |
-| --- | --- | --- |
-| SSE / SSE2 / SSE4 | strong | ingest and linking are solid; SDM semantic checks are representative |
-| AVX / AVX2 | strong | search and width-sensitive ranking are regression-tested |
-| AVX-512 | strong | masked and maskz forms are explicitly covered in linking/search/render tests |
-| AMX | partial | semantic coverage hooks exist, but fixture coverage is still limited |
+| Family                        | Status  | Notes                                                                           |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------- |
+| SSE / SSE2 / SSE4             | strong  | ingest and linking are solid; SDM semantic checks are representative            |
+| AVX / AVX2                    | strong  | search and width-sensitive ranking are regression-tested                        |
+| AVX-512                       | strong  | masked and maskz forms are explicitly covered in linking/search/render tests    |
+| AMX                           | partial | semantic coverage hooks exist, but fixture coverage is still limited            |
 | APX / ADX-style new GPR forms | partial | ranking and linkage scaffolding exist; broader source fixtures are still needed |
-| BMI / BMI2 | strong | alias-sensitive semantic checks are present |
-| AES / SHA / CRC | strong | semantic validation includes representative crypto/system families |
-| REP / string / system-control | partial | semantic checks are representative; render/search coverage is lighter |
+| BMI / BMI2                    | strong  | alias-sensitive semantic checks are present                                     |
+| AES / SHA / CRC               | strong  | semantic validation includes representative crypto/system families              |
+| REP / string / system-control | partial | semantic checks are representative; render/search coverage is lighter           |
 
 ## ISA filtering
 

@@ -43,6 +43,8 @@ class IsaToSubIsaTests(unittest.TestCase):
         self.assertEqual(isa_to_sub_isa("AVX512F"), "AVX512F")
         self.assertEqual(isa_to_sub_isa("AVX512VL"), "AVX512VL")
         self.assertEqual(isa_to_sub_isa("AVX_VNNI"), "AVX_VNNI")
+
+
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 
 
@@ -183,7 +185,13 @@ class DisplayMiscTests(unittest.TestCase):
                     header="immintrin.h",
                     isa=["AVX512F"],
                     instructions=[instruction.key],
-                    instruction_refs=[{"key": instruction.db_key, "display_key": instruction.key, "architecture": "x86"}],
+                    instruction_refs=[
+                        {
+                            "key": instruction.db_key,
+                            "display_key": instruction.key,
+                            "architecture": "x86",
+                        }
+                    ],
                 )
             ],
             instructions=[instruction],
@@ -301,7 +309,9 @@ class PerfPanelTests(unittest.TestCase):
             },
         )
         catalog = Catalog(
-            intrinsics=[], instructions=[instruction], sources=[],
+            intrinsics=[],
+            instructions=[instruction],
+            sources=[],
             generated_at="2026-01-01T00:00:00Z",
         )
         with console.capture() as capture:

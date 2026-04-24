@@ -24,11 +24,11 @@ the derived catalog ships in wheels and GitHub Release artifacts. License
 compatibility is enforced at the ingest boundary — no AGPL or
 redistribution-restricted bytes enter the release.
 
-| Source | Kind | ISA | Coverage | License | Boundary |
-|---|---|---|---|---|---|
-| LLVM sched models via `llvm-mca --json` | modeled | AArch64, RISC-V | ~20 AArch64 cores (Neoverse N1/N2/V1/V2, Cortex-A76/A78/X1-X4, Ampere1, A510/520, M1-via-Cyclone, …), ~7 RISC-V cores (SiFive-7/P400/P600, SpacemiT-X60, XiangShan-KunMingHu, MIPS-P8700, …) | Apache-2.0 w/ LLVM exception | system `llvm-mca` on builder PATH |
-| OSACA YAML (`github.com/RRZE-HPC/OSACA`) | measured | AArch64 | A64FX, Cortex-A72, Apple M1-Firestorm, TSV110, ThunderX2 | AGPL-3.0 | fetched at build-time, parsed into our own rows; AGPL never vendored/shipped |
-| `camel-cdr/rvv-bench-results` JSON | measured | RISC-V RVV | C908, C910, SpacemiT-X60/X100, BananaPi | MIT | fetched at build-time |
+| Source                                   | Kind     | ISA             | Coverage                                                                                                                                                                                     | License                      | Boundary                                                                     |
+| ---------------------------------------- | -------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------- |
+| LLVM sched models via `llvm-mca --json`  | modeled  | AArch64, RISC-V | ~20 AArch64 cores (Neoverse N1/N2/V1/V2, Cortex-A76/A78/X1-X4, Ampere1, A510/520, M1-via-Cyclone, …), ~7 RISC-V cores (SiFive-7/P400/P600, SpacemiT-X60, XiangShan-KunMingHu, MIPS-P8700, …) | Apache-2.0 w/ LLVM exception | system `llvm-mca` on builder PATH                                            |
+| OSACA YAML (`github.com/RRZE-HPC/OSACA`) | measured | AArch64         | A64FX, Cortex-A72, Apple M1-Firestorm, TSV110, ThunderX2                                                                                                                                     | AGPL-3.0                     | fetched at build-time, parsed into our own rows; AGPL never vendored/shipped |
+| `camel-cdr/rvv-bench-results` JSON       | measured | RISC-V RVV      | C908, C910, SpacemiT-X60/X100, BananaPi                                                                                                                                                      | MIT                          | fetched at build-time                                                        |
 
 Deferred to a later revision:
 
@@ -90,6 +90,7 @@ LLM JSON output exposes the full `perf[]` list plus pre-computed
 catalog build:
 
 1. **LLVM sched ingester** (`simdref/perf/llvm_mca.py`)
+
    - Reads a pinned list of `(triple, cpu)` pairs covering all sched-modeled
      AArch64 + RISC-V cores.
    - For each instruction mnemonic we care about, invokes
@@ -98,12 +99,14 @@ catalog build:
    - Records actual LLVM version in `source_version`.
    - Fails build if `llvm-mca` not on PATH, with an install hint (apt/brew/conda).
 
-2. **OSACA ingester** (`simdref/perf/osaca.py`)
+1. **OSACA ingester** (`simdref/perf/osaca.py`)
+
    - Fetches OSACA YAML data files from upstream (pinned commit SHA).
    - Parses into `PerfEntry(source="osaca", source_kind="measured", applies_to="form")`.
    - Never vendors the YAML into the repo; each build re-fetches.
 
-3. **rvv-bench ingester** (`simdref/perf/rvv_bench.py`)
+1. **rvv-bench ingester** (`simdref/perf/rvv_bench.py`)
+
    - Fetches `rvv-bench-results` JSON (pinned commit SHA).
    - Parses into `PerfEntry(source="rvv-bench", source_kind="measured", applies_to="lmul")`.
 
@@ -142,8 +145,7 @@ offline build and got near-empty results.
 - `simdref/cli.py`, `simdref/tui.py`, `simdref/lsp.py`, `simdref/display.py`,
   `simdref/web.py`, `simdref/manpages.py`, `simdref/templates/app.js` — render
   source-kind labels and per-core tables.
-- `simdref/queries.py` — allow `--core` filtering across ISAs; `--source-kind
-  measured|modeled|any`.
+- `simdref/queries.py` — allow `--core` filtering across ISAs; `--source-kind measured|modeled|any`.
 - Drop `src/simdref/fixtures/` and the `--offline` branch in `simdref/cli.py`.
 - `docs/SOURCES.md` — document new sources, license boundaries, and the fact
   that SWOGs and dougallj are intentionally not ingested.

@@ -47,6 +47,7 @@ def test_derive_arm_arch_none_for_non_arm():
 # Candidate-URL fallback loops
 # ---------------------------------------------------------------------------
 
+
 def _isolate_network(monkeypatch, *, raise_on_urls=(), responses=None):
     """Disable all local archive/vendor paths and stub _fetch_text."""
     monkeypatch.setattr(src, "LOCAL_INTEL_ARCHIVES", [])
@@ -130,6 +131,7 @@ def test_intel_data_candidate_fallback(monkeypatch):
 # Full-unavailable path raises SourceUnavailableError (no fixture fallback)
 # ---------------------------------------------------------------------------
 
+
 def test_rvv_all_sources_unreachable_raises(monkeypatch):
     _isolate_network(
         monkeypatch,
@@ -157,6 +159,7 @@ def test_uops_all_sources_unreachable_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 # Malformed input handling
 # ---------------------------------------------------------------------------
+
 
 def test_augment_riscv_unified_db_payload_handles_malformed_json():
     # Invalid JSON → helper returns the input string unchanged.
@@ -199,6 +202,7 @@ def test_riscv_missing_semantics_urls_filters_non_docs_urls():
 # ---------------------------------------------------------------------------
 # Zip / tar extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_zip(entries: dict[str, str]) -> zipfile.ZipFile:
     buf = io.BytesIO()
@@ -262,6 +266,7 @@ def test_extract_tar_text_by_match_missing_raises():
 # ARM instruction-JSON name predicate
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "path, expected",
     [
@@ -280,6 +285,7 @@ def test_looks_like_arm_instruction_json(path, expected):
 # ---------------------------------------------------------------------------
 # Bundle payload helpers
 # ---------------------------------------------------------------------------
+
 
 def test_arm_acle_bundle_payload_shape():
     payload = src._arm_acle_bundle_payload("csv1", "csv2", "acle_md", "neon_md")
@@ -308,6 +314,7 @@ def test_arm_instruction_bundle_payload_shape():
 # ---------------------------------------------------------------------------
 # now_iso sanity
 # ---------------------------------------------------------------------------
+
 
 def test_read_local_text_found(tmp_path, monkeypatch):
     file_path = tmp_path / "local.json"
@@ -411,6 +418,7 @@ def test_now_iso_is_utc_iso_format():
     stamp = src.now_iso()
     # Parses without error and ends with +00:00 (UTC offset).
     from datetime import datetime
+
     parsed = datetime.fromisoformat(stamp)
     assert parsed.tzinfo is not None
     assert parsed.utcoffset().total_seconds() == 0

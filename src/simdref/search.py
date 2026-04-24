@@ -26,7 +26,12 @@ except Exception:  # pragma: no cover - fallback when dependency is unavailable
 
         @staticmethod
         def token_set_ratio(a: str, b: str) -> float:
-            return SequenceMatcher(a=" ".join(sorted(set(a.split()))), b=" ".join(sorted(set(b.split())))).ratio() * 100.0
+            return (
+                SequenceMatcher(
+                    a=" ".join(sorted(set(a.split()))), b=" ".join(sorted(set(b.split())))
+                ).ratio()
+                * 100.0
+            )
 
     fuzz = _FallbackFuzz()
 
@@ -66,9 +71,19 @@ def _classify_query(query: str) -> str:
         return "intrinsic"
     if "." in lowered and not lowered.startswith("_"):
         return "instruction"
-    if lowered == "v" or lowered.startswith("zv") or lowered.startswith("zve") or lowered.startswith("rv"):
+    if (
+        lowered == "v"
+        or lowered.startswith("zv")
+        or lowered.startswith("zve")
+        or lowered.startswith("rv")
+    ):
         return "instruction"
-    if lowered.startswith("_mm") or lowered.startswith("__m") or normalized.startswith("mm ") or normalized == "mm":
+    if (
+        lowered.startswith("_mm")
+        or lowered.startswith("__m")
+        or normalized.startswith("mm ")
+        or normalized == "mm"
+    ):
         return "intrinsic"
     if "_" in lowered and "mm" in lowered:
         return "intrinsic"
@@ -76,7 +91,17 @@ def _classify_query(query: str) -> str:
         tokens = normalized.split()
         if tokens and all(token.isalpha() or token.isalnum() for token in tokens):
             first = tokens[0]
-            if first in {"add", "sub", "mul", "div", "mov", "cmp", "and", "or", "xor"} or first.startswith("v"):
+            if first in {
+                "add",
+                "sub",
+                "mul",
+                "div",
+                "mov",
+                "cmp",
+                "and",
+                "or",
+                "xor",
+            } or first.startswith("v"):
                 return "instruction"
     return "neutral"
 
@@ -96,7 +121,9 @@ def _token_overlap_count(query_tokens: list[str], candidate_tokens: list[str]) -
         return 0
     count = 0
     for q in query_tokens:
-        if any(token == q or token.startswith(q) or q.startswith(token) for token in candidate_tokens):
+        if any(
+            token == q or token.startswith(q) or q.startswith(token) for token in candidate_tokens
+        ):
             count += 1
     return count
 
@@ -186,23 +213,38 @@ def _is_pure_isa_query(query: str, isa_values: list[str]) -> bool:
     normalized_query = _normalize_text(query)
     if not normalized_query:
         return False
-    return normalized_query in {_normalize_text(value) for value in isa_values if _normalize_text(value)}
+    return normalized_query in {
+        _normalize_text(value) for value in isa_values if _normalize_text(value)
+    }
 
 
 def _looks_like_isa_query(query: str) -> bool:
     lowered = query.casefold().strip()
-    return lowered == "v" or lowered.startswith("zv") or lowered.startswith("zve") or lowered.startswith("rv")
+    return (
+        lowered == "v"
+        or lowered.startswith("zv")
+        or lowered.startswith("zve")
+        or lowered.startswith("rv")
+    )
 
 
-def search_records(intrinsics: list, instructions: list, query: str, limit: int = 20) -> list[SearchResult]:
+def search_records(
+    intrinsics: list, instructions: list, query: str, limit: int = 20
+) -> list[SearchResult]:
     results: list[SearchResult] = []
     query_kind = _classify_query(query)
     for item in intrinsics:
-        if query_kind == "instruction" and _is_pure_isa_query(query, item.isa) and not _has_structural_overlap(query, item.name):
+        if (
+            query_kind == "instruction"
+            and _is_pure_isa_query(query, item.isa)
+            and not _has_structural_overlap(query, item.name)
+        ):
             continue
         if query_kind == "intrinsic" and not _has_structural_overlap(query, item.name):
             continue
-        score = max(_base_score(query, item.name), _base_score(query, item.search_blob)) + _intent_bias(query_kind, "intrinsic")
+        score = max(
+            _base_score(query, item.name), _base_score(query, item.search_blob)
+        ) + _intent_bias(query_kind, "intrinsic")
         score += _isa_match_bias(query, item.isa, "intrinsic")
         score += _width_family_bonus(query, item.name)
         if score >= 35:
@@ -218,9 +260,17 @@ def search_records(intrinsics: list, instructions: list, query: str, limit: int 
     for item in instructions:
         if _looks_like_isa_query(query) and not _is_pure_isa_query(query, item.isa):
             continue
-        if query_kind == "instruction" and not _looks_like_isa_query(query) and not _has_structural_overlap(query, item.key):
+        if (
+            query_kind == "instruction"
+            and not _looks_like_isa_query(query)
+            and not _has_structural_overlap(query, item.key)
+        ):
             continue
-        score = max(_base_score(query, item.mnemonic), _base_score(query, item.key), _base_score(query, item.search_blob))
+        score = max(
+            _base_score(query, item.mnemonic),
+            _base_score(query, item.key),
+            _base_score(query, item.search_blob),
+        )
         score += _intent_bias(query_kind, "instruction")
         score += _isa_match_bias(query, item.isa, "instruction")
         if score >= 35:

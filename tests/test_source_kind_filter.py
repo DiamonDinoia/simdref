@@ -14,7 +14,7 @@ from simdref.queries import filter_arch_details_by_source_kind
 class SourceKindFilterTests(unittest.TestCase):
     DETAILS = {
         "skl": {"source_kind": "measured", "latencies": [{"cycles": "4"}]},
-        "n1":  {"source_kind": "modeled",  "latencies": [{"cycles": "2"}]},
+        "n1": {"source_kind": "modeled", "latencies": [{"cycles": "2"}]},
         "legacy": {"latencies": [{"cycles": "5"}]},  # no source_kind -> measured
     }
 

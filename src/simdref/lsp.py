@@ -90,8 +90,14 @@ def _hover_markdown(conn, word: str) -> str | None:
             lines.append(f"Instructions: {', '.join(intrinsic.instructions[:6])}")
         linked = linked_instruction_records(None, intrinsic, conn=conn)
         if linked:
-            latencies = [best_latency(item.arch_details) for item in linked if best_latency(item.arch_details) != "-"]
-            throughputs = [best_cpi(item.arch_details) for item in linked if best_cpi(item.arch_details) != "-"]
+            latencies = [
+                best_latency(item.arch_details)
+                for item in linked
+                if best_latency(item.arch_details) != "-"
+            ]
+            throughputs = [
+                best_cpi(item.arch_details) for item in linked if best_cpi(item.arch_details) != "-"
+            ]
             perf = []
             if latencies:
                 perf.append(f"best latency {min(latencies, key=lambda value: float(value))} cycles")
@@ -134,7 +140,9 @@ def _completion_candidates(conn, prefix: str, limit: int = 50) -> list[dict]:
     items: list[dict] = []
     candidate_limit = max(limit * 3, 100)
     intrinsics = search_intrinsic_candidates_from_db(conn, prefix or "_mm", limit=candidate_limit)
-    instructions = search_instruction_candidates_from_db(conn, prefix or "_mm", limit=candidate_limit)
+    instructions = search_instruction_candidates_from_db(
+        conn, prefix or "_mm", limit=candidate_limit
+    )
     for result in search_records(intrinsics, instructions, prefix or "_mm", limit=candidate_limit):
         label = result.title
         if prefix_folded and not label.casefold().startswith(prefix_folded):
@@ -167,7 +175,10 @@ def main() -> int:
                         "capabilities": {
                             "hoverProvider": True,
                             "textDocumentSync": 1,
-                            "completionProvider": {"resolveProvider": False, "triggerCharacters": ["_", ".", "m", "v"]},
+                            "completionProvider": {
+                                "resolveProvider": False,
+                                "triggerCharacters": ["_", ".", "m", "v"],
+                            },
                         }
                     },
                 }
@@ -197,12 +208,24 @@ def main() -> int:
                 body = _hover_markdown(conn, word)
                 if body:
                     contents = {"kind": "markdown", "value": body}
-            _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"contents": contents} if contents else None})
+            _jsonrpc_write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": message["id"],
+                    "result": {"contents": contents} if contents else None,
+                }
+            )
         elif method == "textDocument/completion":
             params = message["params"]
             uri = params["textDocument"]["uri"]
             text = session.documents.get(uri, "")
             prefix = _line_prefix(text, params["position"]["line"], params["position"]["character"])
             items = _completion_candidates(conn, prefix)
-            _jsonrpc_write({"jsonrpc": "2.0", "id": message["id"], "result": {"isIncomplete": False, "items": items}})
+            _jsonrpc_write(
+                {
+                    "jsonrpc": "2.0",
+                    "id": message["id"],
+                    "result": {"isIncomplete": False, "items": items},
+                }
+            )
     return 0

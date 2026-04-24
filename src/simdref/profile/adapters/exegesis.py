@@ -27,7 +27,7 @@ class _ExegesisAdapter:
             head = path.read_text(errors="replace")[:2048]
         except OSError:
             return False
-        return "exegesis" in head.lower() or "\"mode\": \"latency\"" in head
+        return "exegesis" in head.lower() or '"mode": "latency"' in head
 
     def ingest(self, path: Path, *, binary: Path | None) -> Iterable[SampleRow]:
         try:

@@ -8,7 +8,10 @@ def test_instruction_record_has_description_field():
         summary="Add packed single precision floating-point values.",
         description={"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."},
     )
-    assert record.description == {"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."}
+    assert record.description == {
+        "Description": "Adds four packed...",
+        "Operation": "DEST[31:0] := ...",
+    }
     assert record.architecture == "x86"
 
 
@@ -23,18 +26,25 @@ def test_catalog_roundtrip_with_description():
         form="ADDPS (XMM, XMM)",
         summary="Add packed single precision floating-point values.",
         description={"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."},
-        pdf_refs=[{
-            "source_id": "intel-sdm",
-            "label": "Intel SDM",
-            "url": "https://example.com/intel-sdm.pdf#page=42",
-            "page_start": "42",
-            "page_end": "43",
-        }],
+        pdf_refs=[
+            {
+                "source_id": "intel-sdm",
+                "label": "Intel SDM",
+                "url": "https://example.com/intel-sdm.pdf#page=42",
+                "page_start": "42",
+                "page_end": "43",
+            }
+        ],
     )
-    catalog = Catalog(intrinsics=[], instructions=[record], sources=[], generated_at="2026-01-01T00:00:00Z")
+    catalog = Catalog(
+        intrinsics=[], instructions=[record], sources=[], generated_at="2026-01-01T00:00:00Z"
+    )
     payload = catalog.to_dict()
     roundtripped = Catalog.from_dict(payload)
-    assert roundtripped.instructions[0].description == {"Description": "Adds four packed...", "Operation": "DEST[31:0] := ..."}
+    assert roundtripped.instructions[0].description == {
+        "Description": "Adds four packed...",
+        "Operation": "DEST[31:0] := ...",
+    }
     assert roundtripped.instructions[0].pdf_refs[0]["source_id"] == "intel-sdm"
 
 
@@ -42,20 +52,22 @@ def test_catalog_from_dict_without_description():
     """Old catalogs without description field should still load."""
     payload = {
         "intrinsics": [],
-        "instructions": [{
-            "mnemonic": "NOP",
-            "form": "NOP",
-            "summary": "No operation.",
-            "isa": [],
-            "operands": [],
-            "operand_details": [],
-            "metadata": {},
-            "arch_details": {},
-            "linked_intrinsics": [],
-            "metrics": {},
-            "aliases": [],
-            "source": "uops.info",
-        }],
+        "instructions": [
+            {
+                "mnemonic": "NOP",
+                "form": "NOP",
+                "summary": "No operation.",
+                "isa": [],
+                "operands": [],
+                "operand_details": [],
+                "metadata": {},
+                "arch_details": {},
+                "linked_intrinsics": [],
+                "metrics": {},
+                "aliases": [],
+                "source": "uops.info",
+            }
+        ],
         "sources": [],
         "generated_at": "2026-01-01T00:00:00Z",
     }
@@ -122,35 +134,39 @@ def test_instruction_record_normalizes_legacy_intel_metadata_to_pdf_refs():
             "intel-sdm-page-end": "43",
         },
     )
-    assert record.pdf_refs == [{
-        "source_id": "intel-sdm",
-        "label": "Intel SDM",
-        "url": "https://example.com/intel-sdm.pdf#page=42",
-        "page_start": "42",
-        "page_end": "43",
-    }]
+    assert record.pdf_refs == [
+        {
+            "source_id": "intel-sdm",
+            "label": "Intel SDM",
+            "url": "https://example.com/intel-sdm.pdf#page=42",
+            "page_start": "42",
+            "page_end": "43",
+        }
+    ]
 
 
 def test_catalog_from_dict_with_legacy_intel_metadata_adds_pdf_refs():
     payload = {
         "intrinsics": [],
-        "instructions": [{
-            "mnemonic": "NOP",
-            "form": "NOP",
-            "summary": "No operation.",
-            "isa": [],
-            "operand_details": [],
-            "metadata": {
-                "intel-sdm-url": "https://example.com/intel-sdm.pdf#page=7",
-                "intel-sdm-page-start": "7",
-                "intel-sdm-page-end": "8",
-            },
-            "arch_details": {},
-            "linked_intrinsics": [],
-            "aliases": [],
-            "description": {},
-            "source": "uops.info",
-        }],
+        "instructions": [
+            {
+                "mnemonic": "NOP",
+                "form": "NOP",
+                "summary": "No operation.",
+                "isa": [],
+                "operand_details": [],
+                "metadata": {
+                    "intel-sdm-url": "https://example.com/intel-sdm.pdf#page=7",
+                    "intel-sdm-page-start": "7",
+                    "intel-sdm-page-end": "8",
+                },
+                "arch_details": {},
+                "linked_intrinsics": [],
+                "aliases": [],
+                "description": {},
+                "source": "uops.info",
+            }
+        ],
         "sources": [],
         "generated_at": "2026-01-01T00:00:00Z",
     }

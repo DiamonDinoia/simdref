@@ -40,7 +40,9 @@ def extract_yaml_block(text: str, key: str) -> str:
     match = re.search(rf"^{re.escape(key)}:\s*\|\n(?P<body>(?:^[ ]+.*\n?)*)", text, re.MULTILINE)
     if not match:
         return ""
-    lines = [line[2:] if line.startswith("  ") else line for line in match.group("body").splitlines()]
+    lines = [
+        line[2:] if line.startswith("  ") else line for line in match.group("body").splitlines()
+    ]
     return "\n".join(lines).strip()
 
 
@@ -100,7 +102,9 @@ def parse_instruction_file(path: Path) -> dict[str, object]:
     operation = extract_yaml_block(text, "operation()")
     long_name = extract_yaml_scalar(text, "long_name")
     extension_match = re.search(r"definedBy:\n(?:^[ ]+.*\n)*?^\s+name:\s*(.+)$", text, re.MULTILINE)
-    extension = normalize_extension(extension_match.group(1).strip() if extension_match else path.parent.name)
+    extension = normalize_extension(
+        extension_match.group(1).strip() if extension_match else path.parent.name
+    )
     isa = [extension]
     return {
         "mnemonic": mnemonic,
@@ -127,7 +131,11 @@ def iter_vector_instruction_files(udb_root: Path) -> list[Path]:
 def infer_intrinsic_policy(name: str) -> tuple[str, str]:
     lowered = name.casefold()
     policy = "agnostic"
-    masking = "masked" if lowered.endswith(("_m", "_mu", "_tum", "_tumu")) or "_m_" in lowered else "unmasked"
+    masking = (
+        "masked"
+        if lowered.endswith(("_m", "_mu", "_tum", "_tumu")) or "_m_" in lowered
+        else "unmasked"
+    )
     for suffix in POLICY_SUFFIXES:
         if lowered.endswith(suffix):
             policy = suffix.removeprefix("_")
@@ -217,7 +225,9 @@ def collect_intrinsic_entries(rvv_root: Path) -> dict[str, dict[str, object]]:
     return entries
 
 
-def build_instruction_lookup(base_instructions: dict[str, dict[str, object]]) -> list[tuple[str, str]]:
+def build_instruction_lookup(
+    base_instructions: dict[str, dict[str, object]],
+) -> list[tuple[str, str]]:
     lookup = {(mnemonic.replace(".", "_"), mnemonic) for mnemonic in base_instructions}
     return sorted(lookup, key=lambda item: (-len(item[0]), item[0]))
 
@@ -301,14 +311,18 @@ def build_intrinsics_bundle(
                     "policy": policy,
                     "masking": masking,
                     "tail_policy": "undisturbed" if "tu" in policy else "agnostic",
-                    "mask_policy": ("undisturbed" if "mu" in policy else "agnostic") if masking == "masked" else "",
+                    "mask_policy": ("undisturbed" if "mu" in policy else "agnostic")
+                    if masking == "masked"
+                    else "",
                 }
             )
             rendered_instructions.append(form)
             variant_requests[mnemonic].add((policy, masking))
 
         prototype_section = "\n".join(signatures)
-        description_target = rendered_instructions[0] if rendered_instructions else name.removeprefix("__riscv_")
+        description_target = (
+            rendered_instructions[0] if rendered_instructions else name.removeprefix("__riscv_")
+        )
         records.append(
             {
                 "name": name,
@@ -325,12 +339,18 @@ def build_intrinsics_bundle(
                     "policy": policy,
                     "masking": masking,
                     "tail_policy": "undisturbed" if "tu" in policy else "agnostic",
-                    **({"mask_policy": "undisturbed" if "mu" in policy else "agnostic"} if masking == "masked" else {}),
+                    **(
+                        {"mask_policy": "undisturbed" if "mu" in policy else "agnostic"}
+                        if masking == "masked"
+                        else {}
+                    ),
                     "source_path": str(entry["path"]),
                 },
                 "doc_sections": {
                     "Prototype": prototype_section,
-                    "Semantics": sentence(f"{entry['category']} intrinsic that maps to {description_target}."),
+                    "Semantics": sentence(
+                        f"{entry['category']} intrinsic that maps to {description_target}."
+                    ),
                 },
             }
         )
@@ -379,8 +399,12 @@ def main() -> None:
         "intrinsics": intrinsics,
     }
 
-    (args.out_dir / "unified_db_bundle.json").write_text(json.dumps(instructions_payload, indent=2) + "\n")
-    (args.out_dir / "rvv_intrinsics_bundle.json").write_text(json.dumps(intrinsics_payload, indent=2) + "\n")
+    (args.out_dir / "unified_db_bundle.json").write_text(
+        json.dumps(instructions_payload, indent=2) + "\n"
+    )
+    (args.out_dir / "rvv_intrinsics_bundle.json").write_text(
+        json.dumps(intrinsics_payload, indent=2) + "\n"
+    )
 
     print(f"wrote {args.out_dir / 'unified_db_bundle.json'} instructions={len(instructions)}")
     print(f"wrote {args.out_dir / 'rvv_intrinsics_bundle.json'} intrinsics={len(intrinsics)}")

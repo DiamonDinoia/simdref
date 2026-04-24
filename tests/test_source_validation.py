@@ -6,7 +6,10 @@ from pathlib import Path
 
 
 def _has_local_sdm_material() -> bool:
-    return Path("vendor/intel/intel-sdm.pdf").exists() or Path("data/derived/intel-sdm-descriptions.msgpack").exists()
+    return (
+        Path("vendor/intel/intel-sdm.pdf").exists()
+        or Path("data/derived/intel-sdm-descriptions.msgpack").exists()
+    )
 
 
 @unittest.skipUnless(

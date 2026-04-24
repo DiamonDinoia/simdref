@@ -36,6 +36,7 @@ def filter_arch_details_by_source_kind(
             kept[core] = details
     return kept
 
+
 if TYPE_CHECKING:
     from simdref.models import Catalog, InstructionRecord, IntrinsicRecord
 
@@ -99,14 +100,16 @@ def _rows_from_linked_instructions(
                 row.update(values)
                 rows.append(row)
         else:
-            rows.append({
-                "instruction": instruction.key,
-                "uarch": "-",
-                "latency": "-",
-                "throughput": "-",
-                "uops": "-",
-                "ports": "-",
-            })
+            rows.append(
+                {
+                    "instruction": instruction.key,
+                    "uarch": "-",
+                    "latency": "-",
+                    "throughput": "-",
+                    "uops": "-",
+                    "ports": "-",
+                }
+            )
     return rows
 
 
@@ -137,14 +140,16 @@ def instruction_rows_for_intrinsic(
                 row.update(values)
                 rows.append(row)
         else:
-            rows.append({
-                "instruction": instruction.key,
-                "uarch": "-",
-                "latency": "-",
-                "throughput": "-",
-                "uops": "-",
-                "ports": "-",
-            })
+            rows.append(
+                {
+                    "instruction": instruction.key,
+                    "uarch": "-",
+                    "latency": "-",
+                    "throughput": "-",
+                    "uops": "-",
+                    "ports": "-",
+                }
+            )
     return rows
 
 

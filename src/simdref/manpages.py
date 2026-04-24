@@ -61,21 +61,39 @@ def intrinsic_page(
             if record.name in instruction.linked_intrinsics
         ]
     parts = [f'.TH "{record.name}" "7" "simdref" "simdref" "SIMD Intrinsic Reference"\n']
-    parts.append(_section("NAME", f"{_roff_escape(record.name)} \\- {_roff_escape(record.description or 'intrinsic')}"))
+    parts.append(
+        _section(
+            "NAME",
+            f"{_roff_escape(record.name)} \\- {_roff_escape(record.description or 'intrinsic')}",
+        )
+    )
     parts.append(_section("SYNOPSIS", f".nf\n{_roff_escape(record.signature)}\n.fi"))
-    parts.append(_section("DESCRIPTION", _roff_escape(record.description or "No description available.")))
+    parts.append(
+        _section("DESCRIPTION", _roff_escape(record.description or "No description available."))
+    )
     parts.append(_section("HEADER", _roff_escape(record.header or "Unknown")))
     if record.url:
         parts.append(_section("SOURCE", _roff_escape(record.url)))
-    parts.append(_section("ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))))
+    parts.append(
+        _section(
+            "ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))
+        )
+    )
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
     parts.append(_section("CATEGORY", _roff_escape(record.category or "Unknown")))
-    parts.append(_section("INSTRUCTIONS", _roff_escape(", ".join(record.instructions) or "None linked")))
-    perf_text = _roff_escape("\n".join(_instruction_perf_lines(linked_instructions)) or "No performance metrics available.")
+    parts.append(
+        _section("INSTRUCTIONS", _roff_escape(", ".join(record.instructions) or "None linked"))
+    )
+    perf_text = _roff_escape(
+        "\n".join(_instruction_perf_lines(linked_instructions))
+        or "No performance metrics available."
+    )
     parts.append(_section("PERFORMANCE SUMMARY", perf_text))
     parts.append(_section("PERFORMANCE DETAILS", perf_text))
     parts.append(_section("NOTES", _roff_escape("; ".join(record.notes) or "None")))
-    parts.append(_section("SEE ALSO", _roff_escape(", ".join(record.instructions) or "simdref-search(7)")))
+    parts.append(
+        _section("SEE ALSO", _roff_escape(", ".join(record.instructions) or "simdref-search(7)"))
+    )
     return "".join(parts)
 
 
@@ -87,15 +105,37 @@ def instruction_page(record: InstructionRecord) -> str:
     else:
         parts.append(_section("DESCRIPTION", _roff_escape(record.summary)))
     if record.description.get("Operation"):
-        parts.append(_section("OPERATION", f".nf\n{_roff_escape(record.description['Operation'])}\n.fi"))
-    parts.append(_section("ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))))
+        parts.append(
+            _section("OPERATION", f".nf\n{_roff_escape(record.description['Operation'])}\n.fi")
+        )
+    parts.append(
+        _section(
+            "ARCHITECTURE", _roff_escape(display_architecture(record.architecture or "Unknown"))
+        )
+    )
     parts.append(_section("ISA", _roff_escape(", ".join(record.isa) or "Unknown")))
-    parts.append(_section("OPERANDS", _roff_escape("\n".join(record.operands) or "No operand details available.")))
-    parts.append(_section("INTRINSICS", _roff_escape(", ".join(record.linked_intrinsics) or "None linked")))
-    parts.append(_section("PERFORMANCE DETAILS", _roff_escape("\n".join(_metric_lines(record)) or "No performance metrics available.")))
+    parts.append(
+        _section(
+            "OPERANDS", _roff_escape("\n".join(record.operands) or "No operand details available.")
+        )
+    )
+    parts.append(
+        _section("INTRINSICS", _roff_escape(", ".join(record.linked_intrinsics) or "None linked"))
+    )
+    parts.append(
+        _section(
+            "PERFORMANCE DETAILS",
+            _roff_escape("\n".join(_metric_lines(record)) or "No performance metrics available."),
+        )
+    )
     if record.description.get("Flags Affected"):
         parts.append(_section("FLAGS AFFECTED", _roff_escape(record.description["Flags Affected"])))
-    for exc_key in ("Exceptions", "SIMD Floating-Point Exceptions", "Numeric Exceptions", "Other Exceptions"):
+    for exc_key in (
+        "Exceptions",
+        "SIMD Floating-Point Exceptions",
+        "Numeric Exceptions",
+        "Other Exceptions",
+    ):
         if record.description.get(exc_key):
             parts.append(_section(exc_key.upper(), _roff_escape(record.description[exc_key])))
     return "".join(parts)
@@ -118,11 +158,15 @@ def write_manpages(
         if on_progress is not None:
             on_progress(done, total)
     for instruction in catalog.instructions:
-        filename = f"instruction-{record_slug(instruction.architecture)}-{record_slug(instruction.key)}.7"
+        filename = (
+            f"instruction-{record_slug(instruction.architecture)}-{record_slug(instruction.key)}.7"
+        )
         (section_dir / filename).write_text(instruction_page(instruction))
         if instruction.architecture == "x86":
             (section_dir / f"{instruction.mnemonic}.7").write_text(instruction_page(instruction))
-        (section_dir / f"{record_slug(instruction.architecture)}-{instruction.mnemonic}.7").write_text(instruction_page(instruction))
+        (
+            section_dir / f"{record_slug(instruction.architecture)}-{instruction.mnemonic}.7"
+        ).write_text(instruction_page(instruction))
         done += 1
         if on_progress is not None:
             on_progress(done, total)

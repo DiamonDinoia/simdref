@@ -18,7 +18,11 @@ from simdref.ingest import _instruction_summary, _normalize_operand_xtype, build
 from simdref.arm_instructions import parse_arm_instruction_payload
 from simdref.ingest_catalog import parse_arm_intrinsics_payload
 from simdref.models import InstructionRecord, IntrinsicRecord
-from simdref.riscv import _infer_intrinsic_policy, parse_riscv_instruction_payload, parse_riscv_intrinsics_payload
+from simdref.riscv import (
+    _infer_intrinsic_policy,
+    parse_riscv_instruction_payload,
+    parse_riscv_intrinsics_payload,
+)
 from simdref.search import find_instruction, find_intrinsic, search_catalog, search_records
 from simdref.storage import build_sqlite, open_db, save_catalog
 from simdref.tui import _fts_search, _normalize_sub_isa_selection
@@ -37,16 +41,24 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(arm_record.architecture, "arm")
         self.assertIn("ADD (Vd.16B, Vn.16B, Vm.16B)", arm_record.instructions)
         self.assertNotIn("ADD (Zd.S, Pg/M, Zn.S, Zm.S)", arm_record.instructions)
-        self.assertEqual(arm_record.url, "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
+        self.assertEqual(
+            arm_record.url,
+            "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8",
+        )
         self.assertEqual(arm_record.metadata["argument_preparation"], "a -> Vn.16B;b -> Vm.16B")
-        self.assertEqual(arm_record.metadata["reference_url"], "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#addition")
+        self.assertEqual(
+            arm_record.metadata["reference_url"],
+            "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#addition",
+        )
         self.assertIn("ACLE Documentation", arm_record.doc_sections)
         self.assertIn("AArch64 instruction:", arm_record.doc_sections["ACLE Documentation"])
         riscv_record = find_intrinsic(catalog, "__riscv_vadd_vv_i32m1")
         self.assertIsNotNone(riscv_record)
         self.assertEqual(riscv_record.architecture, "riscv")
         self.assertEqual(riscv_record.instructions, ["vadd.vv"])
-        self.assertEqual(riscv_record.url, "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
+        self.assertEqual(
+            riscv_record.url, "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc"
+        )
 
     def test_instruction_lookup(self):
         catalog = build_fixture_catalog()
@@ -76,8 +88,15 @@ class SearchTests(unittest.TestCase):
         results = search_catalog(catalog, "expandload")
         self.assertTrue(any(result.kind == "intrinsic" for result in results))
         arm_results = search_catalog(catalog, "svadd")
-        self.assertTrue(any(result.kind == "intrinsic" and result.title == "svadd_s32_z" for result in arm_results))
-        self.assertTrue(any(result.kind == "intrinsic" and result.title == "svadd" for result in arm_results))
+        self.assertTrue(
+            any(
+                result.kind == "intrinsic" and result.title == "svadd_s32_z"
+                for result in arm_results
+            )
+        )
+        self.assertTrue(
+            any(result.kind == "intrinsic" and result.title == "svadd" for result in arm_results)
+        )
         riscv_mnemonic = search_catalog(catalog, "vadd.vv")
         self.assertEqual(riscv_mnemonic[0].kind, "instruction")
         self.assertEqual(riscv_mnemonic[0].title, "vadd.vv")
@@ -291,7 +310,11 @@ class SearchTests(unittest.TestCase):
 
     def test_mixed_catalog_keeps_arm_and_x86_instruction_keys_separate(self):
         catalog = build_fixture_catalog()
-        arm_records = [item for item in catalog.instructions if item.architecture == "arm" and item.mnemonic == "ADD"]
+        arm_records = [
+            item
+            for item in catalog.instructions
+            if item.architecture == "arm" and item.mnemonic == "ADD"
+        ]
         self.assertEqual(len(arm_records), 2)
         self.assertEqual(len({item.db_key for item in arm_records}), 2)
         self.assertTrue(all("_mm_add_ps" not in item.linked_intrinsics for item in arm_records))
@@ -302,7 +325,11 @@ class SearchTests(unittest.TestCase):
 
     def test_mixed_catalog_keeps_riscv_keys_separate(self):
         catalog = build_fixture_catalog()
-        riscv_records = [item for item in catalog.instructions if item.architecture == "riscv" and item.mnemonic == "vadd.vv"]
+        riscv_records = [
+            item
+            for item in catalog.instructions
+            if item.architecture == "riscv" and item.mnemonic == "vadd.vv"
+        ]
         self.assertGreaterEqual(len(riscv_records), 4)
         self.assertEqual(len({item.db_key for item in riscv_records}), len(riscv_records))
         plain = next(item for item in riscv_records if item.form == "vadd.vv")
@@ -312,8 +339,12 @@ class SearchTests(unittest.TestCase):
         self.assertIn("__riscv_vadd_vv_i32m1_m", masked.linked_intrinsics)
 
     def test_parse_riscv_fixture_payloads(self):
-        intrinsics = parse_riscv_intrinsics_payload(Path("tests/fixtures/riscv_rvv_intrinsics_sample.json").read_text())
-        instructions = parse_riscv_instruction_payload(Path("tests/fixtures/riscv_unified_db_sample.json").read_text())
+        intrinsics = parse_riscv_intrinsics_payload(
+            Path("tests/fixtures/riscv_rvv_intrinsics_sample.json").read_text()
+        )
+        instructions = parse_riscv_instruction_payload(
+            Path("tests/fixtures/riscv_unified_db_sample.json").read_text()
+        )
         self.assertTrue(any(item.name == "__riscv_vadd_vv_i32m1" for item in intrinsics))
         self.assertTrue(any(item.mnemonic == "vadd.vv" for item in instructions))
         self.assertTrue(any(item.mnemonic == "vsub.vv" for item in instructions))
@@ -362,7 +393,10 @@ class SearchTests(unittest.TestCase):
             },
         }
         records = parse_riscv_instruction_payload(json.dumps(payload))
-        self.assertEqual(records[0].description["Description"], "Slides elements in vs2 upward by the scalar offset.")
+        self.assertEqual(
+            records[0].description["Description"],
+            "Slides elements in vs2 upward by the scalar offset.",
+        )
         self.assertIn("vd[i + offset] = vs2[i]", records[0].description["Operation"])
 
     def test_generic_sve_mapping_links_to_sve_form_only(self):

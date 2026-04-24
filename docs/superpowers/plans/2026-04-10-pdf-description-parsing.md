@@ -8,12 +8,14 @@
 
 **Tech Stack:** pdfplumber (PDF parsing), Rich console.pager() (CLI pager), HTML `<details>` (web UI)
 
----
+______________________________________________________________________
 
 ### Task 1: Add pdfplumber dependency and gitignore PDF
 
 **Files:**
+
 - Modify: `pyproject.toml:15-19`
+
 - Modify: `.gitignore:1-12`
 
 - [ ] **Step 1: Add pdfplumber to dependencies**
@@ -51,12 +53,14 @@ git add pyproject.toml .gitignore
 git commit -m "chore: add pdfplumber dependency and gitignore vendor PDFs"
 ```
 
----
+______________________________________________________________________
 
 ### Task 2: Add description field to InstructionRecord
 
 **Files:**
+
 - Modify: `src/simdref/models.py:53-89`
+
 - Create: `tests/test_models.py`
 
 - [ ] **Step 1: Write failing test**
@@ -150,13 +154,16 @@ git add src/simdref/models.py tests/test_models.py
 git commit -m "feat: add description field to InstructionRecord"
 ```
 
----
+______________________________________________________________________
 
 ### Task 3: Create PDF parsing package - base extractor
 
 **Files:**
+
 - Create: `src/simdref/pdfparse/__init__.py`
+
 - Create: `src/simdref/pdfparse/base.py`
+
 - Create: `tests/test_pdfparse.py`
 
 - [ ] **Step 1: Write failing test for base section extractor**
@@ -339,12 +346,14 @@ git add src/simdref/pdfparse/__init__.py src/simdref/pdfparse/base.py tests/test
 git commit -m "feat: add base PDF section extractor with font-based heading detection"
 ```
 
----
+______________________________________________________________________
 
 ### Task 4: Create Intel SDM parser
 
 **Files:**
+
 - Create: `src/simdref/pdfparse/intel.py`
+
 - Modify: `tests/test_pdfparse.py`
 
 - [ ] **Step 1: Write failing test for Intel parser**
@@ -585,11 +594,12 @@ git add src/simdref/pdfparse/intel.py tests/test_pdfparse.py
 git commit -m "feat: add Intel SDM PDF parser with title detection and section extraction"
 ```
 
----
+______________________________________________________________________
 
 ### Task 5: Integrate PDF parsing into ingest pipeline
 
 **Files:**
+
 - Modify: `src/simdref/ingest.py`
 
 - [ ] **Step 1: Add Intel SDM PDF fetch and description merge to ingest.py**
@@ -679,11 +689,12 @@ git add src/simdref/ingest.py
 git commit -m "feat: integrate Intel SDM PDF parsing into catalog build pipeline"
 ```
 
----
+______________________________________________________________________
 
 ### Task 6: Bump SQLite schema version
 
 **Files:**
+
 - Modify: `src/simdref/storage.py:58`
 
 - [ ] **Step 1: Bump schema version**
@@ -708,12 +719,14 @@ git add src/simdref/storage.py
 git commit -m "chore: bump SQLite schema version to 4 for description field"
 ```
 
----
+______________________________________________________________________
 
 ### Task 7: Add --short flag and pager to CLI
 
 **Files:**
+
 - Modify: `src/simdref/cli.py`
+
 - Modify: `src/simdref/display.py`
 
 - [ ] **Step 1: Add short flag to CLI global state**
@@ -926,13 +939,16 @@ git add src/simdref/cli.py src/simdref/display.py
 git commit -m "feat: add --short flag, pager output, and description section rendering"
 ```
 
----
+______________________________________________________________________
 
 ### Task 8: Update web UI with expandable description sections
 
 **Files:**
+
 - Modify: `src/simdref/web.py`
+
 - Modify: `src/simdref/templates/app.js`
+
 - Modify: `src/simdref/templates/style.css`
 
 - [ ] **Step 1: Include description in web detail chunks**
@@ -1099,11 +1115,12 @@ git add src/simdref/web.py src/simdref/templates/app.js src/simdref/templates/st
 git commit -m "feat: add expandable description sections to web UI"
 ```
 
----
+______________________________________________________________________
 
 ### Task 9: Update man pages with description sections
 
 **Files:**
+
 - Modify: `src/simdref/manpages.py`
 
 - [ ] **Step 1: Add description sections to instruction man page**
@@ -1144,7 +1161,7 @@ git add src/simdref/manpages.py
 git commit -m "feat: include description sections in generated man pages"
 ```
 
----
+______________________________________________________________________
 
 ### Task 10: Run full test suite and verify
 

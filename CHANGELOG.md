@@ -26,8 +26,7 @@ support is in place:
   and stable exit codes. Also installed under the `isa` alias — both
   executables accept every subcommand.
 - **`simdref build`** — full local rebuild from upstream sources
-  (including Intel SDM parsing); replaces the old `simdref update
-  --build` flag.
+  (including Intel SDM parsing); replaces the old `simdref update --build` flag.
 - **`simdref completion install|show`** subcommands for shell completion,
   replacing Typer's auto-generated `--install-completion` / `--show-completion`
   top-level options.

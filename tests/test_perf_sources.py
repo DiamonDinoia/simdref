@@ -97,12 +97,17 @@ class MergeTests(unittest.TestCase):
     def test_does_not_overwrite_existing_by_default(self):
         record = self._record("arm", "FMLA")
         record.arch_details["neoverse-n1"] = {
-            "source_kind": "measured", "latencies": [{"cycles": "3"}],
+            "source_kind": "measured",
+            "latencies": [{"cycles": "3"}],
         }
         row = PerfRow(
-            mnemonic="FMLA", core="neoverse-n1", source="llvm-mca",
-            source_kind="modeled", source_version="18.1.0",
-            architecture="arm", latency="99",
+            mnemonic="FMLA",
+            core="neoverse-n1",
+            source="llvm-mca",
+            source_kind="modeled",
+            source_version="18.1.0",
+            architecture="arm",
+            latency="99",
         )
         written = merge_perf_rows([record], [row])
         self.assertEqual(written, 0)
@@ -112,9 +117,13 @@ class MergeTests(unittest.TestCase):
         record = self._record("arm", "FMLA")
         record.arch_details["neoverse-n1"] = {"source_kind": "modeled"}
         row = PerfRow(
-            mnemonic="FMLA", core="neoverse-n1", source="llvm-mca",
-            source_kind="measured", source_version="llvm-mca@abc",
-            architecture="arm", latency="3",
+            mnemonic="FMLA",
+            core="neoverse-n1",
+            source="llvm-mca",
+            source_kind="measured",
+            source_version="llvm-mca@abc",
+            architecture="arm",
+            latency="3",
         )
         merge_perf_rows([record], [row], overwrite=True)
         self.assertEqual(record.arch_details["neoverse-n1"]["source_kind"], "measured")
@@ -123,8 +132,11 @@ class MergeTests(unittest.TestCase):
         a = self._record("arm", "FMLA", form="FMLA V0.4S, V1.4S, V2.4S")
         b = self._record("arm", "FMLA", form="FMLA V0.2D, V1.2D, V2.2D")
         row = PerfRow(
-            mnemonic="FMLA", core="neoverse-n1", source="llvm-mca",
-            source_kind="measured", source_version="llvm-mca@abc",
+            mnemonic="FMLA",
+            core="neoverse-n1",
+            source="llvm-mca",
+            source_kind="measured",
+            source_version="llvm-mca@abc",
             architecture="arm",
             form="FMLA V0.4S, V1.4S, V2.4S",
             latency="4",
@@ -136,8 +148,12 @@ class MergeTests(unittest.TestCase):
     def test_missing_mnemonic_is_noop(self):
         record = self._record("arm", "FMLA")
         row = PerfRow(
-            mnemonic="UNKNOWN", core="neoverse-n1", source="x",
-            source_kind="measured", source_version="v", architecture="arm",
+            mnemonic="UNKNOWN",
+            core="neoverse-n1",
+            source="x",
+            source_kind="measured",
+            source_version="v",
+            architecture="arm",
         )
         written = merge_perf_rows([record], [row])
         self.assertEqual(written, 0)
@@ -156,9 +172,7 @@ class LLVMMcaParseTests(unittest.TestCase):
                 }
             ]
         }
-        row = parse_llvm_mca_json(
-            payload, core=self._core(), mnemonic="FMLA", mca_version="18.1.0"
-        )
+        row = parse_llvm_mca_json(payload, core=self._core(), mnemonic="FMLA", mca_version="18.1.0")
         self.assertIsNotNone(row)
         assert row is not None
         self.assertEqual(row.latency, "4")
@@ -215,11 +229,7 @@ class LLVMSchedulingTests(unittest.TestCase):
     def test_extract_repeated_chunks_alternating_dep_breaker(self):
         # Prologue + (target, breaker) × 4 + epilogue. Neither pattern
         # repeats *consecutively* but both repeat by total count.
-        snippet = (
-            "EA0F1FFC05008052"
-            + ("AA0C014E" + "4C2D010E") * 4
-            + "EA0741FCC0035FD6"
-        )
+        snippet = "EA0F1FFC05008052" + ("AA0C014E" + "4C2D010E") * 4 + "EA0741FCC0035FD6"
         chunks = {c.hex().upper() for c in _extract_repeated_chunks(snippet, "aarch64")}
         self.assertIn("AA0C014E", chunks)  # dup v10.16b, w5 (target)
         self.assertIn("4C2D010E", chunks)  # smov w12, v10.b[0] (breaker)
@@ -259,9 +269,7 @@ class LLVMSchedulingTests(unittest.TestCase):
             "\tadd\tx0, x1, x2",
             "\tfmla\tv0.4s, v1.4s, v2.4s",
         ]
-        rows = _build_perf_rows(
-            payload, asm_lines, core=self._core(), mca_version="22.1.3"
-        )
+        rows = _build_perf_rows(payload, asm_lines, core=self._core(), mca_version="22.1.3")
         self.assertEqual(len(rows), 3)
         mnemonics = {row.mnemonic for row in rows}
         self.assertEqual(mnemonics, {"FADD", "ADD", "FMLA"})
@@ -311,15 +319,13 @@ class LLVMSchedulingTests(unittest.TestCase):
                         ]
                     },
                 }
-            ]
+            ],
         }
         asm_lines = [
             "\tfadd\tv0.4s, v1.4s, v2.4s",
             "\tldr\tq0, [x1]",
         ]
-        rows = _build_perf_rows(
-            payload, asm_lines, core=self._core(), mca_version="22.1.3"
-        )
+        rows = _build_perf_rows(payload, asm_lines, core=self._core(), mca_version="22.1.3")
         self.assertEqual(len(rows), 2)
         fadd = next(r for r in rows if r.mnemonic == "FADD")
         self.assertEqual(fadd.extra_measurement["uops"], "1")
@@ -346,7 +352,7 @@ class LLVMSchedulingTests(unittest.TestCase):
                         ]
                     },
                 }
-            ]
+            ],
         }
         rows = _build_perf_rows(
             payload,
@@ -381,7 +387,7 @@ class LLVMSchedulingTests(unittest.TestCase):
                         ]
                     },
                 }
-            ]
+            ],
         }
         rows = _build_perf_rows(
             payload,
@@ -407,7 +413,7 @@ class LLVMSchedulingTests(unittest.TestCase):
                         ]
                     },
                 }
-            ]
+            ],
         }
         rows = _build_perf_rows(
             payload,
@@ -442,9 +448,7 @@ class LLVMSchedulingTests(unittest.TestCase):
             "\tfadd\tv0.4s, v1.4s, v2.4s",
             "\tfadd\tv0.2d, v1.2d, v2.2d",
         ]
-        rows = _build_perf_rows(
-            payload, asm_lines, core=self._core(), mca_version="v"
-        )
+        rows = _build_perf_rows(payload, asm_lines, core=self._core(), mca_version="v")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].mnemonic, "FADD")
 
@@ -461,26 +465,18 @@ class LLVMSchedulingTests(unittest.TestCase):
                 "key:\n"
                 "  instructions:\n"
                 "    - 'FADDv4f32 Q0 Q1 Q2'\n"
-                "assembled_snippet: "
-                + "AABBCCDD" + "DEADBEEF" * 4 + "CAFEBABE\n"
-                + "...\n"
+                "assembled_snippet: " + "AABBCCDD" + "DEADBEEF" * 4 + "CAFEBABE\n" + "...\n"
             )
-            (cache_dir / "disassembly.s").write_text(
-                "\tfadd\tv0.4s, v1.4s, v2.4s\n"
-            )
+            (cache_dir / "disassembly.s").write_text("\tfadd\tv0.4s, v1.4s, v2.4s\n")
             # payload below — the mca.json cache file
             (cache_dir / "mca.json").write_text(
                 json.dumps(
                     {
                         "CodeRegions": [
                             {
-                                "Instructions": [
-                                    "\tfadd\tv0.4s, v1.4s, v2.4s"
-                                ],
+                                "Instructions": ["\tfadd\tv0.4s, v1.4s, v2.4s"],
                                 "InstructionInfoView": {
-                                    "InstructionList": [
-                                        {"Latency": 3, "RThroughput": 0.5}
-                                    ]
+                                    "InstructionList": [{"Latency": 3, "RThroughput": 0.5}]
                                 },
                             }
                         ]
@@ -488,12 +484,8 @@ class LLVMSchedulingTests(unittest.TestCase):
                 )
             )
             # All three cache files exist, so no subprocess should run.
-            with mock.patch(
-                "subprocess.run", side_effect=AssertionError("no subprocess expected")
-            ):
-                rows = collect_core_schedule(
-                    core, cache_root=cache_root, mca_version="22.1.3"
-                )
+            with mock.patch("subprocess.run", side_effect=AssertionError("no subprocess expected")):
+                rows = collect_core_schedule(core, cache_root=cache_root, mca_version="22.1.3")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].mnemonic, "FADD")
         self.assertEqual(rows[0].latency, "3")
@@ -508,9 +500,7 @@ class LLVMSchedulingTests(unittest.TestCase):
             cache_dir.mkdir(parents=True)
             (cache_dir / "exegesis.yaml").write_text("# empty file\n")
             with self.assertRaises(LLVMSchedulingError):
-                collect_core_schedule(
-                    core, cache_root=cache_root, mca_version="22.1.3"
-                )
+                collect_core_schedule(core, cache_root=cache_root, mca_version="22.1.3")
 
     def test_llvm_mca_error_type_exists(self):
         self.assertTrue(issubclass(LLVMMcaError, RuntimeError))

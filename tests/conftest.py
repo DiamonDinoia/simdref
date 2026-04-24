@@ -58,16 +58,24 @@ def build_fixture_catalog(*, status: Callable[[str], None] | None = None) -> Cat
     emit("Loading Intel fixture")
     intrinsics = parse_intel_payload(_fixture_text("intel_intrinsics_sample.json"))
     emit("Loading Arm ACLE fixture")
-    intrinsics.extend(parse_arm_intrinsics_payload(_fixture_text("arm_acle_intrinsics_sample.json")))
+    intrinsics.extend(
+        parse_arm_intrinsics_payload(_fixture_text("arm_acle_intrinsics_sample.json"))
+    )
     emit("Loading RISC-V RVV intrinsics fixture")
-    intrinsics.extend(parse_riscv_intrinsics_payload(_fixture_text("riscv_rvv_intrinsics_sample.json")))
+    intrinsics.extend(
+        parse_riscv_intrinsics_payload(_fixture_text("riscv_rvv_intrinsics_sample.json"))
+    )
 
     emit("Loading uops.info fixture")
     instructions = parse_uops_xml(_fixture_text("uops_sample.xml"))
     emit("Loading Arm A64 instruction fixture")
-    instructions.extend(parse_arm_instruction_payload(_fixture_text("arm_a64_instructions_sample.json")))
+    instructions.extend(
+        parse_arm_instruction_payload(_fixture_text("arm_a64_instructions_sample.json"))
+    )
     emit("Loading RISC-V unified-db fixture")
-    instructions.extend(parse_riscv_instruction_payload(_fixture_text("riscv_unified_db_sample.json")))
+    instructions.extend(
+        parse_riscv_instruction_payload(_fixture_text("riscv_unified_db_sample.json"))
+    )
 
     emit("Linking intrinsics to instructions")
     link_records(intrinsics, instructions)

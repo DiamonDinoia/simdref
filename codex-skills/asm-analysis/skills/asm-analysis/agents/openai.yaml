@@ -1,0 +1,7 @@
+interface:
+  display_name: "Assembly Analysis"
+  short_description: "Analyze generated assembly and SIMD costs"
+  default_prompt: "Use $asm-analysis to inspect generated assembly for this hot C/C++ loop and propose SIMD-oriented optimizations."
+
+policy:
+  allow_implicit_invocation: true

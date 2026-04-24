@@ -47,6 +47,7 @@ THRESHOLDS_PATH = REPO_ROOT / "docs" / "coverage" / "thresholds.toml"
 # Upstream name extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_intel_names(text: str) -> set[str]:
     """Intel data.js/XML has ``<intrinsic name="_mm_...">`` entries."""
     names = set(re.findall(r'<intrinsic\b[^>]*\bname\s*=\s*\\?["\']([^"\'\\]+)', text))
@@ -119,8 +120,7 @@ def _extract_arm_a64_mnemonics(text: str) -> set[str]:
         if not isinstance(top, list) or not top:
             return False
         return all(
-            isinstance(n, dict) and str(n.get("_type", "")).endswith("InstructionSet")
-            for n in top
+            isinstance(n, dict) and str(n.get("_type", "")).endswith("InstructionSet") for n in top
         )
 
     def _first_literal_mnemonic(assembly: Any) -> str | None:
@@ -223,7 +223,11 @@ def _extract_riscv_rvv_names(text: str) -> set[str]:
         payload = json.loads(text)
     except Exception:
         return set()
-    items = payload if isinstance(payload, list) else payload.get("intrinsics") or payload.get("items") or []
+    items = (
+        payload
+        if isinstance(payload, list)
+        else payload.get("intrinsics") or payload.get("items") or []
+    )
     names: set[str] = set()
     for item in items:
         if not isinstance(item, dict):
@@ -258,6 +262,7 @@ def _extract_riscv_unified_db_mnemonics(text: str) -> set[str]:
 # Local catalog name extraction
 # ---------------------------------------------------------------------------
 
+
 def _local_intrinsic_names(catalog, arch: str) -> set[str]:
     return {r.name for r in catalog.intrinsics if r.architecture == arch}
 
@@ -275,6 +280,7 @@ def _local_instruction_mnemonics(catalog, arch: str, *, upper: bool = True) -> s
 # ---------------------------------------------------------------------------
 # Source registry
 # ---------------------------------------------------------------------------
+
 
 def _source_specs(catalog):
     return [
@@ -318,7 +324,9 @@ def _source_specs(catalog):
             "label": "RISC-V unified DB",
             "fetch": lambda: src.fetch_riscv_unified_db_data(),
             "upstream_fn": _extract_riscv_unified_db_mnemonics,
-            "local_names": {m.lower() for m in _local_instruction_mnemonics(catalog, "riscv", upper=False)},
+            "local_names": {
+                m.lower() for m in _local_instruction_mnemonics(catalog, "riscv", upper=False)
+            },
         },
     ]
 
@@ -326,6 +334,7 @@ def _source_specs(catalog):
 # ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------
+
 
 def _diff_source(spec: dict) -> dict:
     try:
@@ -353,7 +362,6 @@ def _diff_source(spec: dict) -> dict:
         "label": spec["label"],
         "fetched_version": getattr(version, "version", ""),
         "fetched_url": getattr(version, "url", ""),
-        
         "upstream": len(upstream_names),
         "local": len(local),
         "matched": len(matched),
@@ -387,6 +395,7 @@ def _default_threshold() -> float:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     catalog = load_catalog()
     specs = _source_specs(catalog)
@@ -406,7 +415,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         summary["sources"][spec["id"]] = result
         cov = result.get("coverage")
         cov_str = f"{cov:.3f}" if isinstance(cov, float) else "unknown"
-        print(f"  {spec['id']:22s} upstream={result['upstream']:>6d} local={result['local']:>6d} cov={cov_str}")
+        print(
+            f"  {spec['id']:22s} upstream={result['upstream']:>6d} local={result['local']:>6d} cov={cov_str}"
+        )
 
     SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
     SUMMARY_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
@@ -420,10 +431,12 @@ def cmd_report(args: argparse.Namespace) -> int:
         return 2
     summary = json.loads(SUMMARY_PATH.read_text())
     cat = summary.get("catalog", {})
-    print(f"Catalog: {cat.get('intrinsics', '?')} intrinsics, {cat.get('instructions', '?')} instructions")
+    print(
+        f"Catalog: {cat.get('intrinsics', '?')} intrinsics, {cat.get('instructions', '?')} instructions"
+    )
     for sid, data in summary.get("sources", {}).items():
         cov = data.get("coverage")
-        cov_str = f"{cov*100:5.1f}%" if isinstance(cov, float) else "  ??? "
+        cov_str = f"{cov * 100:5.1f}%" if isinstance(cov, float) else "  ??? "
         print(
             f"  {sid:22s} {data.get('label', '')}  upstream={data['upstream']:>6d} "
             f"local={data['local']:>6d}  coverage={cov_str}"

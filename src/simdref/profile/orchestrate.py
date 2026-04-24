@@ -152,11 +152,16 @@ def run_pipeline(
         else:
             _run_simdref(
                 [
-                    "profile", "ingest",
-                    "--adapter", "perf",
-                    "--binary", str(target),
-                    "--input", str(perf_data),
-                    "-o", str(samples_json),
+                    "profile",
+                    "ingest",
+                    "--adapter",
+                    "perf",
+                    "--binary",
+                    str(target),
+                    "--input",
+                    str(perf_data),
+                    "-o",
+                    str(samples_json),
                 ]
             )
             _mark_stage(marker, key)
@@ -176,11 +181,16 @@ def run_pipeline(
     else:
         _run_simdref(
             [
-                "profile", "hotloops",
-                str(disasm), str(samples_json),
-                "--event", rank_event,
-                "--top", str(top_loops),
-                "-o", str(loops_json),
+                "profile",
+                "hotloops",
+                str(disasm),
+                str(samples_json),
+                "--event",
+                rank_event,
+                "--top",
+                str(top_loops),
+                "-o",
+                str(loops_json),
             ]
         )
         _mark_stage(marker, key)
@@ -194,20 +204,30 @@ def run_pipeline(
     else:
         _run_simdref(
             [
-                "profile", "merge",
-                str(annotated), str(samples_json),
-                "--restrict-to", str(loops_json),
-                "--format", "sa",
-                "-o", str(merged_sa),
+                "profile",
+                "merge",
+                str(annotated),
+                str(samples_json),
+                "--restrict-to",
+                str(loops_json),
+                "--format",
+                "sa",
+                "-o",
+                str(merged_sa),
             ]
         )
         _run_simdref(
             [
-                "profile", "merge",
-                str(annotated), str(samples_json),
-                "--restrict-to", str(loops_json),
-                "--format", "json",
-                "-o", str(merged_json),
+                "profile",
+                "merge",
+                str(annotated),
+                str(samples_json),
+                "--restrict-to",
+                str(loops_json),
+                "--format",
+                "json",
+                "-o",
+                str(merged_json),
             ]
         )
         _mark_stage(marker, key)
@@ -255,32 +275,29 @@ def _render_summary(loops_json: Path, merged_json: Path) -> str:
             )
         lines.append("")
 
-    hot = [
-        r for r in merged
-        if (r.get("hotness") or {}).get("in_hot_loop") is True
-    ]
+    hot = [r for r in merged if (r.get("hotness") or {}).get("in_hot_loop") is True]
     if hot:
-        hot.sort(key=lambda r: -next(
-            iter(
-                v.get("weight", 0.0)
-                for k, v in (r.get("hotness") or {}).items()
-                if isinstance(v, dict)
-            ),
-            0.0,
-        ))
+        hot.sort(
+            key=lambda r: (
+                -next(
+                    iter(
+                        v.get("weight", 0.0)
+                        for k, v in (r.get("hotness") or {}).items()
+                        if isinstance(v, dict)
+                    ),
+                    0.0,
+                )
+            )
+        )
         lines.append("## Hottest instructions")
         for r in hot[:10]:
             first_event = next(
-                (
-                    (k, v)
-                    for k, v in (r.get("hotness") or {}).items()
-                    if isinstance(v, dict)
-                ),
+                ((k, v) for k, v in (r.get("hotness") or {}).items() if isinstance(v, dict)),
                 None,
             )
             weight = first_event[1].get("weight", 0.0) * 100.0 if first_event else 0.0
             lines.append(
-                f"- `{r.get('mnemonic','')}` {r.get('annotation','') or ''} — "
-                f"{weight:.1f}% at {r.get('address','?')}"
+                f"- `{r.get('mnemonic', '')}` {r.get('annotation', '') or ''} — "
+                f"{weight:.1f}% at {r.get('address', '?')}"
             )
     return "\n".join(lines) + "\n"

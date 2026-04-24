@@ -145,8 +145,13 @@ _SIZE_SPECIFIER_RE = re.compile(
     re.IGNORECASE,
 )
 _SIZE_TO_BITS = {
-    "byte": "8", "word": "16", "dword": "32", "qword": "64",
-    "xmmword": "128", "ymmword": "256", "zmmword": "512",
+    "byte": "8",
+    "word": "16",
+    "dword": "32",
+    "qword": "64",
+    "xmmword": "128",
+    "ymmword": "256",
+    "zmmword": "512",
 }
 # Register classes ordered so longer/wider names match first.
 _REG_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -206,7 +211,8 @@ def pick_record(
 
     def score(rec: InstructionRecord) -> tuple[int, int, int]:
         measured = sum(
-            1 for d in (rec.arch_details or {}).values()
+            1
+            for d in (rec.arch_details or {}).values()
             if (d.get("source_kind") or "measured") == "measured"
         )
         op_score = _operand_match_score(rec, op_tokens)
@@ -320,9 +326,7 @@ def _fmt_num(x: float | None) -> str:
     return f"{x:.2f}"
 
 
-def arch_perf(
-    record: InstructionRecord, arch: str
-) -> tuple[float | None, float | None, str]:
+def arch_perf(record: InstructionRecord, arch: str) -> tuple[float | None, float | None, str]:
     """Return ``(latency, cpi, source_kind)`` for *arch* on *record*.
 
     Missing values are ``None`` and ``source_kind`` falls back to
@@ -413,9 +417,7 @@ def format_annotation(
             else:
                 tag = f"[{arch}, {kind}]"
         else:
-            summary = aggregate_perf(
-                record, mode=agg, include_modeled=include_modeled
-            )
+            summary = aggregate_perf(record, mode=agg, include_modeled=include_modeled)
             lat, cpi = summary.latency, summary.cpi
             if summary.n_archs == 0:
                 tag = "[no data]"

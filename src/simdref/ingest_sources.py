@@ -23,6 +23,7 @@ class SourceUnavailableError(RuntimeError):
     release catalog via ``simdref update`` instead of ``--build``.
     """
 
+
 UOPS_XML_URL = "https://uops.info/instructions.xml"
 INTEL_OFFLINE_ZIP_URL = "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip"
 INTEL_INDEX_URL = "https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html"
@@ -39,7 +40,9 @@ ARM_A64_ARCHIVE_URL = (
     "AARCHMRS_BSD/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz"
 )
 ARM_ACLE_ARCHIVE_URL = "https://codeload.github.com/ARM-software/acle/zip/refs/heads/main"
-ARM_INTRINSICS_DATA_BASE_URL = "https://developer.arm.com/architectures/instruction-sets/intrinsics/data/"
+ARM_INTRINSICS_DATA_BASE_URL = (
+    "https://developer.arm.com/architectures/instruction-sets/intrinsics/data/"
+)
 ARM_INTRINSICS_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "intrinsics.json"
 ARM_INTRINSICS_OPERATIONS_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "operations.json"
 ARM_INTRINSICS_EXAMPLES_JSON_URL = ARM_INTRINSICS_DATA_BASE_URL + "examples.json"
@@ -214,7 +217,9 @@ def fetch_intel_data() -> tuple[str, SourceVersion]:
     )
 
 
-def _read_local_text(paths: list[Path], source: str, version_prefix: str) -> tuple[str, SourceVersion] | None:
+def _read_local_text(
+    paths: list[Path], source: str, version_prefix: str
+) -> tuple[str, SourceVersion] | None:
     for text_path in paths:
         if not text_path.exists():
             continue
@@ -262,11 +267,13 @@ def _augment_riscv_unified_db_payload_with_docs(text: str) -> str:
         try:
             parsed = json.loads(local_docs[0])
             if isinstance(parsed, dict):
-                docs_pages.update({
-                    str(key).strip(): str(value).strip()
-                    for key, value in parsed.items()
-                    if str(key).strip() and str(value).strip()
-                })
+                docs_pages.update(
+                    {
+                        str(key).strip(): str(value).strip()
+                        for key, value in parsed.items()
+                        if str(key).strip() and str(value).strip()
+                    }
+                )
         except Exception:
             pass
 
@@ -308,7 +315,9 @@ def _arm_acle_bundle_payload(
     )
 
 
-def _arm_intrinsics_bundle_payload(intrinsics_json: str, operations_json: str, examples_json: str = "[]") -> str:
+def _arm_intrinsics_bundle_payload(
+    intrinsics_json: str, operations_json: str, examples_json: str = "[]"
+) -> str:
     return json.dumps(
         {
             "format": "arm-intrinsics-json-v1",
@@ -409,10 +418,14 @@ def _read_local_arm_instruction_archive() -> tuple[str, SourceVersion] | None:
             continue
         if archive_path.suffix == ".zip":
             with zipfile.ZipFile(archive_path) as zf:
-                payload, member_name = _extract_zip_text_by_match(zf, _looks_like_arm_instruction_json)
+                payload, member_name = _extract_zip_text_by_match(
+                    zf, _looks_like_arm_instruction_json
+                )
         else:
             with tarfile.open(archive_path, "r:*") as tf:
-                payload, member_name = _extract_tar_text_by_match(tf, _looks_like_arm_instruction_json)
+                payload, member_name = _extract_tar_text_by_match(
+                    tf, _looks_like_arm_instruction_json
+                )
         return _arm_instruction_bundle_payload(payload), SourceVersion(
             source="arm-a64",
             version=f"archive:{archive_path.name}:{member_name}",
@@ -535,9 +548,7 @@ def fetch_arm_a64_data() -> tuple[str, SourceVersion]:
     try:
         refresh_local_arm_a64_archive()
     except Exception as exc:
-        raise SourceUnavailableError(
-            f"Arm A64 instruction data is unreachable: {exc}"
-        ) from exc
+        raise SourceUnavailableError(f"Arm A64 instruction data is unreachable: {exc}") from exc
     archive = _read_local_arm_instruction_archive()
     if archive is not None:
         return archive

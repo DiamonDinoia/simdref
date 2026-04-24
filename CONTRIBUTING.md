@@ -56,17 +56,17 @@ isa build                 # download + parse, rebuild from scratch (includes Int
 
 1. Read `docs/SOURCES.md` for the existing sources, their refresh cadence,
    and license notes.
-2. Write an ingestor under `src/simdref/ingest_sources.py` (or a new module
+1. Write an ingestor under `src/simdref/ingest_sources.py` (or a new module
    if the source is substantial) that returns typed records matching
    `simdref.models.IntrinsicRecord` / `InstructionRecord`. Every perf row
    must be tagged with a `source_kind` (`measured` or `modeled`) — this is
    load-bearing invariant the rest of the pipeline relies on.
-3. Wire the new ingestor into `simdref.ingest.build_catalog`.
-4. Add a small fixture to `tests/fixtures/` and extend `tests/conftest.py`
+1. Wire the new ingestor into `simdref.ingest.build_catalog`.
+1. Add a small fixture to `tests/fixtures/` and extend `tests/conftest.py`
    so the offline test path carries at least one record from the new source.
-5. Add a coverage row to `docs/coverage/summary.json` and run
+1. Add a coverage row to `docs/coverage/summary.json` and run
    `python tools/audit_coverage.py fetch` to verify parity.
-6. Update `docs/SOURCES.md` and the "Data sources" table in `README.md`.
+1. Update `docs/SOURCES.md` and the "Data sources" table in `README.md`.
 
 ## Commit hygiene
 

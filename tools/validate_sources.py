@@ -62,7 +62,12 @@ def _normalize_isa_list(value: Any) -> list[str]:
 _X86_SDM_EXPECTATIONS: dict[str, dict[str, object]] = {
     "ADDPS": {
         "family": "SSE",
-        "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
+        "sections": (
+            "Description",
+            "Operation",
+            "Intrinsic Equivalents",
+            "SIMD Floating-Point Exceptions",
+        ),
         "contains": {
             "Description": "packed single precision floating-point",
             "Operation": "DEST",
@@ -155,7 +160,12 @@ _X86_SDM_EXPECTATIONS: dict[str, dict[str, object]] = {
     },
     "VCVTNEPS2BF16": {
         "family": "AVX-512 BF16",
-        "sections": ("Description", "Operation", "Intrinsic Equivalents", "SIMD Floating-Point Exceptions"),
+        "sections": (
+            "Description",
+            "Operation",
+            "Intrinsic Equivalents",
+            "SIMD Floating-Point Exceptions",
+        ),
         "contains": {
             "Description": "converts the elements to BF16",
             "Operation": "convert_fp32_to_bfloat16",
@@ -250,7 +260,11 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
                     "name": name,
                     "signature": f"{ret} {name}({', '.join(params)})",
                     "header": _strip(node.findtext("./header") or node.attrib.get("header")),
-                    "isa": [_strip(cpuid.text) for cpuid in node.findall("./CPUID") if _strip(cpuid.text)],
+                    "isa": [
+                        _strip(cpuid.text)
+                        for cpuid in node.findall("./CPUID")
+                        if _strip(cpuid.text)
+                    ],
                     "category": _strip(node.findtext("./category") or node.attrib.get("category")),
                     "instructions": instructions,
                 }
@@ -258,7 +272,11 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
         return records
 
     payload = json.loads(unwrapped)
-    candidates = payload.get("intrinsics") or payload.get("data") or payload.get("records") or [] if isinstance(payload, dict) else payload
+    candidates = (
+        payload.get("intrinsics") or payload.get("data") or payload.get("records") or []
+        if isinstance(payload, dict)
+        else payload
+    )
     records = []
     for item in candidates or []:
         name = _strip(item.get("name") or item.get("intrinsic"))
@@ -278,7 +296,9 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
                     else:
                         rendered_params.append(_strip(param))
             signature = f"{return_type} {name}({', '.join(p for p in rendered_params if p)})"
-        instructions = item.get("instructions") or item.get("instruction") or item.get("Instruction") or []
+        instructions = (
+            item.get("instructions") or item.get("instruction") or item.get("Instruction") or []
+        )
         if isinstance(instructions, str):
             instructions = [instructions]
         records.append(
@@ -286,7 +306,9 @@ def _raw_intel_intrinsic_records(text: str) -> list[dict[str, Any]]:
                 "name": name,
                 "signature": signature,
                 "header": _strip(item.get("header") or item.get("include")),
-                "isa": _normalize_isa_list(item.get("isa") or item.get("tech") or item.get("instructionSet") or []),
+                "isa": _normalize_isa_list(
+                    item.get("isa") or item.get("tech") or item.get("instructionSet") or []
+                ),
                 "category": _strip(item.get("category")),
                 "instructions": [_strip(value) for value in instructions if _strip(value)],
             }
@@ -317,7 +339,11 @@ def validate_intel_intrinsics() -> tuple[int, int]:
         # The parser preserves each as a distinct record; match the raw entry to the
         # parsed record that agrees on header+category, falling back to the first one.
         header_matches = [r for r in records if not raw["header"] or r.header == raw["header"]]
-        candidates = [r for r in header_matches if not raw["category"] or r.category == raw["category"]] or header_matches or records
+        candidates = (
+            [r for r in header_matches if not raw["category"] or r.category == raw["category"]]
+            or header_matches
+            or records
+        )
         record = candidates[0]
         if f"{name}(" not in record.signature:
             print(f"FAIL intel intrinsics: signature missing intrinsic name for {name}")
@@ -329,7 +355,9 @@ def validate_intel_intrinsics() -> tuple[int, int]:
             print(f"FAIL intel intrinsics: category mismatch for {name}")
             failures += 1
         if raw["instructions"]:
-            parsed_insts = [str(value).strip() for value in record.instructions if str(value).strip()]
+            parsed_insts = [
+                str(value).strip() for value in record.instructions if str(value).strip()
+            ]
             if not parsed_insts:
                 print(f"FAIL intel intrinsics: missing parsed instruction refs for {name}")
                 failures += 1
@@ -338,7 +366,9 @@ def validate_intel_intrinsics() -> tuple[int, int]:
             failures += 1
 
     if len(parsed) < len(raw_records):
-        print(f"FAIL intel intrinsics: parsed count {len(parsed)} < source count {len(raw_records)}")
+        print(
+            f"FAIL intel intrinsics: parsed count {len(parsed)} < source count {len(raw_records)}"
+        )
         failures += 1
     print(f"validated Intel intrinsics: checked={checked} parsed={len(parsed)} failures={failures}")
     return checked, failures
@@ -350,7 +380,12 @@ def _raw_uops_instructions(source: str | Path) -> list[dict[str, Any]]:
         mnemonic = _strip(node.attrib.get("asm") or node.attrib.get("name"))
         if not mnemonic:
             continue
-        form = _strip(node.attrib.get("string") or node.attrib.get("form") or node.attrib.get("cpl") or node.attrib.get("category"))
+        form = _strip(
+            node.attrib.get("string")
+            or node.attrib.get("form")
+            or node.attrib.get("cpl")
+            or node.attrib.get("category")
+        )
         raw_records.append(
             {
                 "mnemonic": mnemonic,
@@ -386,7 +421,9 @@ def validate_uops_instructions() -> tuple[int, int]:
         if not candidates:
             candidates = by_key.get((raw["mnemonic"], raw["form"]), [])
         if not candidates:
-            print(f"FAIL uops: missing record for {raw['mnemonic']} / {raw['iform'] or raw['form']}")
+            print(
+                f"FAIL uops: missing record for {raw['mnemonic']} / {raw['iform'] or raw['form']}"
+            )
             failures += 1
             continue
 
@@ -428,7 +465,9 @@ def validate_uops_instructions() -> tuple[int, int]:
     if len(parsed) < len(raw_records):
         print(f"FAIL uops: parsed count {len(parsed)} < source count {len(raw_records)}")
         failures += 1
-    print(f"validated uops.info instructions: checked={checked} parsed={len(parsed)} failures={failures}")
+    print(
+        f"validated uops.info instructions: checked={checked} parsed={len(parsed)} failures={failures}"
+    )
     return checked, failures
 
 
@@ -441,7 +480,9 @@ def validate_arm_intrinsics() -> tuple[int, int]:
     checked = 0
 
     if payload.get("format") != "arm-intrinsics-json-v1":
-        print(f"validated Arm intrinsics: checked={len(parsed)} parsed={len(parsed)} failures=0 (fallback payload)")
+        print(
+            f"validated Arm intrinsics: checked={len(parsed)} parsed={len(parsed)} failures=0 (fallback payload)"
+        )
         return len(parsed), 0
 
     raw_intrinsics = json.loads(str(payload.get("intrinsics_json") or "[]"))
@@ -453,7 +494,9 @@ def validate_arm_intrinsics() -> tuple[int, int]:
     }
 
     for item in raw_intrinsics:
-        simd_isa = [str(value).strip() for value in item.get("SIMD_ISA") or [] if str(value).strip()]
+        simd_isa = [
+            str(value).strip() for value in item.get("SIMD_ISA") or [] if str(value).strip()
+        ]
         if not {"Neon", "SVE", "SVE2"} & set(simd_isa):
             continue
         raw_name = _strip(item.get("name"))
@@ -470,11 +513,15 @@ def validate_arm_intrinsics() -> tuple[int, int]:
         if record.header != expected_header:
             print(f"FAIL arm intrinsics: header mismatch for {name}")
             failures += 1
-        expected_refs = _arm_live_instruction_refs([group for group in (item.get("instructions") or []) if isinstance(group, dict)])
+        expected_refs = _arm_live_instruction_refs(
+            [group for group in (item.get("instructions") or []) if isinstance(group, dict)]
+        )
         if record.instruction_refs != expected_refs:
             print(f"FAIL arm intrinsics: instruction refs mismatch for {name}")
             failures += 1
-        expected_arches = "/".join(str(value).strip() for value in item.get("Architectures") or [] if str(value).strip())
+        expected_arches = "/".join(
+            str(value).strip() for value in item.get("Architectures") or [] if str(value).strip()
+        )
         if record.metadata.get("supported_architectures", "") != expected_arches:
             print(f"FAIL arm intrinsics: supported architectures mismatch for {name}")
             failures += 1
@@ -510,7 +557,14 @@ def _instruction_candidates(payload: Any) -> list[dict[str, Any]]:
         return results
     if not isinstance(payload, dict):
         return []
-    for key in ("instructions", "base_instructions", "instruction_set", "InstructionSet", "items", "records"):
+    for key in (
+        "instructions",
+        "base_instructions",
+        "instruction_set",
+        "InstructionSet",
+        "items",
+        "records",
+    ):
         value = payload.get(key)
         if isinstance(value, list) and all(isinstance(item, dict) for item in value):
             return _instruction_candidates(value)
@@ -649,7 +703,9 @@ def validate_riscv_instructions() -> tuple[int, int]:
         if not record.summary.strip():
             print(f"FAIL riscv instructions: empty summary for {form}")
             failures += 1
-    print(f"validated RISC-V instructions: checked={checked} parsed={len(parsed)} failures={failures}")
+    print(
+        f"validated RISC-V instructions: checked={checked} parsed={len(parsed)} failures={failures}"
+    )
     return checked, failures
 
 
@@ -669,12 +725,16 @@ def validate_riscv_intrinsic_links() -> tuple[int, int]:
             if not ref.get("key", "").strip():
                 unresolved += 1
                 failures += 1
-                print(f"FAIL riscv links: unresolved {intrinsic.name} -> {ref.get('form') or ref.get('name')}")
+                print(
+                    f"FAIL riscv links: unresolved {intrinsic.name} -> {ref.get('form') or ref.get('name')}"
+                )
                 continue
             if ref.get("match_count") != "1":
                 ambiguous += 1
                 failures += 1
-                print(f"FAIL riscv links: ambiguous {intrinsic.name} -> {ref.get('form') or ref.get('name')} matches={ref.get('match_count')}")
+                print(
+                    f"FAIL riscv links: ambiguous {intrinsic.name} -> {ref.get('form') or ref.get('name')} matches={ref.get('match_count')}"
+                )
 
     print(
         "validated RISC-V intrinsic links: "
@@ -705,23 +765,38 @@ def validate_riscv_semantics_and_coverage() -> tuple[int, int]:
             print(f"FAIL riscv semantics: missing Operation for {mnemonic}")
             failures += 1
 
-    described = sum(1 for record in instructions if record.description.get("Description", "").strip())
-    operational = sum(1 for record in instructions if record.description.get("Operation", "").strip())
+    described = sum(
+        1 for record in instructions if record.description.get("Description", "").strip()
+    )
+    operational = sum(
+        1 for record in instructions if record.description.get("Operation", "").strip()
+    )
     linkable = sum(1 for intrinsic in intrinsics if intrinsic.instruction_refs)
-    linked = sum(1 for intrinsic in intrinsics if intrinsic.instruction_refs and all(ref.get("key", "").strip() for ref in intrinsic.instruction_refs))
+    linked = sum(
+        1
+        for intrinsic in intrinsics
+        if intrinsic.instruction_refs
+        and all(ref.get("key", "").strip() for ref in intrinsic.instruction_refs)
+    )
     description_coverage = described / len(instructions) if instructions else 0.0
     operation_coverage = operational / len(instructions) if instructions else 0.0
     link_coverage = linked / linkable if linkable else 1.0
 
     if description_coverage < _RISCV_MIN_DESCRIPTION_COVERAGE:
         failures += 1
-        print(f"FAIL riscv coverage: description {description_coverage:.3f} below threshold {_RISCV_MIN_DESCRIPTION_COVERAGE:.3f}")
+        print(
+            f"FAIL riscv coverage: description {description_coverage:.3f} below threshold {_RISCV_MIN_DESCRIPTION_COVERAGE:.3f}"
+        )
     if operation_coverage < _RISCV_MIN_OPERATION_COVERAGE:
         failures += 1
-        print(f"FAIL riscv coverage: operation {operation_coverage:.3f} below threshold {_RISCV_MIN_OPERATION_COVERAGE:.3f}")
+        print(
+            f"FAIL riscv coverage: operation {operation_coverage:.3f} below threshold {_RISCV_MIN_OPERATION_COVERAGE:.3f}"
+        )
     if link_coverage < _RISCV_MIN_LINK_COVERAGE:
         failures += 1
-        print(f"FAIL riscv coverage: links {link_coverage:.3f} below threshold {_RISCV_MIN_LINK_COVERAGE:.3f}")
+        print(
+            f"FAIL riscv coverage: links {link_coverage:.3f} below threshold {_RISCV_MIN_LINK_COVERAGE:.3f}"
+        )
 
     family_counts: dict[str, int] = {}
     for family in _RISCV_EXPECTED_SEMANTICS.values():
@@ -739,7 +814,9 @@ def validate_riscv_semantics_and_coverage() -> tuple[int, int]:
     print(
         "validated RISC-V coverage summary: "
         f"instructions={len(instructions)} intrinsics={len(intrinsics)} "
-        + " ".join(f"{family.replace('/', '_')}={count}" for family, count in sorted(family_counts.items()))
+        + " ".join(
+            f"{family.replace('/', '_')}={count}" for family, count in sorted(family_counts.items())
+        )
     )
     return len(instructions), failures
 
@@ -770,7 +847,13 @@ def _sdm_payload_for_mnemonic(
     return None
 
 
-def _x86_instruction_indexes(instructions: list[Any]) -> tuple[dict[tuple[str, str], list[Any]], dict[tuple[str, str], list[Any]], dict[tuple[str, str], list[Any]]]:
+def _x86_instruction_indexes(
+    instructions: list[Any],
+) -> tuple[
+    dict[tuple[str, str], list[Any]],
+    dict[tuple[str, str], list[Any]],
+    dict[tuple[str, str], list[Any]],
+]:
     by_mnemonic: dict[tuple[str, str], list[Any]] = {}
     by_key: dict[tuple[str, str], list[Any]] = {}
     by_iform: dict[tuple[str, str], list[Any]] = {}
@@ -796,7 +879,10 @@ def validate_x86_intrinsic_links() -> tuple[int, int]:
     unresolved = 0
 
     for intrinsic in intrinsics:
-        refs = intrinsic.instruction_refs or [{"name": name, "form": "", "xed": "", "architecture": "x86"} for name in intrinsic.instructions]
+        refs = intrinsic.instruction_refs or [
+            {"name": name, "form": "", "xed": "", "architecture": "x86"}
+            for name in intrinsic.instructions
+        ]
         for ref in refs:
             checked += 1
             matched, resolution = _resolve_instruction_ref(
@@ -809,12 +895,16 @@ def validate_x86_intrinsic_links() -> tuple[int, int]:
             match_count = int(resolution["match_count"])
             if not matched:
                 unresolved += 1
-                print(f"WARN x86 links: unresolved {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip())
+                print(
+                    f"WARN x86 links: unresolved {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip()
+                )
                 continue
             resolved += 1
             if ref.get("xed", "").strip() and match_count != 1:
                 ambiguous += 1
-                print(f"WARN x86 links: ambiguous xed mapping for {intrinsic.name} -> {ref.get('xed')}: {match_count} matches")
+                print(
+                    f"WARN x86 links: ambiguous xed mapping for {intrinsic.name} -> {ref.get('xed')}: {match_count} matches"
+                )
 
     link_records(intrinsics, instructions)
     linked_by_name = {record.name: record for record in intrinsics}
@@ -824,7 +914,9 @@ def validate_x86_intrinsic_links() -> tuple[int, int]:
             if ref.get("key", "").strip():
                 continue
             unresolved += 1
-            print(f"WARN x86 links: unresolved after linking for {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip())
+            print(
+                f"WARN x86 links: unresolved after linking for {intrinsic.name} -> {ref.get('name', '')} {ref.get('form', '')}".rstrip()
+            )
 
     print(
         "validated x86 intrinsic links: "
@@ -858,7 +950,9 @@ def validate_x86_sdm_semantics(*, require_sdm: bool) -> tuple[int, int]:
         for section_name, needle in expectation["contains"].items():
             body = str(sections.get(section_name) or "")
             if needle not in body:
-                print(f"FAIL intel sdm: section {section_name} for {mnemonic} missing expected text {needle!r}")
+                print(
+                    f"FAIL intel sdm: section {section_name} for {mnemonic} missing expected text {needle!r}"
+                )
                 failures += 1
     print(f"validated Intel SDM semantics: checked={checked} failures={failures}")
     return checked, failures
@@ -877,7 +971,11 @@ def validate_x86_sdm_coverage(*, require_sdm: bool) -> tuple[int, int]:
     if not instructions:
         _fail("no x86 instructions were parsed for SDM coverage validation")
 
-    described = [record for record in instructions if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)]
+    described = [
+        record
+        for record in instructions
+        if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)
+    ]
     overall = len(described) / len(instructions)
     failures = 0
 
@@ -890,9 +988,22 @@ def validate_x86_sdm_coverage(*, require_sdm: bool) -> tuple[int, int]:
 
     family_groups: dict[str, list[Any]] = {}
     for record in instructions:
-        family = "AVX-512" if any("AVX512" in value.upper().replace("-", "").replace("_", "") for value in record.isa) else ""
+        family = (
+            "AVX-512"
+            if any(
+                "AVX512" in value.upper().replace("-", "").replace("_", "") for value in record.isa
+            )
+            else ""
+        )
         if not family:
-            family = next((value for value in ("SSE", "AVX", "AMX") if any(value in isa.upper() for isa in record.isa)), "Other")
+            family = next(
+                (
+                    value
+                    for value in ("SSE", "AVX", "AMX")
+                    if any(value in isa.upper() for isa in record.isa)
+                ),
+                "Other",
+            )
         family_groups.setdefault(family, []).append(record)
 
     checked = len(instructions)
@@ -900,7 +1011,9 @@ def validate_x86_sdm_coverage(*, require_sdm: bool) -> tuple[int, int]:
         records = family_groups.get(family, [])
         if not records:
             continue
-        family_coverage = sum(1 for record in records if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)) / len(records)
+        family_coverage = sum(
+            1 for record in records if _sdm_payload_for_mnemonic(descriptions, record.mnemonic)
+        ) / len(records)
         if family_coverage < threshold:
             failures += 1
             print(

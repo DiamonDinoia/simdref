@@ -52,10 +52,18 @@ class IntrinsicRecord:
 
     def __post_init__(self) -> None:
         fields = [
-            self.name, self.signature, self.description, self.header, self.url,
+            self.name,
+            self.signature,
+            self.description,
+            self.header,
+            self.url,
             self.architecture,
-            self.category, " ".join(self.isa), " ".join(self.instructions),
-            " ".join(self.aliases), " ".join(self.metadata.values()), " ".join(self.doc_sections.values()),
+            self.category,
+            " ".join(self.isa),
+            " ".join(self.instructions),
+            " ".join(self.aliases),
+            " ".join(self.metadata.values()),
+            " ".join(self.doc_sections.values()),
         ]
         self._search_blob = " ".join(x for x in fields if x)
 
@@ -113,9 +121,14 @@ class InstructionRecord:
             self._key = f"{self.mnemonic} {self._key}".strip()
         self._db_key = f"{self.architecture}:{self._key.casefold()}"
         fields = [
-            self.mnemonic, self.form, self.summary, self.architecture,
-            " ".join(self.isa), " ".join(self.operands),
-            " ".join(self.linked_intrinsics), " ".join(self.aliases),
+            self.mnemonic,
+            self.form,
+            self.summary,
+            self.architecture,
+            " ".join(self.isa),
+            " ".join(self.operands),
+            " ".join(self.linked_intrinsics),
+            " ".join(self.aliases),
         ]
         self._search_blob = " ".join(x for x in fields if x)
 
@@ -208,10 +221,14 @@ class Catalog:
     def from_dict(cls, payload: dict[str, Any]) -> "Catalog":
         return cls(
             intrinsics=[
-                IntrinsicRecord(architecture="x86", **item) if "architecture" not in item else IntrinsicRecord(**item)
+                IntrinsicRecord(architecture="x86", **item)
+                if "architecture" not in item
+                else IntrinsicRecord(**item)
                 for item in payload.get("intrinsics", [])
             ],
-            instructions=[InstructionRecord.from_dict(item) for item in payload.get("instructions", [])],
+            instructions=[
+                InstructionRecord.from_dict(item) for item in payload.get("instructions", [])
+            ],
             sources=[
                 SourceVersion(
                     source=item.get("source", ""),

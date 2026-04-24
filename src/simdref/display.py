@@ -37,11 +37,31 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 UARCH_ORDER = [
-    "ARL-P", "ARL-E", "MTL-P", "MTL-E", "EMR",
-    "ADL-P", "ADL-E", "RKL", "TGL", "ICL",
-    "CLX", "CNL", "SKX", "CFL", "KBL", "SKL",
-    "BDW", "HSW", "IVB", "SNB",
-    "ZEN5", "ZEN4", "ZEN3", "ZEN2", "ZEN+",
+    "ARL-P",
+    "ARL-E",
+    "MTL-P",
+    "MTL-E",
+    "EMR",
+    "ADL-P",
+    "ADL-E",
+    "RKL",
+    "TGL",
+    "ICL",
+    "CLX",
+    "CNL",
+    "SKX",
+    "CFL",
+    "KBL",
+    "SKL",
+    "BDW",
+    "HSW",
+    "IVB",
+    "SNB",
+    "ZEN5",
+    "ZEN4",
+    "ZEN3",
+    "ZEN2",
+    "ZEN+",
 ]
 
 UARCH_LABELS: dict[str, tuple[str, str]] = {
@@ -83,20 +103,48 @@ UARCH_LABELS: dict[str, tuple[str, str]] = {
 
 # ISA chronological ordering for sort keys.
 ISA_CHRONOLOGY: dict[str, tuple[int, int]] = {
-    "I86": (0, 0), "MMX": (1, 0),
-    "SSE": (2, 0), "SSE2": (2, 1), "SSE3": (2, 2), "SSSE3": (2, 3),
-    "SSE4A": (2, 4), "SSE4.1": (2, 5), "SSE4.2": (2, 6),
-    "AES": (2, 7), "PCLMULQDQ": (2, 8),
-    "F16C": (3, 0), "FMA": (3, 1),
-    "AVX": (4, 0), "NEON": (4, 1), "AVX2": (5, 0),
-    "AVX512F": (6, 0), "AVX512DQ": (6, 1), "AVX512IFMA": (6, 2),
-    "AVX512PF": (6, 3), "AVX512ER": (6, 4), "AVX512CD": (6, 5),
-    "AVX512BW": (6, 6), "AVX512VL": (6, 7), "AVX512VBMI": (6, 8),
-    "AVX512VBMI2": (6, 9), "AVX512VNNI": (6, 10), "AVX512BITALG": (6, 11),
-    "AVX512VPOPCNTDQ": (6, 12), "AVX5124VNNIW": (6, 13),
-    "AVX5124FMAPS": (6, 14), "AVX512VP2INTERSECT": (6, 15),
-    "AVX512BF16": (6, 16), "AVX512FP16": (6, 99),
-    "AVX10": (7, 0), "AMX": (7, 0), "SVE": (8, 0), "SVE2": (8, 1), "V": (8, 2), "ZVE": (8, 3), "ZV": (8, 4), "APX": (9, 0),
+    "I86": (0, 0),
+    "MMX": (1, 0),
+    "SSE": (2, 0),
+    "SSE2": (2, 1),
+    "SSE3": (2, 2),
+    "SSSE3": (2, 3),
+    "SSE4A": (2, 4),
+    "SSE4.1": (2, 5),
+    "SSE4.2": (2, 6),
+    "AES": (2, 7),
+    "PCLMULQDQ": (2, 8),
+    "F16C": (3, 0),
+    "FMA": (3, 1),
+    "AVX": (4, 0),
+    "NEON": (4, 1),
+    "AVX2": (5, 0),
+    "AVX512F": (6, 0),
+    "AVX512DQ": (6, 1),
+    "AVX512IFMA": (6, 2),
+    "AVX512PF": (6, 3),
+    "AVX512ER": (6, 4),
+    "AVX512CD": (6, 5),
+    "AVX512BW": (6, 6),
+    "AVX512VL": (6, 7),
+    "AVX512VBMI": (6, 8),
+    "AVX512VBMI2": (6, 9),
+    "AVX512VNNI": (6, 10),
+    "AVX512BITALG": (6, 11),
+    "AVX512VPOPCNTDQ": (6, 12),
+    "AVX5124VNNIW": (6, 13),
+    "AVX5124FMAPS": (6, 14),
+    "AVX512VP2INTERSECT": (6, 15),
+    "AVX512BF16": (6, 16),
+    "AVX512FP16": (6, 99),
+    "AVX10": (7, 0),
+    "AMX": (7, 0),
+    "SVE": (8, 0),
+    "SVE2": (8, 1),
+    "V": (8, 2),
+    "ZVE": (8, 3),
+    "ZV": (8, 4),
+    "APX": (9, 0),
 }
 
 _ISA_PREFIXES_BY_LEN = sorted(ISA_CHRONOLOGY.items(), key=lambda kv: len(kv[0]), reverse=True)
@@ -110,9 +158,18 @@ from simdref.filters import (  # noqa: E402  (re-export)
     ISA_FAMILY_ORDER,
 )
 
-X86_BASE_ISAS: frozenset[str] = frozenset({
-    "I86", "I186", "I286", "I386", "I486", "I586", "X87", "CMOV",
-})
+X86_BASE_ISAS: frozenset[str] = frozenset(
+    {
+        "I86",
+        "I186",
+        "I286",
+        "I386",
+        "I486",
+        "I586",
+        "X87",
+        "CMOV",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Compiled patterns (simple helpers avoid regex where possible)
@@ -162,7 +219,9 @@ def display_uarch(name: str, mode: str | None = None) -> str:
     return name
 
 
-def _uarch_display_mode_for_table(rows: list[dict], columns: list[str], label_map: dict[str, str]) -> str:
+def _uarch_display_mode_for_table(
+    rows: list[dict], columns: list[str], label_map: dict[str, str]
+) -> str:
     if "uarch" not in columns:
         return "short"
     available = console.size.width - 8
@@ -183,7 +242,9 @@ def _uarch_display_mode_for_table(rows: list[dict], columns: list[str], label_ma
     return "short"
 
 
-def _column_width_budget(rows: list[dict], columns: list[str], label_map: dict[str, str], uarch_mode: str) -> dict[str, int]:
+def _column_width_budget(
+    rows: list[dict], columns: list[str], label_map: dict[str, str], uarch_mode: str
+) -> dict[str, int]:
     """Compute column widths that fit the terminal, shrinking least important first."""
     sample_rows = rows[:64]
     desired: dict[str, int] = {}
@@ -191,7 +252,9 @@ def _column_width_budget(rows: list[dict], columns: list[str], label_map: dict[s
     for column in columns:
         header = label_map.get(column, column)
         if column == "uarch":
-            values = [display_uarch(str(row.get("uarch", "-")), mode=uarch_mode) for row in sample_rows]
+            values = [
+                display_uarch(str(row.get("uarch", "-")), mode=uarch_mode) for row in sample_rows
+            ]
             desired[column] = max([len(header), *[len(v) for v in values]] or [len(header)])
             minimum[column] = 5
             continue
@@ -251,6 +314,7 @@ def strip_instruction_decorators(text: str) -> str:
 
 def display_isa(values: list[str]) -> str:
     """Normalize and deduplicate ISA extension names for display."""
+
     def normalize_token(value: str) -> str:
         # Strip width and scalar suffixes.
         base = value
@@ -273,7 +337,7 @@ def display_isa(values: list[str]) -> str:
                 suffix_str = " ".join(parts[2:]) if len(parts) > 2 else ""
                 return f"AVX10.{version}{(' ' + suffix_str) if suffix_str else ''}"
         if upper.startswith("AVX512"):
-            tail = base[len("AVX512"):]
+            tail = base[len("AVX512") :]
             if tail.startswith("_"):
                 return f"AVX512 {tail[1:].replace('_', ' ')}"
             return f"AVX512{tail}"
@@ -325,7 +389,11 @@ def isa_family(isa: str) -> str:
         return "AVX10"
     if d.startswith("AVX512") or d in ("VAES", "VPCLMULQDQ", "GFNI"):
         return "AVX-512"
-    if d in ("AVX", "AVX2", "AVX2GATHER") or d.startswith("AVX") or d in ("FMA", "FMA4", "F16C", "XOP"):
+    if (
+        d in ("AVX", "AVX2", "AVX2GATHER")
+        or d.startswith("AVX")
+        or d in ("FMA", "FMA4", "F16C", "XOP")
+    ):
         return "AVX"
     if d.startswith("SSE") or d.startswith("SSSE"):
         return "SSE"
@@ -428,9 +496,9 @@ def instruction_query_text(item) -> str:
         form_name = form.split("(", 1)[0].strip()
         if form_name:
             name = form_name
-            form = form[len(form_name):].strip()
+            form = form[len(form_name) :].strip()
     elif form.casefold().startswith(item.mnemonic.casefold()):
-        form = form[len(item.mnemonic):].strip()
+        form = form[len(item.mnemonic) :].strip()
     if form.startswith("(") and form.endswith(")"):
         form = form[1:-1]
     tokens = [t for t in re.split(r"[\s,()]+", form) if t]
@@ -594,8 +662,6 @@ def perf_panel_border(kind: str) -> str:
     return _PERF_PANEL_BORDER.get(kind, "green")
 
 
-
-
 def print_generic_table(
     rows: list[dict],
     title: str,
@@ -610,7 +676,11 @@ def print_generic_table(
     preferred_order = preferred_order or []
     exclude_keys = exclude_keys or set()
     keys = [k for k in preferred_order if any(k in row for row in rows)]
-    extras = sorted({k for row in rows for k in row if k not in keys and k not in exclude_keys}) if include_extras else []
+    extras = (
+        sorted({k for row in rows for k in row if k not in keys and k not in exclude_keys})
+        if include_extras
+        else []
+    )
     columns = keys + extras
     table = Table(header_style=f"bold {border_style}", expand=True)
     uarch_mode = _uarch_display_mode_for_table(rows, columns, _GENERIC_TABLE_LABEL_MAP)
@@ -692,7 +762,12 @@ def print_instruction_mapping(catalog, intrinsic, conn=None) -> None:
     table.add_column("summary")
     table.add_column("isa", width=12)
     for instr in linked:
-        table.add_row(instr.key, display_architecture(instr.architecture), instr.summary or "-", ", ".join(instr.isa) or "-")
+        table.add_row(
+            instr.key,
+            display_architecture(instr.architecture),
+            instr.summary or "-",
+            ", ".join(instr.isa) or "-",
+        )
     console.print(table)
 
 
@@ -710,7 +785,11 @@ def print_intrinsic_mapping(catalog, item, conn=None, find_intrinsic_fn=None) ->
     table.add_column("summary")
     table.add_column("isa", width=12)
     for intrinsic_name in item.linked_intrinsics:
-        intrinsic = load_intrinsic_from_db(conn, intrinsic_name) if conn is not None else find_fn(catalog, intrinsic_name)
+        intrinsic = (
+            load_intrinsic_from_db(conn, intrinsic_name)
+            if conn is not None
+            else find_fn(catalog, intrinsic_name)
+        )
         if intrinsic is None:
             table.add_row(intrinsic_name, "-", "-", "-")
             continue
@@ -724,10 +803,20 @@ def print_intrinsic_mapping(catalog, item, conn=None, find_intrinsic_fn=None) ->
 
 
 _MEASUREMENT_PREFERRED_ORDER = [
-    "uarch", "latency", "TP_loop", "TP_ports", "uops", "ports", "kind",
+    "uarch",
+    "latency",
+    "TP_loop",
+    "TP_ports",
+    "uops",
+    "ports",
+    "kind",
 ]
 _MEASUREMENT_EXCLUDE_KEYS = {
-    "uops_retire_slots", "uops_MITE", "uops_MS", "macro_fusible", "source",
+    "uops_retire_slots",
+    "uops_MITE",
+    "uops_MS",
+    "macro_fusible",
+    "source",
 }
 
 
@@ -763,16 +852,26 @@ def instruction_metadata_rows(item) -> list[tuple[str, str]]:
 
 
 _DESCRIPTION_ORDER = [
-    "Description", "Operation", "Intrinsic Equivalents",
-    "Flags Affected", "FPU Flags Affected",
-    "Exceptions", "SIMD Floating-Point Exceptions",
-    "Floating-Point Exceptions", "x87 FPU and SIMD Floating-Point Exceptions",
-    "Numeric Exceptions", "Other Exceptions", "Other Mode Exceptions",
-    "Protected Mode Exceptions", "Real-Address Mode Exceptions",
+    "Description",
+    "Operation",
+    "Intrinsic Equivalents",
+    "Flags Affected",
+    "FPU Flags Affected",
+    "Exceptions",
+    "SIMD Floating-Point Exceptions",
+    "Floating-Point Exceptions",
+    "x87 FPU and SIMD Floating-Point Exceptions",
+    "Numeric Exceptions",
+    "Other Exceptions",
+    "Other Mode Exceptions",
+    "Protected Mode Exceptions",
+    "Real-Address Mode Exceptions",
     "Real Address Mode Exceptions",
-    "Virtual-8086 Mode Exceptions", "Virtual-8086 Exceptions",
+    "Virtual-8086 Mode Exceptions",
+    "Virtual-8086 Exceptions",
     "Virtual 8086 Mode Exceptions",
-    "Compatibility Mode Exceptions", "64-Bit Mode Exceptions",
+    "Compatibility Mode Exceptions",
+    "64-Bit Mode Exceptions",
 ]
 
 # Sections that are always shown expanded.
@@ -843,7 +942,13 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
     table.add_row("architecture", display_architecture(item.architecture))
     table.add_row("isa", ", ".join(item.isa) or "-")
     table.add_row("category", item.category or "-")
-    for key in ("reference_url", "argument_preparation", "result", "supported_architectures", "classification_path"):
+    for key in (
+        "reference_url",
+        "argument_preparation",
+        "result",
+        "supported_architectures",
+        "classification_path",
+    ):
         if item.metadata.get(key):
             table.add_row(key, item.metadata[key])
     table.add_row("notes", "; ".join(item.notes) or "-")
@@ -862,12 +967,16 @@ def render_intrinsic(catalog, item, conn=None, short: bool = False, full: bool =
     if linked:
         console.print(Rule("intrinsic to instruction mapping", style="cyan"))
         print_instruction_mapping(catalog, item, conn=conn)
-        console.print(Rule(f"instruction details: {display_instruction_title(primary)}", style="magenta"))
+        console.print(
+            Rule(f"instruction details: {display_instruction_title(primary)}", style="magenta")
+        )
         print_operand_block(primary)
         print_perf_tables(measurement_rows(primary))
 
 
-def render_instruction_sections(catalog, item, include_title: bool = True, conn=None, short: bool = False, full: bool = False) -> None:
+def render_instruction_sections(
+    catalog, item, include_title: bool = True, conn=None, short: bool = False, full: bool = False
+) -> None:
     """Render instruction detail with optional title panel."""
     if include_title:
         table = Table(show_header=False, box=None)
@@ -877,7 +986,13 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
         table.add_row("isa", display_isa(item.isa))
         for key, value in instruction_metadata_rows(item):
             table.add_row(key, value)
-        console.print(Panel(table, title=f"instruction: {display_instruction_title(item)}", border_style="magenta"))
+        console.print(
+            Panel(
+                table,
+                title=f"instruction: {display_instruction_title(item)}",
+                border_style="magenta",
+            )
+        )
     else:
         print_instruction_metadata(item)
     if not short and item.description:
@@ -890,7 +1005,9 @@ def render_instruction_sections(catalog, item, include_title: bool = True, conn=
 
 def render_instruction(catalog, item, conn=None, short: bool = False, full: bool = False) -> None:
     """Render full instruction detail view."""
-    render_instruction_sections(catalog, item, include_title=True, conn=conn, short=short, full=full)
+    render_instruction_sections(
+        catalog, item, include_title=True, conn=conn, short=short, full=full
+    )
 
 
 def render_instruction_variants(query: str, items, show_fp16: bool = False) -> None:
@@ -937,7 +1054,9 @@ def _label_perf(value) -> str:
     base_query = query.split()[0] if query.split() else query
     if items:
         hidden_count = len(all_items) - len(items)
-        hidden_note = f" Hidden {hidden_count} APX/FP16/BF16 forms by default." if hidden_count > 0 else ""
+        hidden_note = (
+            f" Hidden {hidden_count} APX/FP16/BF16 forms by default." if hidden_count > 0 else ""
+        )
         console.print(
             f"[dim]Open one with `simdref {instruction_query_text(items[0])}` or `simdref {base_query} <index>`. Showing {len(items)} forms.{hidden_note}[/dim]"
         )

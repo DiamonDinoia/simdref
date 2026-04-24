@@ -12,7 +12,9 @@ class X86LinkingTests(unittest.TestCase):
             description="Synthetic ambiguous mapping.",
             header="immintrin.h",
             isa=["AVX512F"],
-            instruction_refs=[{"name": "VADDPS", "form": "", "xed": "VADDPS_FAKE", "architecture": "x86"}],
+            instruction_refs=[
+                {"name": "VADDPS", "form": "", "xed": "VADDPS_FAKE", "architecture": "x86"}
+            ],
         )
         instructions = [
             InstructionRecord(
@@ -34,7 +36,9 @@ class X86LinkingTests(unittest.TestCase):
         link_records([intrinsic], instructions)
 
         self.assertEqual(len(intrinsic.instruction_refs), 2)
-        self.assertTrue(all(ref["resolution"].startswith("xed") for ref in intrinsic.instruction_refs))
+        self.assertTrue(
+            all(ref["resolution"].startswith("xed") for ref in intrinsic.instruction_refs)
+        )
         self.assertTrue(all(ref["match_count"] == "2" for ref in intrinsic.instruction_refs))
 
     def test_link_records_preserves_unresolved_fallback_reference(self):

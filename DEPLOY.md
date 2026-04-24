@@ -20,20 +20,22 @@ opportunistic skipping — every edge is a hard dependency.
 ```
 
 ### Phase 1 — data creation
+
 - **`build-catalog`** — installs LLVM 22, vendors RISC-V sources, runs
   `simdref build` (SDM is always included), validates upstream
   ingestion, asserts measured+modeled perf rows, uploads the catalog
   bundle as a workflow artefact (`catalog`).
 
 ### Phase 2 — data usage (parallel)
+
 - **`test`** *(needs: build-catalog)* — downloads the artefact,
   installs the package, asserts schema is current, runs the full
-  pytest suite, syntax-checks Python + JS sources, runs `simdref
-  doctor`, asserts catalog structural invariants.
+  pytest suite, syntax-checks Python + JS sources, runs `simdref doctor`, asserts catalog structural invariants.
 - **`package`** *(parallel)* — `uv build` → `twine check`, uploads the
   wheel/sdist artefact.
 
 ### Phase 3 — deploy (only on main, release, schedule, or dispatch)
+
 - **`publish-data`** *(needs: test, package)* — downloads the catalog
   artefact, publishes `data-latest`. On `release: published` events it
   also publishes `data-v<version>`.
@@ -45,6 +47,7 @@ opportunistic skipping — every edge is a hard dependency.
   artefact is consumable end-to-end.
 
 ### Trigger matrix
+
 - **pull_request** → `build-catalog` → `test`, `package`. Phase 3 skips.
 - **push to main** → full chain.
 - **push to other branches** → phases 1–2 only.
@@ -106,19 +109,18 @@ Two clicks, no local checkout needed:
    `.claude-plugin/plugin.json` in one commit, and pushes to main.
    Guard rails: refuses if the tag already exists or the version is
    already on PyPI.
-2. Wait for CI on the bump commit to go green.
-3. **Dry-run the release** —
+1. Wait for CI on the bump commit to go green.
+1. **Dry-run the release** —
    `gh workflow run release-candidate.yml -f version=X.Y.Z -f dry_run=true`
    proves every gate (green CI, matching versions, wheel builds, smoke
    install) without side effects.
-4. If green, **re-dispatch with `dry_run=false`** to push the tag.
-5. `release.yml` fires on the tag → approve the `pypi` environment in
+1. If green, **re-dispatch with `dry_run=false`** to push the tag.
+1. `release.yml` fires on the tag → approve the `pypi` environment in
    the GitHub UI → PyPI publish + GitHub Release.
-6. The release-published event re-triggers `ci.yml` which publishes
+1. The release-published event re-triggers `ci.yml` which publishes
    `data-v<version>` alongside the refreshed `data-latest`.
 
-Fully local alternative to step 1: `python scripts/bump-version.py
-X.Y.Z && git commit -am 'chore(release): bump to X.Y.Z' && git push`.
+Fully local alternative to step 1: `python scripts/bump-version.py X.Y.Z && git commit -am 'chore(release): bump to X.Y.Z' && git push`.
 
 ## Configured environments
 

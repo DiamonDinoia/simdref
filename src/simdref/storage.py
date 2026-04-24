@@ -128,24 +128,56 @@ def sqlite_schema_is_current(path: Path = SQLITE_PATH) -> bool:
         return False
     conn = sqlite3.connect(path)
     try:
-        meta = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
+        meta = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone()
         if meta is None:
             return False
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None or row[0] != SQLITE_SCHEMA_VERSION:
             return False
-        expected_columns = {"id", "name", "architecture", "signature", "description", "header", "isa", "category", "subcategory", "arm_arch", "payload"}
-        actual_columns = {item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()}
+        expected_columns = {
+            "id",
+            "name",
+            "architecture",
+            "signature",
+            "description",
+            "header",
+            "isa",
+            "category",
+            "subcategory",
+            "arm_arch",
+            "payload",
+        }
+        actual_columns = {
+            item[1] for item in conn.execute("PRAGMA table_info(intrinsics_data)").fetchall()
+        }
         if expected_columns != actual_columns:
             return False
-        expected_instruction_columns = {"db_key", "key", "architecture", "mnemonic", "form", "summary", "isa", "category", "payload"}
-        actual_instruction_columns = {item[1] for item in conn.execute("PRAGMA table_info(instructions_data)").fetchall()}
+        expected_instruction_columns = {
+            "db_key",
+            "key",
+            "architecture",
+            "mnemonic",
+            "form",
+            "summary",
+            "isa",
+            "category",
+            "payload",
+        }
+        actual_instruction_columns = {
+            item[1] for item in conn.execute("PRAGMA table_info(instructions_data)").fetchall()
+        }
         if expected_instruction_columns != actual_instruction_columns:
             return False
-        instr_indexes = {item[1] for item in conn.execute("PRAGMA index_list(instructions_data)").fetchall()}
+        instr_indexes = {
+            item[1] for item in conn.execute("PRAGMA index_list(instructions_data)").fetchall()
+        }
         if "idx_instruction_category" not in instr_indexes:
             return False
-        intr_indexes = {item[1] for item in conn.execute("PRAGMA index_list(intrinsics_data)").fetchall()}
+        intr_indexes = {
+            item[1] for item in conn.execute("PRAGMA index_list(intrinsics_data)").fetchall()
+        }
         return "idx_intrinsic_arm_arch" in intr_indexes
     except sqlite3.Error:
         return False
@@ -246,37 +278,41 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     intrinsics_fts_batch = []
     for record in catalog.intrinsics:
         payload = msgpack.packb(record.to_dict(), use_bin_type=True)
-        intrinsics_data_batch.append((
-            record.name,
-            record.architecture,
-            record.signature,
-            record.description,
-            record.header,
-            " ".join(record.isa),
-            record.category,
-            record.subcategory,
-            derive_arm_arch(record.isa, record.metadata),
-            payload,
-        ))
+        intrinsics_data_batch.append(
+            (
+                record.name,
+                record.architecture,
+                record.signature,
+                record.description,
+                record.header,
+                " ".join(record.isa),
+                record.category,
+                record.subcategory,
+                derive_arm_arch(record.isa, record.metadata),
+                payload,
+            )
+        )
         instr_summary = ""
         if record.instructions:
             mnemonic = record.instructions[0].split("(")[0].split()[0].strip()
             instr_summary = _instr_summary.get(mnemonic, "")
         if not instr_summary and record.description:
             instr_summary = record.description.split(".")[0] + "."
-        intrinsics_fts_batch.append((
-            record.name,
-            record.signature,
-            record.description,
-            record.header,
-            " ".join(record.isa),
-            record.category,
-            " ".join(record.instructions),
-            " ".join(record.notes),
-            " ".join(record.aliases),
-            instr_summary,
-            _tokenize_name(record.name),
-        ))
+        intrinsics_fts_batch.append(
+            (
+                record.name,
+                record.signature,
+                record.description,
+                record.header,
+                " ".join(record.isa),
+                record.category,
+                " ".join(record.instructions),
+                " ".join(record.notes),
+                " ".join(record.aliases),
+                instr_summary,
+                _tokenize_name(record.name),
+            )
+        )
         if len(intrinsics_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
                 "INSERT INTO intrinsics_data (name, architecture, signature, description, header, isa, category, subcategory, arm_arch, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -303,27 +339,31 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     instructions_fts_batch = []
     for record in catalog.instructions:
         payload = msgpack.packb(record.to_dict(), use_bin_type=True)
-        instructions_data_batch.append((
-            record.db_key,
-            record.key,
-            record.architecture,
-            record.mnemonic,
-            record.form,
-            record.summary,
-            " ".join(record.isa),
-            record.metadata.get("category", "") if isinstance(record.metadata, dict) else "",
-            payload,
-        ))
-        instructions_fts_batch.append((
-            record.key,
-            record.mnemonic,
-            record.form,
-            record.summary,
-            " ".join(record.isa),
-            " ".join(record.linked_intrinsics),
-            " ".join(record.aliases),
-            _tokenize_name(record.key),
-        ))
+        instructions_data_batch.append(
+            (
+                record.db_key,
+                record.key,
+                record.architecture,
+                record.mnemonic,
+                record.form,
+                record.summary,
+                " ".join(record.isa),
+                record.metadata.get("category", "") if isinstance(record.metadata, dict) else "",
+                payload,
+            )
+        )
+        instructions_fts_batch.append(
+            (
+                record.key,
+                record.mnemonic,
+                record.form,
+                record.summary,
+                " ".join(record.isa),
+                " ".join(record.linked_intrinsics),
+                " ".join(record.aliases),
+                _tokenize_name(record.key),
+            )
+        )
         if len(instructions_data_batch) >= SQLITE_INSERT_BATCH_SIZE:
             cur.executemany(
                 "INSERT INTO instructions_data VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -385,12 +425,19 @@ def load_instruction_from_db(conn: sqlite3.Connection, key: str) -> InstructionR
     return InstructionRecord(**msgpack.unpackb(row["payload"], raw=False))
 
 
-def load_instructions_by_mnemonic_from_db(conn: sqlite3.Connection, mnemonic: str) -> list[InstructionRecord]:
-    rows = conn.execute("SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY architecture, key", (mnemonic,)).fetchall()
+def load_instructions_by_mnemonic_from_db(
+    conn: sqlite3.Connection, mnemonic: str
+) -> list[InstructionRecord]:
+    rows = conn.execute(
+        "SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY architecture, key",
+        (mnemonic,),
+    ).fetchall()
     return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
 
 
-def load_instructions_by_mnemonic_prefix_from_db(conn: sqlite3.Connection, prefix: str, limit: int = 400) -> list[InstructionRecord]:
+def load_instructions_by_mnemonic_prefix_from_db(
+    conn: sqlite3.Connection, prefix: str, limit: int = 400
+) -> list[InstructionRecord]:
     rows = conn.execute(
         """
         SELECT payload
@@ -465,7 +512,12 @@ def search_intrinsic_candidates_from_db(
         LIMIT ?
         """
     sql = _append_filter_clause(
-        sql, "intrinsics_data", filter_spec, enabled_families, enabled_categories, binds,
+        sql,
+        "intrinsics_data",
+        filter_spec,
+        enabled_families,
+        enabled_categories,
+        binds,
         match_marker="intrinsics_fts MATCH ?",
         enabled_arm_arch=enabled_arm_arch,
     )
@@ -496,7 +548,12 @@ def search_instruction_candidates_from_db(
         LIMIT ?
         """
     sql = _append_filter_clause(
-        sql, "instructions_data", filter_spec, enabled_families, enabled_categories, binds,
+        sql,
+        "instructions_data",
+        filter_spec,
+        enabled_families,
+        enabled_categories,
+        binds,
         match_marker="instructions_fts MATCH ?",
     )
     binds.append(limit)

@@ -42,10 +42,10 @@ Legacy `intel-sdm-*` metadata keys remain readable and are still emitted for com
 The Intel source keeps the current behavior but encapsulates it inside `pdfparse/intel.py`:
 
 1. Use PDF outlines to narrow parsing to instruction-reference ranges when possible.
-2. Run a PyMuPDF fast path to extract title/body lines.
-3. Fall back to pdfplumber on pages where the fast path yields no useful headings or no body text.
-4. Normalize section headings and preserve indentation for pseudocode sections.
-5. Return `PdfEnrichmentResult` for generic merge into instruction records.
+1. Run a PyMuPDF fast path to extract title/body lines.
+1. Fall back to pdfplumber on pages where the fast path yields no useful headings or no body text.
+1. Normalize section headings and preserve indentation for pseudocode sections.
+1. Return `PdfEnrichmentResult` for generic merge into instruction records.
 
 ## Cache Invalidation
 
@@ -66,16 +66,16 @@ This keeps source-specific cache behavior out of generic catalog assembly.
 
 ## File Map
 
-| File | Purpose |
-|------|---------|
-| `src/simdref/pdfparse/types.py` | Source-neutral PDF enrichment dataclasses |
-| `src/simdref/pdfparse/registry.py` | PDF source registration and lookup |
-| `src/simdref/pdfparse/intel.py` | Intel SDM parser implementation + registration |
-| `src/simdref/ingest_pdf.py` | Generic PDF cache/load/merge dispatch |
-| `src/simdref/ingest_sources.py` | Upstream/local/fixture acquisition |
-| `src/simdref/ingest_catalog.py` | Parse/link/assemble catalog records |
-| `src/simdref/pdfrefs.py` | Shared normalized PDF ref helpers |
-| `src/simdref/ingest.py` | Stable public entrypoints and compatibility wrappers |
+| File                               | Purpose                                              |
+| ---------------------------------- | ---------------------------------------------------- |
+| `src/simdref/pdfparse/types.py`    | Source-neutral PDF enrichment dataclasses            |
+| `src/simdref/pdfparse/registry.py` | PDF source registration and lookup                   |
+| `src/simdref/pdfparse/intel.py`    | Intel SDM parser implementation + registration       |
+| `src/simdref/ingest_pdf.py`        | Generic PDF cache/load/merge dispatch                |
+| `src/simdref/ingest_sources.py`    | Upstream/local/fixture acquisition                   |
+| `src/simdref/ingest_catalog.py`    | Parse/link/assemble catalog records                  |
+| `src/simdref/pdfrefs.py`           | Shared normalized PDF ref helpers                    |
+| `src/simdref/ingest.py`            | Stable public entrypoints and compatibility wrappers |
 
 ## Testing Strategy
 

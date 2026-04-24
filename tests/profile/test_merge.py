@@ -8,8 +8,18 @@ from simdref.profile.model import LoopRegion, SampleRow
 
 def _annotated():
     return [
-        {"mnemonic": "vmovaps", "annotation": "lat=5c cpi=0.5", "address": "0x4011a0", "known": True},
-        {"mnemonic": "vfmadd231ps", "annotation": "lat=4c cpi=0.5", "address": "0x4011a4", "known": True},
+        {
+            "mnemonic": "vmovaps",
+            "annotation": "lat=5c cpi=0.5",
+            "address": "0x4011a0",
+            "known": True,
+        },
+        {
+            "mnemonic": "vfmadd231ps",
+            "annotation": "lat=4c cpi=0.5",
+            "address": "0x4011a4",
+            "known": True,
+        },
         {"mnemonic": "ret", "annotation": "lat=1c cpi=1.0", "address": "0x4011c1", "known": True},
     ]
 

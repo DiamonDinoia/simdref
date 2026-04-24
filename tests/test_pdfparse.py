@@ -1,7 +1,11 @@
 from pathlib import Path
 
 import pytest
-from simdref.pdfparse.base import chars_to_lines, extract_sections_from_chars, extract_sections_from_lines
+from simdref.pdfparse.base import (
+    chars_to_lines,
+    extract_sections_from_chars,
+    extract_sections_from_lines,
+)
 
 
 def _make_char(text, fontname, size, x0=0, top=0):
@@ -96,11 +100,15 @@ from simdref.models import InstructionRecord
 
 
 def test_parse_instruction_title_basic():
-    assert parse_instruction_title("ADDPS\u2014Add Packed Single Precision Floating-Point Values") == ("ADDPS", "Add Packed Single Precision Floating-Point Values")
+    assert parse_instruction_title(
+        "ADDPS\u2014Add Packed Single Precision Floating-Point Values"
+    ) == ("ADDPS", "Add Packed Single Precision Floating-Point Values")
 
 
 def test_parse_instruction_title_with_slash():
-    result = parse_instruction_title("MOVDQA/VMOVDQA32/VMOVDQA64\u2014Move Aligned Packed Integer Values")
+    result = parse_instruction_title(
+        "MOVDQA/VMOVDQA32/VMOVDQA64\u2014Move Aligned Packed Integer Values"
+    )
     assert result == ("MOVDQA/VMOVDQA32/VMOVDQA64", "Move Aligned Packed Integer Values")
 
 
@@ -114,9 +122,17 @@ def test_parse_instruction_title_lowercase_rejected():
 
 def test_normalize_section_name():
     assert normalize_section_name("Description") == "Description"
-    assert normalize_section_name("Intel C/C++ Compiler Intrinsic Equivalent") == "Intrinsic Equivalents"
-    assert normalize_section_name("Intel C/C++Compiler Intrinsic Equivalent") == "Intrinsic Equivalents"
-    assert normalize_section_name("SIMD Floating-Point Exceptions") == "SIMD Floating-Point Exceptions"
+    assert (
+        normalize_section_name("Intel C/C++ Compiler Intrinsic Equivalent")
+        == "Intrinsic Equivalents"
+    )
+    assert (
+        normalize_section_name("Intel C/C++Compiler Intrinsic Equivalent")
+        == "Intrinsic Equivalents"
+    )
+    assert (
+        normalize_section_name("SIMD Floating-Point Exceptions") == "SIMD Floating-Point Exceptions"
+    )
     assert normalize_section_name("Numeric Exceptions") == "Numeric Exceptions"
     assert normalize_section_name("Other Exceptions") == "Other Exceptions"
     assert normalize_section_name("Flags Affected") == "Flags Affected"
@@ -157,7 +173,10 @@ def test_whitelist_rejects_garbage_headings():
         chars.append(_make_char(ch, "Verdana", 9.0, top=y))
 
     sections = extract_sections_from_chars(
-        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=known,
+        chars,
+        heading_min_size=10.0,
+        body_max_size=9.5,
+        known_headings=known,
     )
     assert "Description" in sections
     # Garbage heading should NOT appear as a section
@@ -179,7 +198,10 @@ def test_whitelist_passes_through_without_known_headings():
         chars.append(_make_char(ch, "Verdana", 9.0, top=y))
 
     sections = extract_sections_from_chars(
-        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=None,
+        chars,
+        heading_min_size=10.0,
+        body_max_size=9.5,
+        known_headings=None,
     )
     assert "AnyHeading" in sections
 
@@ -203,7 +225,10 @@ def test_whitelist_drops_heading_size_garbage():
         chars.append(_make_char(ch, "Verdana", 9.0, top=y))
 
     sections = extract_sections_from_chars(
-        chars, heading_min_size=10.0, body_max_size=9.5, known_headings=known,
+        chars,
+        heading_min_size=10.0,
+        body_max_size=9.5,
+        known_headings=known,
     )
     assert "Description" in sections
     body_texts = [text for _, text in sections["Description"]]
@@ -525,16 +550,76 @@ def test_instruction_page_ranges_uses_outline_instruction_chapters():
     pdf = _FakeOutlinePdf(
         pageids=range(1, 5001),
         outlines=[
-            (1, "Volume 2 (2A, 2B, 2C, & 2D): Instruction Set Reference, A-Z", {"D": [type("Ref", (), {"objid": 587})(), "XYZ"]}, None, None),
-            (2, "Chapter 3 Instruction Set Reference, A-L", {"D": [type("Ref", (), {"objid": 687})(), "XYZ"]}, None, None),
-            (2, "Chapter 4 Instruction Set Reference, M-U", {"D": [type("Ref", (), {"objid": 1284})(), "XYZ"]}, None, None),
-            (2, "Chapter 33 VMX Instruction Reference", {"D": [type("Ref", (), {"objid": 4327})(), "XYZ"]}, None, None),
-            (3, "35.5 SEAM Instruction Reference", {"D": [type("Ref", (), {"objid": 4395})(), "XYZ"]}, None, None),
-            (2, "Chapter 41 Intel® SGX Instruction References", {"D": [type("Ref", (), {"objid": 4527})(), "XYZ"]}, None, None),
-            (1, "Volume 3 (3A, 3B, 3C, & 3D): System Programming Guide", {"D": [type("Ref", (), {"objid": 3143})(), "XYZ"]}, None, None),
-            (2, "Chapter 34 System Management Mode", {"D": [type("Ref", (), {"objid": 4359})(), "XYZ"]}, None, None),
-            (2, "Chapter 36 Intel® Processor Trace", {"D": [type("Ref", (), {"objid": 4401})(), "XYZ"]}, None, None),
-            (2, "Chapter 42 Intel® SGX Interactions with IA32 and Intel® 64 Architecture", {"D": [type("Ref", (), {"objid": 4655})(), "XYZ"]}, None, None),
+            (
+                1,
+                "Volume 2 (2A, 2B, 2C, & 2D): Instruction Set Reference, A-Z",
+                {"D": [type("Ref", (), {"objid": 587})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 3 Instruction Set Reference, A-L",
+                {"D": [type("Ref", (), {"objid": 687})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 4 Instruction Set Reference, M-U",
+                {"D": [type("Ref", (), {"objid": 1284})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 33 VMX Instruction Reference",
+                {"D": [type("Ref", (), {"objid": 4327})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                3,
+                "35.5 SEAM Instruction Reference",
+                {"D": [type("Ref", (), {"objid": 4395})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 41 Intel® SGX Instruction References",
+                {"D": [type("Ref", (), {"objid": 4527})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                1,
+                "Volume 3 (3A, 3B, 3C, & 3D): System Programming Guide",
+                {"D": [type("Ref", (), {"objid": 3143})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 34 System Management Mode",
+                {"D": [type("Ref", (), {"objid": 4359})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 36 Intel® Processor Trace",
+                {"D": [type("Ref", (), {"objid": 4401})(), "XYZ"]},
+                None,
+                None,
+            ),
+            (
+                2,
+                "Chapter 42 Intel® SGX Interactions with IA32 and Intel® 64 Architecture",
+                {"D": [type("Ref", (), {"objid": 4655})(), "XYZ"]},
+                None,
+                None,
+            ),
         ],
     )
 

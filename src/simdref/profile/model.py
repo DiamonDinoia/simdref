@@ -46,7 +46,9 @@ class SampleRow:
             symbol=str(d.get("symbol", "")),
             source_file=d.get("source_file"),
             source_line=(int(d["source_line"]) if d.get("source_line") is not None else None),
-            basic_block_id=(int(d["basic_block_id"]) if d.get("basic_block_id") is not None else None),
+            basic_block_id=(
+                int(d["basic_block_id"]) if d.get("basic_block_id") is not None else None
+            ),
             source_kind=str(d.get("source_kind", "measured")),
         )
 
@@ -103,6 +105,7 @@ def read_loops(path: Path) -> list[LoopRegion]:
     data = json.loads(path.read_text())
     loops: list[LoopRegion] = []
     for d in data.get("loops", []):
+
         def _h(x: Any) -> int:
             if isinstance(x, str):
                 return int(x, 16) if x.startswith(("0x", "0X")) else int(x)

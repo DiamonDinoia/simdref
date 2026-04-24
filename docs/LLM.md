@@ -21,13 +21,13 @@ stdout into `jq` / `json.loads`.
 Resolve a single query (intrinsic name, instruction mnemonic, or free-form
 search) and emit one payload.
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--format, -F json\|ndjson\|markdown` | `json` | Pretty JSON, one-object-per-line NDJSON, or prompt-friendly Markdown. |
-| `--limit N` | `8` | Maximum number of search results when the query falls through to search mode. |
-| `--isa FAM` (repeatable) | all | Filter by ISA family (`Intel`, `Arm`, `RISC-V`, …). |
-| `--preset NAME` | none | Apply a named preset (`default`, `intel`, `arm32`, `arm64`, `riscv`, `none`, `all`). |
-| `--source-kind measured\|modeled\|any` | `any` | Filter performance rows by provenance. `measured` keeps only uops.info-style rows; `modeled` keeps only llvm-mca–derived rows. |
+| Flag                                   | Default | Description                                                                                                                    |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--format, -F json\|ndjson\|markdown`  | `json`  | Pretty JSON, one-object-per-line NDJSON, or prompt-friendly Markdown.                                                          |
+| `--limit N`                            | `8`     | Maximum number of search results when the query falls through to search mode.                                                  |
+| `--isa FAM` (repeatable)               | all     | Filter by ISA family (`Intel`, `Arm`, `RISC-V`, …).                                                                            |
+| `--preset NAME`                        | none    | Apply a named preset (`default`, `intel`, `arm32`, `arm64`, `riscv`, `none`, `all`).                                           |
+| `--source-kind measured\|modeled\|any` | `any`   | Filter performance rows by provenance. `measured` keeps only uops.info-style rows; `modeled` keeps only llvm-mca–derived rows. |
 
 **Payload shape** (abridged):
 
@@ -102,13 +102,13 @@ the `generated_at` timestamp, `source_versions` array, and nested
 
 ## Exit codes
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Match (intrinsic, instruction, or at least one search result). |
-| `1` | Usage error — bad flag, unknown preset, missing argument. |
-| `2` | Query valid but no catalog match. |
-| `3` | Ambiguous: multiple exact instruction matches for the same mnemonic. |
-| `10` | Internal error (exception during resolution). |
+| Code | Meaning                                                              |
+| ---- | -------------------------------------------------------------------- |
+| `0`  | Match (intrinsic, instruction, or at least one search result).       |
+| `1`  | Usage error — bad flag, unknown preset, missing argument.            |
+| `2`  | Query valid but no catalog match.                                    |
+| `3`  | Ambiguous: multiple exact instruction matches for the same mnemonic. |
+| `10` | Internal error (exception during resolution).                        |
 
 ## Claude skill recipe
 
@@ -117,17 +117,17 @@ user's assembly/codegen and suggests intrinsic-level optimizations. Typical
 loop:
 
 1. **Identify mnemonics.** Parse the assembly, extract instruction mnemonics.
-2. **Pre-filter** the catalog for speed:
+1. **Pre-filter** the catalog for speed:
    ```bash
    isa llm list --pattern "VPADD*" --isa "Intel"
    ```
-3. **Resolve each mnemonic** in one batch call, keeping measured perf only:
+1. **Resolve each mnemonic** in one batch call, keeping measured perf only:
    ```bash
    printf '%s\n' "${mnemonics[@]}" | isa llm batch --source-kind measured
    ```
-4. **Consume the NDJSON stream.** Each record contains `lat`, `cpi`, the
+1. **Consume the NDJSON stream.** Each record contains `lat`, `cpi`, the
    linked intrinsic name, and the canonical `summary` — enough to propose
    a replacement intrinsic and cite the measured latency/throughput.
-5. **Cite provenance.** The top-level `generated_at` and `source_versions`
+1. **Cite provenance.** The top-level `generated_at` and `source_versions`
    fields tell the skill when the advice was sourced from, so the skill
    can surface staleness warnings if the catalog is old.

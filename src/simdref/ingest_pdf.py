@@ -60,7 +60,9 @@ def _load_cached_pdf_source(
         return None
     result = PdfEnrichmentResult.from_dict(result_payload)
     if status is not None:
-        status(f"Loaded cached {spec.display_name} descriptions for {len(result.descriptions)} mnemonic variants")
+        status(
+            f"Loaded cached {spec.display_name} descriptions for {len(result.descriptions)} mnemonic variants"
+        )
     return result
 
 
@@ -97,7 +99,9 @@ def load_or_parse_pdf_source(
     result = spec.parser(pdf_path, status=status)
     _save_cached_pdf_source(spec, pdf_path, result, cache_path=cache_path)
     if status is not None:
-        status(f"Cached {spec.display_name} descriptions for {len(result.descriptions)} mnemonic variants")
+        status(
+            f"Cached {spec.display_name} descriptions for {len(result.descriptions)} mnemonic variants"
+        )
     return result
 
 
@@ -113,19 +117,49 @@ def merge_pdf_enrichment(
 ) -> None:
     # Build a list of candidate base mnemonics from a decorated mnemonic.
     _TYPE_SUFFIX_MAP = [
-        ("PH", "PD"), ("PH", "PS"),
-        ("BF16", "PS"), ("BF8", "PS"), ("BF8S", "PS"),
-        ("HF8", "PS"), ("HF8S", "PS"),
-        ("IBS", "DQ"), ("IUBS", "UDQ"),
+        ("PH", "PD"),
+        ("PH", "PS"),
+        ("BF16", "PS"),
+        ("BF8", "PS"),
+        ("BF8S", "PS"),
+        ("HF8", "PS"),
+        ("HF8S", "PS"),
+        ("IBS", "DQ"),
+        ("IUBS", "UDQ"),
     ]
     _GROUP_SUFFIXES = [
-        "F32X8", "F32X4", "F32X2", "F64X4", "F64X2", "F128",
-        "I32X8", "I32X4", "I32X2", "I64X4", "I64X2", "I128",
-        "MB2Q", "MW2D",
-        "BD", "BW", "BQ", "DQ", "WD", "WQ",
-        "SD", "SS", "PD", "PS",
-        "B", "W", "D", "Q",
-        "64", "32", "16", "8",
+        "F32X8",
+        "F32X4",
+        "F32X2",
+        "F64X4",
+        "F64X2",
+        "F128",
+        "I32X8",
+        "I32X4",
+        "I32X2",
+        "I64X4",
+        "I64X2",
+        "I128",
+        "MB2Q",
+        "MW2D",
+        "BD",
+        "BW",
+        "BQ",
+        "DQ",
+        "WD",
+        "WQ",
+        "SD",
+        "SS",
+        "PD",
+        "PS",
+        "B",
+        "W",
+        "D",
+        "Q",
+        "64",
+        "32",
+        "16",
+        "8",
     ]
     _MIN_GROUP_KEY_LEN = 5
 
@@ -135,10 +169,10 @@ def merge_pdf_enrichment(
             end = value.find("}")
             if end == -1:
                 break
-            value = value[end + 1:].lstrip()
+            value = value[end + 1 :].lstrip()
         for prefix in ("LOCK ", "REPE ", "REPNE ", "REP ", "REX64 "):
             if value.startswith(prefix):
-                return value[len(prefix):]
+                return value[len(prefix) :]
         return value
 
     def _base_candidates(mnemonic: str) -> list[str]:
@@ -180,7 +214,9 @@ def merge_pdf_enrichment(
         pdf_ref = {
             "source_id": source_id,
             "label": get_pdf_source(source_id).display_name,
-            "url": f"{payload.source_url}#page={payload.page_start}" if payload.page_start else payload.source_url,
+            "url": f"{payload.source_url}#page={payload.page_start}"
+            if payload.page_start
+            else payload.source_url,
             "page_start": str(payload.page_start or ""),
             "page_end": str(payload.page_end or ""),
         }

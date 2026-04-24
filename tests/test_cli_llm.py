@@ -145,7 +145,9 @@ class LlmCliIntegrationTests(unittest.TestCase):
             json.loads(line)
 
     def test_llm_invalid_preset_exits_usage(self):
-        result = runner.invoke(app, ["llm", "query", "_mm_add_epi32", "--preset", "not_a_real_preset"])
+        result = runner.invoke(
+            app, ["llm", "query", "_mm_add_epi32", "--preset", "not_a_real_preset"]
+        )
         self.assertEqual(result.exit_code, LLM_EXIT_USAGE, result.output)
         # CliRunner defaults to mix_stderr=True in click<8.2, so stderr is
         # already folded into result.output. Accessing result.stderr in that
@@ -166,7 +168,9 @@ class LlmCliIntegrationTests(unittest.TestCase):
             self.assertIn("category", rec)
 
     def test_llm_list_pattern_no_match_returns_two(self):
-        result = runner.invoke(app, ["llm", "list", "--pattern", "__definitely_nothing_matches_this__"])
+        result = runner.invoke(
+            app, ["llm", "list", "--pattern", "__definitely_nothing_matches_this__"]
+        )
         self.assertEqual(result.exit_code, LLM_EXIT_NO_MATCH, result.output)
 
     def test_llm_list_pattern_with_isa_filters(self):

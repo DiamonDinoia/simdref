@@ -28,14 +28,20 @@ from simdref.ingest_sources import (
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
 from simdref.riscv import parse_riscv_instruction_payload, parse_riscv_intrinsics_payload
 
-_UOPS_METADATA_KEYS = frozenset({"category", "cpl", "extension", "iclass", "iform", "url", "url-ref"})
+_UOPS_METADATA_KEYS = frozenset(
+    {"category", "cpl", "extension", "iclass", "iform", "url", "url-ref"}
+)
 _UOPS_OPERAND_KEYS = ("idx", "r", "w", "type", "width", "xtype", "name")
-_ARM_ACLE_INTRINSIC_BASE_URL = "https://developer.arm.com/architectures/instruction-sets/intrinsics/"
+_ARM_ACLE_INTRINSIC_BASE_URL = (
+    "https://developer.arm.com/architectures/instruction-sets/intrinsics/"
+)
 _ARM_NEON_REFERENCE_URL = "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html"
 
 
 def _iter_xml_elements(source: str | Path, tag: str):
-    context = ET.iterparse(io.StringIO(source) if isinstance(source, str) else source, events=("start", "end"))
+    context = ET.iterparse(
+        io.StringIO(source) if isinstance(source, str) else source, events=("start", "end")
+    )
     root = None
     for event, elem in context:
         if event == "start" and root is None:
@@ -109,7 +115,12 @@ def _summary_prefix(mnemonic: str, operand_details: list[dict[str, str]], summar
     upper = mnemonic.upper()
     lowered = summary.casefold()
     has_mask_operand = any(op.get("xtype") == "i1" for op in operand_details)
-    if upper.endswith("_Z") and "zero-mask" not in lowered and "zeromask" not in lowered and "zeroing" not in lowered:
+    if (
+        upper.endswith("_Z")
+        and "zero-mask" not in lowered
+        and "zeromask" not in lowered
+        and "zeroing" not in lowered
+    ):
         return "Zero-masked "
     if has_mask_operand and "mask" not in lowered:
         return "Masked "
@@ -157,11 +168,17 @@ def _element_type_phrase(xtype: str, width: str) -> str:
 
 
 def _shared_operand_phrase(operand_details: list[dict[str, str]]) -> str:
-    semantic_ops = [op for op in operand_details if _operand_kind(op) in {"register", "memory", "immediate"}]
+    semantic_ops = [
+        op for op in operand_details if _operand_kind(op) in {"register", "memory", "immediate"}
+    ]
     if not semantic_ops:
         return "operands"
     kinds = {_operand_kind(op) for op in semantic_ops}
-    xtypes = {op.get("xtype", "").strip().lower() for op in semantic_ops if op.get("xtype", "").strip().lower() and op.get("xtype", "").strip().lower() != "i1"}
+    xtypes = {
+        op.get("xtype", "").strip().lower()
+        for op in semantic_ops
+        if op.get("xtype", "").strip().lower() and op.get("xtype", "").strip().lower() != "i1"
+    }
     widths = {op.get("width", "").strip() for op in semantic_ops if op.get("width", "").strip()}
     if len(xtypes) == 1:
         phrase = _element_type_phrase(next(iter(xtypes)), next(iter(widths), ""))
@@ -197,23 +214,46 @@ def _verb_for_mnemonic(mnemonic: str, architecture: str = "x86") -> str:
     if architecture == "x86" and core.startswith("V") and len(core) > 3:
         core = core[1:]
     for key, verb in [
-        ("ADC", "Add with carry"), ("ADD", "Add"), ("SUB", "Subtract"), ("SBB", "Subtract with borrow"),
-        ("MUL", "Multiply"), ("IMUL", "Multiply"), ("DIV", "Divide"), ("IDIV", "Divide"),
-        ("MOV", "Move"), ("CMP", "Compare"), ("AND", "Bitwise AND"), ("OR", "Bitwise OR"),
-        ("XOR", "Bitwise XOR"), ("TEST", "Test"), ("MIN", "Compute minimum of"), ("MAX", "Compute maximum of"),
-        ("BLEND", "Blend"), ("EXPAND", "Expand"), ("LOAD", "Load"), ("STORE", "Store"),
-        ("SHUFFLE", "Shuffle"), ("PERM", "Permute"),
+        ("ADC", "Add with carry"),
+        ("ADD", "Add"),
+        ("SUB", "Subtract"),
+        ("SBB", "Subtract with borrow"),
+        ("MUL", "Multiply"),
+        ("IMUL", "Multiply"),
+        ("DIV", "Divide"),
+        ("IDIV", "Divide"),
+        ("MOV", "Move"),
+        ("CMP", "Compare"),
+        ("AND", "Bitwise AND"),
+        ("OR", "Bitwise OR"),
+        ("XOR", "Bitwise XOR"),
+        ("TEST", "Test"),
+        ("MIN", "Compute minimum of"),
+        ("MAX", "Compute maximum of"),
+        ("BLEND", "Blend"),
+        ("EXPAND", "Expand"),
+        ("LOAD", "Load"),
+        ("STORE", "Store"),
+        ("SHUFFLE", "Shuffle"),
+        ("PERM", "Permute"),
     ]:
         if core.startswith(key):
             return verb
     return core.replace("_", " ").title()
 
 
-def _generated_instruction_summary(mnemonic: str, operand_details: list[dict[str, str]], architecture: str = "x86") -> str:
+def _generated_instruction_summary(
+    mnemonic: str, operand_details: list[dict[str, str]], architecture: str = "x86"
+) -> str:
     return f"{_verb_for_mnemonic(mnemonic, architecture=architecture)} {_shared_operand_phrase(operand_details)}".strip()
 
 
-def _instruction_summary(mnemonic: str, raw_summary: str, operand_details: list[dict[str, str]], architecture: str = "x86") -> str:
+def _instruction_summary(
+    mnemonic: str,
+    raw_summary: str,
+    operand_details: list[dict[str, str]],
+    architecture: str = "x86",
+) -> str:
     base = raw_summary.strip().strip(".")
     prefix = _summary_prefix(mnemonic, operand_details, base)
     if not _summary_too_terse(base, mnemonic):
@@ -236,15 +276,27 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
             if not name:
                 continue
             return_node = node.find("./return")
-            ret = node.attrib.get("rettype", "").strip() or (return_node.attrib.get("type", "").strip() if return_node is not None else "") or "void"
+            ret = (
+                node.attrib.get("rettype", "").strip()
+                or (return_node.attrib.get("type", "").strip() if return_node is not None else "")
+                or "void"
+            )
             params = []
             instruction_refs: list[dict[str, str]] = []
             for param in node.findall("./parameter"):
                 ptype = param.attrib.get("type", "").strip()
                 pname = param.attrib.get("varname", "").strip()
                 params.append(" ".join(part for part in [ptype, pname] if part))
-            description = " ".join((part.text or "").strip() for part in node.findall("./description") if (part.text or "").strip())
-            cpuid = [cpuid.text.strip() for cpuid in node.findall("./CPUID") if (cpuid.text or "").strip()]
+            description = " ".join(
+                (part.text or "").strip()
+                for part in node.findall("./description")
+                if (part.text or "").strip()
+            )
+            cpuid = [
+                cpuid.text.strip()
+                for cpuid in node.findall("./CPUID")
+                if (cpuid.text or "").strip()
+            ]
             notes: list[str] = []
             if node.attrib.get("sequence"):
                 notes.append(node.attrib["sequence"].strip())
@@ -266,10 +318,17 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     name=name,
                     signature=f"{ret} {name}({', '.join(params)})",
                     description=description,
-                    header=((node.findtext("./header") or "").strip() or node.attrib.get("header", "")),
+                    header=(
+                        (node.findtext("./header") or "").strip() or node.attrib.get("header", "")
+                    ),
                     architecture="x86",
-                    isa=_normalize_isa(cpuid or node.attrib.get("isa", "") or node.attrib.get("tech", "")),
-                    category=((node.findtext("./category") or "").strip() or node.attrib.get("category", "")),
+                    isa=_normalize_isa(
+                        cpuid or node.attrib.get("isa", "") or node.attrib.get("tech", "")
+                    ),
+                    category=(
+                        (node.findtext("./category") or "").strip()
+                        or node.attrib.get("category", "")
+                    ),
                     subcategory=node.attrib.get("tech", "").strip(),
                     instructions=instructions,
                     instruction_refs=[ref | {"architecture": "x86"} for ref in instruction_refs],
@@ -287,7 +346,11 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
         json_blob = match.group(1)
 
     payload = json.loads(json_blob)
-    candidates = payload.get("intrinsics") or payload.get("data") or payload.get("records") or [] if isinstance(payload, dict) else payload
+    candidates = (
+        payload.get("intrinsics") or payload.get("data") or payload.get("records") or []
+        if isinstance(payload, dict)
+        else payload
+    )
     records: list[IntrinsicRecord] = []
     for item in candidates:
         name = str(item.get("name") or item.get("intrinsic") or "").strip()
@@ -307,7 +370,9 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     else:
                         rendered_params.append(str(param).strip())
             signature = f"{return_type} {name}({', '.join(p for p in rendered_params if p)})"
-        instructions = item.get("instructions") or item.get("instruction") or item.get("Instruction") or []
+        instructions = (
+            item.get("instructions") or item.get("instruction") or item.get("Instruction") or []
+        )
         if isinstance(instructions, str):
             instructions = [instructions]
         notes = item.get("notes") or item.get("operationNotes") or []
@@ -316,7 +381,9 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
         aliases = item.get("aliases") or []
         if isinstance(aliases, str):
             aliases = [aliases]
-        description = str(item.get("description") or item.get("summary") or item.get("technology", "")).strip()
+        description = str(
+            item.get("description") or item.get("summary") or item.get("technology", "")
+        ).strip()
         records.append(
             IntrinsicRecord(
                 name=name,
@@ -324,11 +391,17 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                 description=description,
                 header=str(item.get("header") or item.get("include") or "").strip(),
                 architecture="x86",
-                isa=_normalize_isa(item.get("isa") or item.get("tech") or item.get("instructionSet") or []),
+                isa=_normalize_isa(
+                    item.get("isa") or item.get("tech") or item.get("instructionSet") or []
+                ),
                 category=str(item.get("category") or "").strip(),
                 subcategory=str(item.get("tech") or item.get("subcategory") or "").strip(),
                 instructions=[str(value).strip() for value in instructions if str(value).strip()],
-                instruction_refs=[{"name": str(value).strip(), "form": "", "xed": "", "architecture": "x86"} for value in instructions if str(value).strip()],
+                instruction_refs=[
+                    {"name": str(value).strip(), "form": "", "xed": "", "architecture": "x86"}
+                    for value in instructions
+                    if str(value).strip()
+                ],
                 notes=[str(value).strip() for value in notes if str(value).strip()],
                 aliases=[str(value).strip() for value in aliases if str(value).strip()],
             )
@@ -362,11 +435,13 @@ def parse_arm_intrinsics_payload(text: str) -> list[IntrinsicRecord]:
                 continue
             rendered = _canonical_instruction_key(ref_name, ref_form) or ref_name
             instructions.append(rendered)
-            instruction_refs.append({
-                "name": ref_name,
-                "form": ref_form,
-                "architecture": "arm",
-            })
+            instruction_refs.append(
+                {
+                    "name": ref_name,
+                    "form": ref_form,
+                    "architecture": "arm",
+                }
+            )
         records.append(
             IntrinsicRecord(
                 name=name,
@@ -385,8 +460,12 @@ def parse_arm_intrinsics_payload(text: str) -> list[IntrinsicRecord]:
                     for key, value in (item.get("metadata") or {}).items()
                     if str(value).strip()
                 },
-                notes=[str(value).strip() for value in item.get("notes") or [] if str(value).strip()],
-                aliases=[str(value).strip() for value in item.get("aliases") or [] if str(value).strip()],
+                notes=[
+                    str(value).strip() for value in item.get("notes") or [] if str(value).strip()
+                ],
+                aliases=[
+                    str(value).strip() for value in item.get("aliases") or [] if str(value).strip()
+                ],
                 source="arm-acle",
             )
         )
@@ -403,10 +482,16 @@ def _arm_slug(text: str) -> str:
 
 
 def _parse_c_signature(signature: str) -> tuple[str, str, list[str]]:
-    match = re.match(r"^(?P<ret>.+?)\s+(?P<name>[A-Za-z0-9_]+)\((?P<params>.*)\)$", signature.strip())
+    match = re.match(
+        r"^(?P<ret>.+?)\s+(?P<name>[A-Za-z0-9_]+)\((?P<params>.*)\)$", signature.strip()
+    )
     if not match:
         raise ValueError(f"could not parse C signature: {signature}")
-    params = [part.strip() for part in match.group("params").split(",") if part.strip() and part.strip() != "void"]
+    params = [
+        part.strip()
+        for part in match.group("params").split(",")
+        if part.strip() and part.strip() != "void"
+    ]
     return match.group("ret").strip(), match.group("name").strip(), params
 
 
@@ -454,13 +539,15 @@ def _arm_live_instruction_refs(groups: list[dict[str, Any]]) -> list[dict[str, s
     return refs
 
 
-def _arm_live_operation_sections(operation_id: str, operations: dict[str, dict[str, Any]]) -> dict[str, str]:
+def _arm_live_operation_sections(
+    operation_id: str, operations: dict[str, dict[str, Any]]
+) -> dict[str, str]:
     content = str((operations.get(operation_id) or {}).get("content") or "").strip()
     if not content:
         return {}
     text = _arm_html_to_text(content)
     if text.startswith("Operation\n"):
-        text = text[len("Operation\n"):].strip()
+        text = text[len("Operation\n") :].strip()
     return {"ACLE Operation": text} if text else {}
 
 
@@ -471,7 +558,9 @@ def _arm_live_notes(item: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     if required:
         intro = _arm_html_to_text(str(required.get("intro") or ""))
         features = str(required.get("features") or "").strip()
-        body = "\n".join(part for part in [intro, f"Features: {features}" if features else ""] if part)
+        body = "\n".join(
+            part for part in [intro, f"Features: {features}" if features else ""] if part
+        )
         if body:
             sections[str(required.get("title") or "Required streaming features")] = body
             notes.append("Requires streaming features")
@@ -496,10 +585,16 @@ def parse_arm_intrinsics_json_bundle(payload: dict[str, Any]) -> list[IntrinsicR
             continue
         name = _normalize_arm_intrinsic_name(raw_name)
         args = [str(value).strip() for value in item.get("arguments") or [] if str(value).strip()]
-        group_path = [part.strip() for part in str(item.get("instruction_group") or "").split("|") if part.strip()]
+        group_path = [
+            part.strip()
+            for part in str(item.get("instruction_group") or "").split("|")
+            if part.strip()
+        ]
         category = group_path[-1] if group_path else ""
         subcategory = " / ".join(group_path[:-1])
-        simd_isa = [str(value).strip() for value in item.get("SIMD_ISA") or [] if str(value).strip()]
+        simd_isa = [
+            str(value).strip() for value in item.get("SIMD_ISA") or [] if str(value).strip()
+        ]
         isa: list[str] = []
         if "Neon" in simd_isa:
             isa.append("NEON")
@@ -509,7 +604,9 @@ def parse_arm_intrinsics_json_bundle(payload: dict[str, Any]) -> list[IntrinsicR
             isa.append("SVE2")
         if not isa:
             continue
-        instruction_groups = [group for group in (item.get("instructions") or []) if isinstance(group, dict)]
+        instruction_groups = [
+            group for group in (item.get("instructions") or []) if isinstance(group, dict)
+        ]
         instruction_refs = _arm_live_instruction_refs(instruction_groups)
         docs: dict[str, str] = {}
         for group in instruction_groups:
@@ -526,7 +623,9 @@ def parse_arm_intrinsics_json_bundle(payload: dict[str, Any]) -> list[IntrinsicR
                     entries.append(rendered)
             if preamble and entries:
                 docs[preamble] = "\n\n".join(entries)
-        docs.update(_arm_live_operation_sections(str(item.get("Operation") or "").strip(), operations))
+        docs.update(
+            _arm_live_operation_sections(str(item.get("Operation") or "").strip(), operations)
+        )
         notes, extra_sections = _arm_live_notes(item)
         docs.update(extra_sections)
         arg_prep = item.get("Arguments_Preparation") or {}
@@ -535,7 +634,9 @@ def parse_arm_intrinsics_json_bundle(payload: dict[str, Any]) -> list[IntrinsicR
             for arg, mapping in arg_prep.items()
             if isinstance(mapping, dict)
         )
-        result_text = ";".join(f"{key} -> {value}" for row in item.get("results") or [] for key, value in row.items())
+        result_text = ";".join(
+            f"{key} -> {value}" for row in item.get("results") or [] for key, value in row.items()
+        )
         records.append(
             IntrinsicRecord(
                 name=name,
@@ -547,13 +648,24 @@ def parse_arm_intrinsics_json_bundle(payload: dict[str, Any]) -> list[IntrinsicR
                 isa=isa,
                 category=category,
                 subcategory=subcategory,
-                instructions=[_canonical_instruction_key(ref["name"], ref["form"]) or ref["name"] for ref in instruction_refs],
+                instructions=[
+                    _canonical_instruction_key(ref["name"], ref["form"]) or ref["name"]
+                    for ref in instruction_refs
+                ],
                 instruction_refs=instruction_refs,
                 metadata={
                     "argument_preparation": arg_prep_text,
                     "result": result_text,
-                    "supported_architectures": "/".join(str(value).strip() for value in item.get("Architectures") or [] if str(value).strip()),
-                    "reference_url": str((instruction_groups[0].get("list") or [{}])[0].get("url") or "").strip() if instruction_groups else "",
+                    "supported_architectures": "/".join(
+                        str(value).strip()
+                        for value in item.get("Architectures") or []
+                        if str(value).strip()
+                    ),
+                    "reference_url": str(
+                        (instruction_groups[0].get("list") or [{}])[0].get("url") or ""
+                    ).strip()
+                    if instruction_groups
+                    else "",
                     "classification_path": " / ".join(group_path),
                     "operation_id": str(item.get("Operation") or "").strip(),
                     "simd_isa": ", ".join(simd_isa),
@@ -597,7 +709,9 @@ def _parse_neon_markdown_docs(markdown: str) -> dict[str, dict[str, str]]:
                     f"Intrinsic: {_strip_markdown_html(cells[0])}",
                     f"Argument preparation:\n{_strip_markdown_html(cells[1])}",
                     f"AArch64 instruction:\n{_strip_markdown_html(cells[2])}",
-                    f"Result:\n{_strip_markdown_html(cells[3])}" if _strip_markdown_html(cells[3]) else "",
+                    f"Result:\n{_strip_markdown_html(cells[3])}"
+                    if _strip_markdown_html(cells[3])
+                    else "",
                     f"Supported architectures:\n{_strip_markdown_html(cells[4])}",
                 ]
                 if part
@@ -643,7 +757,9 @@ def _parse_sve_markdown_docs(markdown: str) -> dict[str, dict[str, str]]:
                 if notes:
                     docs[family]["ACLE Notes"] = notes
                 docs[family]["ACLE Prototypes"] = "\n".join(
-                    part for part in [f"Section: {section_path}" if section_path else "", block] if part
+                    part
+                    for part in [f"Section: {section_path}" if section_path else "", block]
+                    if part
                 )
             paragraph = []
             index += 1
@@ -685,7 +801,9 @@ def parse_arm_neon_intrinsics_bundle(payload: dict[str, Any]) -> list[IntrinsicR
             continue
         if len(row) < 5:
             continue
-        signature, arg_prep, instruction_field, result_field, supported_arches = (value.strip() for value in row[:5])
+        signature, arg_prep, instruction_field, result_field, supported_arches = (
+            value.strip() for value in row[:5]
+        )
         if "A64" not in supported_arches:
             continue
         return_type, name, params = _parse_c_signature(signature)
@@ -707,7 +825,10 @@ def parse_arm_neon_intrinsics_bundle(payload: dict[str, Any]) -> list[IntrinsicR
                 isa=["NEON"],
                 category=category,
                 subcategory=subcategory,
-                instructions=[_canonical_instruction_key(ref['name'], ref['form']) or ref['name'] for ref in instruction_refs],
+                instructions=[
+                    _canonical_instruction_key(ref["name"], ref["form"]) or ref["name"]
+                    for ref in instruction_refs
+                ],
                 instruction_refs=instruction_refs,
                 metadata={
                     "argument_preparation": arg_prep,
@@ -759,13 +880,13 @@ def parse_arm_neon_intrinsics_bundle(payload: dict[str, Any]) -> list[IntrinsicR
                 doc_sections={
                     str(key): str(value).strip()
                     for key, value in (
-                        item.get("doc_sections")
-                        or sve_docs.get(_family_stem(name))
-                        or {}
+                        item.get("doc_sections") or sve_docs.get(_family_stem(name)) or {}
                     ).items()
                     if str(value).strip()
                 },
-                notes=[str(value).strip() for value in item.get("notes") or [] if str(value).strip()],
+                notes=[
+                    str(value).strip() for value in item.get("notes") or [] if str(value).strip()
+                ],
                 source="arm-acle",
             )
         )
@@ -773,7 +894,9 @@ def parse_arm_neon_intrinsics_bundle(payload: dict[str, Any]) -> list[IntrinsicR
     return records
 
 
-def parse_arm_sve_instruction_map(markdown: str, *, sve_docs: dict[str, dict[str, str]] | None = None) -> list[IntrinsicRecord]:
+def parse_arm_sve_instruction_map(
+    markdown: str, *, sve_docs: dict[str, dict[str, str]] | None = None
+) -> list[IntrinsicRecord]:
     if "### Mapping of SVE instructions to intrinsics" not in markdown:
         return []
     start = markdown.find("### Mapping of SVE instructions to intrinsics")
@@ -803,7 +926,16 @@ def parse_arm_sve_instruction_map(markdown: str, *, sve_docs: dict[str, dict[str
         instruction_head, _, instruction_tail = instruction.partition("(")
         instruction_name = instruction_head.strip().split()[0]
         instruction_form = instruction_tail.rsplit(")", 1)[0].strip() if instruction_tail else ""
-        isa = "SVE2" if any(token in instruction_name for token in ("ADDB", "ADDT", "HNB", "HNT", "LB", "LT", "WB", "WT")) or instruction_name.startswith("SADD") or instruction_name.startswith("UADD") else "SVE"
+        isa = (
+            "SVE2"
+            if any(
+                token in instruction_name
+                for token in ("ADDB", "ADDT", "HNB", "HNT", "LB", "LT", "WB", "WT")
+            )
+            or instruction_name.startswith("SADD")
+            or instruction_name.startswith("UADD")
+            else "SVE"
+        )
         records.append(
             IntrinsicRecord(
                 name=name,
@@ -816,7 +948,9 @@ def parse_arm_sve_instruction_map(markdown: str, *, sve_docs: dict[str, dict[str
                 category="Instruction mapping",
                 subcategory="SVE / Instruction family",
                 instructions=[instruction],
-                instruction_refs=[{"name": instruction_name, "form": instruction_form, "architecture": "arm"}],
+                instruction_refs=[
+                    {"name": instruction_name, "form": instruction_form, "architecture": "arm"}
+                ],
                 metadata={
                     "reference_url": "https://arm-software.github.io/acle/main/acle.html#mapping-of-sve-instructions-to-intrinsics",
                     "mapping_instruction": instruction,
@@ -834,12 +968,26 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
         mnemonic = _intern_small((node.attrib.get("asm") or node.attrib.get("name") or "").strip())
         if not mnemonic:
             continue
-        form = (node.attrib.get("string") or node.attrib.get("form") or node.attrib.get("cpl") or node.attrib.get("category") or "").strip()
+        form = (
+            node.attrib.get("string")
+            or node.attrib.get("form")
+            or node.attrib.get("cpl")
+            or node.attrib.get("category")
+            or ""
+        ).strip()
         raw_summary = node.attrib.get("summary", "").strip()
-        isa = _normalize_isa(node.attrib.get("isa-set", "") or node.attrib.get("extension", "") or node.attrib.get("isa", ""))
+        isa = _normalize_isa(
+            node.attrib.get("isa-set", "")
+            or node.attrib.get("extension", "")
+            or node.attrib.get("isa", "")
+        )
         operand_details: list[dict[str, str]] = []
         metadata = {
-            key: (_intern_small(value.strip()) if key in {"category", "cpl", "extension", "iclass"} else value.strip())
+            key: (
+                _intern_small(value.strip())
+                if key in {"category", "cpl", "extension", "iclass"}
+                else value.strip()
+            )
             for key, value in node.attrib.items()
             if key in _UOPS_METADATA_KEYS
         }
@@ -850,7 +998,11 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
             if child.tag == "operand":
                 xtype = _normalize_operand_xtype(child.attrib.get("xtype", "").strip())
                 operand_payload = {
-                    key: (_intern_small(value.strip()) if key in {"type", "width", "name"} else value.strip())
+                    key: (
+                        _intern_small(value.strip())
+                        if key in {"type", "width", "name"}
+                        else value.strip()
+                    )
                     for key, value in child.attrib.items()
                     if key in _UOPS_OPERAND_KEYS
                 }
@@ -858,11 +1010,20 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
                     operand_payload["xtype"] = _intern_small(xtype)
                 operand_details.append(operand_payload)
             elif child.tag == "architecture":
-                arch = child.attrib.get("name") or child.attrib.get("uarch") or child.attrib.get("arch")
+                arch = (
+                    child.attrib.get("name")
+                    or child.attrib.get("uarch")
+                    or child.attrib.get("arch")
+                )
                 if not arch:
                     continue
                 arch = _intern_small(arch)
-                arch_entry: dict[str, Any] = {"measurement": {}, "latencies": [], "doc": {}, "iaca": []}
+                arch_entry: dict[str, Any] = {
+                    "measurement": {},
+                    "latencies": [],
+                    "doc": {},
+                    "iaca": [],
+                }
                 for grandchild in child:
                     if grandchild.tag == "measurement":
                         arch_entry["measurement"] = dict(grandchild.attrib)
@@ -877,7 +1038,9 @@ def parse_uops_xml(source: str | Path) -> list[InstructionRecord]:
             InstructionRecord(
                 mnemonic=mnemonic,
                 form=form,
-                summary=_instruction_summary(mnemonic, raw_summary, operand_details, architecture="x86"),
+                summary=_instruction_summary(
+                    mnemonic, raw_summary, operand_details, architecture="x86"
+                ),
                 architecture="x86",
                 isa=isa,
                 operand_details=operand_details,
@@ -963,32 +1126,52 @@ def _resolve_instruction_ref(
                 resolution = f"{resolution}-riscv-isa"
         ref_policy = ref.get("policy", "").strip()
         if len(matched) > 1 and ref_policy:
-            narrowed = [instruction for instruction in matched if instruction.metadata.get("policy", "").strip() == ref_policy]
+            narrowed = [
+                instruction
+                for instruction in matched
+                if instruction.metadata.get("policy", "").strip() == ref_policy
+            ]
             if narrowed:
                 matched = narrowed
                 resolution = f"{resolution}-riscv-policy"
         ref_tail_policy = ref.get("tail_policy", "").strip()
         if len(matched) > 1 and ref_tail_policy:
-            narrowed = [instruction for instruction in matched if instruction.metadata.get("tail_policy", "").strip() == ref_tail_policy]
+            narrowed = [
+                instruction
+                for instruction in matched
+                if instruction.metadata.get("tail_policy", "").strip() == ref_tail_policy
+            ]
             if narrowed:
                 matched = narrowed
                 resolution = f"{resolution}-riscv-tail"
         ref_mask_policy = ref.get("mask_policy", "").strip()
         if len(matched) > 1 and ref_mask_policy:
-            narrowed = [instruction for instruction in matched if instruction.metadata.get("mask_policy", "").strip() == ref_mask_policy]
+            narrowed = [
+                instruction
+                for instruction in matched
+                if instruction.metadata.get("mask_policy", "").strip() == ref_mask_policy
+            ]
             if narrowed:
                 matched = narrowed
                 resolution = f"{resolution}-riscv-mask"
         ref_masking = ref.get("masking", "").strip()
         if len(matched) > 1 and ref_masking:
-            narrowed = [instruction for instruction in matched if instruction.metadata.get("masking", "").strip() == ref_masking]
+            narrowed = [
+                instruction
+                for instruction in matched
+                if instruction.metadata.get("masking", "").strip() == ref_masking
+            ]
             if narrowed:
                 matched = narrowed
                 resolution = f"{resolution}-riscv-masking"
     if ref_arch == "x86" and len(matched) > 1:
         lowered_name = intrinsic.name.casefold()
         if "_maskz_" in lowered_name:
-            narrowed = [instruction for instruction in matched if instruction.key.startswith(f"{instruction.mnemonic}_Z ")]
+            narrowed = [
+                instruction
+                for instruction in matched
+                if instruction.key.startswith(f"{instruction.mnemonic}_Z ")
+            ]
             if narrowed:
                 matched = narrowed
                 resolution = f"{resolution}-maskz"
@@ -996,7 +1179,8 @@ def _resolve_instruction_ref(
             narrowed = [
                 instruction
                 for instruction in matched
-                if ", K," in instruction.key and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
+                if ", K," in instruction.key
+                and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
             ]
             if narrowed:
                 matched = narrowed
@@ -1005,7 +1189,8 @@ def _resolve_instruction_ref(
             narrowed = [
                 instruction
                 for instruction in matched
-                if ", K," not in instruction.key and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
+                if ", K," not in instruction.key
+                and not instruction.key.startswith(f"{instruction.mnemonic}_Z ")
             ]
             if narrowed:
                 matched = narrowed
@@ -1046,7 +1231,9 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
     for intrinsic in intrinsics:
         linked: list[str] = []
         resolved_refs: list[dict[str, str]] = []
-        refs = intrinsic.instruction_refs or [{"name": name, "form": "", "xed": ""} for name in intrinsic.instructions]
+        refs = intrinsic.instruction_refs or [
+            {"name": name, "form": "", "xed": ""} for name in intrinsic.instructions
+        ]
         for ref in refs:
             matched, resolved = _resolve_instruction_ref(
                 intrinsic,
@@ -1057,7 +1244,10 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
             )
             ref_arch = resolved["architecture"]
             if not matched:
-                fallback = _canonical_instruction_key(resolved["name"], resolved["form"]) or resolved["name"]
+                fallback = (
+                    _canonical_instruction_key(resolved["name"], resolved["form"])
+                    or resolved["name"]
+                )
                 if fallback:
                     linked.append(fallback)
                     resolved_refs.append(dict(ref) | resolved)
@@ -1066,11 +1256,15 @@ def link_records(intrinsics: list[IntrinsicRecord], instructions: list[Instructi
                 if intrinsic.name not in instruction.linked_intrinsics:
                     instruction.linked_intrinsics.append(intrinsic.name)
                 linked.append(instruction.key)
-                resolved_refs.append(dict(ref) | resolved | {
-                    "architecture": instruction.architecture,
-                    "key": instruction.db_key,
-                    "display_key": instruction.key,
-                })
+                resolved_refs.append(
+                    dict(ref)
+                    | resolved
+                    | {
+                        "architecture": instruction.architecture,
+                        "key": instruction.db_key,
+                        "display_key": instruction.key,
+                    }
+                )
         intrinsic.instructions = list(dict.fromkeys(linked))
         intrinsic.instruction_refs = resolved_refs
 
@@ -1098,11 +1292,14 @@ def _ingest_perf_sources(
     status(f"Collected {len(llvm_rows)} llvm-mca perf rows")
     if llvm_rows:
         merge_perf_rows(instructions, llvm_rows)
-        versions.append(SourceVersion(
-            source="llvm-mca", version=llvm_version or "unknown",
-            fetched_at=now_iso(),
-            url="https://llvm.org/docs/CommandGuide/llvm-mca.html",
-        ))
+        versions.append(
+            SourceVersion(
+                source="llvm-mca",
+                version=llvm_version or "unknown",
+                fetched_at=now_iso(),
+                url="https://llvm.org/docs/CommandGuide/llvm-mca.html",
+            )
+        )
 
     return versions
 
@@ -1162,10 +1359,16 @@ def build_catalog(
     emit("Assembling final catalog")
     return Catalog(
         intrinsics=sorted(intrinsics, key=lambda item: item.name),
-        instructions=sorted(instructions, key=lambda item: (item.architecture, item.mnemonic, item.form)),
+        instructions=sorted(
+            instructions, key=lambda item: (item.architecture, item.mnemonic, item.form)
+        ),
         sources=[
-            intel_source, uops_source, arm_acle_source, arm_a64_source,
-            riscv_intrinsics_source, riscv_instructions_source,
+            intel_source,
+            uops_source,
+            arm_acle_source,
+            arm_a64_source,
+            riscv_intrinsics_source,
+            riscv_instructions_source,
             *perf_sources_version,
         ],
         generated_at=now_iso(),
