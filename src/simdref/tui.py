@@ -601,10 +601,10 @@ class ResultItem(ListItem):
         right = "  ".join(chips)
         head = (
             f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]"
-            f"    {right}"
         )
         if subtitle:
-            head = f"{head}\n     [dim italic]{subtitle}[/]"
+            head = f"{head}  [dim italic]{subtitle}[/]"
+        head = f"{head}    {right}"
         super().__init__(Static(head, markup=True))
 
 
@@ -871,11 +871,13 @@ class SimdrefApp(App):
         margin: 0 0 0 1;
         text-style: bold;
     }
-    /* Plan: results + detail each get 1fr of remaining vertical space;
-       the 20% cap used to leave ~8 rows on a 40-row terminal. The two
-       panes now share the leftover rows evenly. */
+    /* Results list sizes to its content but never takes more than 20% of
+       the terminal height. Detail pane soaks up the remainder with 1fr,
+       so short result lists (e.g. 2 matches) don't leave blank rows above
+       a cramped detail view. */
     #results-list {
-        height: 1fr;
+        height: auto;
+        max-height: 20%;
         border: solid $accent;
         margin: 0 1;
         overflow-y: scroll;
