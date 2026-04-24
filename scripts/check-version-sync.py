@@ -12,6 +12,7 @@ Usage::
     python scripts/check-version-sync.py          # verify
     python scripts/check-version-sync.py --fix    # rewrite plugin files to match pyproject
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,7 +40,9 @@ def _marketplace_version(data: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fix", action="store_true", help="rewrite plugin files to match pyproject")
+    parser.add_argument(
+        "--fix", action="store_true", help="rewrite plugin files to match pyproject"
+    )
     args = parser.parse_args()
 
     canonical = _pyproject_version()

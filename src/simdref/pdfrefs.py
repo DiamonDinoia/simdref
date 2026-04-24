@@ -72,7 +72,9 @@ def legacy_intel_pdf_ref(metadata: dict[str, str] | None) -> PdfRef | None:
 
 def apply_legacy_pdf_metadata(metadata: dict[str, str], pdf_refs: list[PdfRef]) -> dict[str, str]:
     """Populate legacy Intel keys for backward-compatible payloads."""
-    legacy = next((ref for ref in pdf_refs if ref.get("source_id") == _LEGACY_INTEL_SOURCE_ID), None)
+    legacy = next(
+        (ref for ref in pdf_refs if ref.get("source_id") == _LEGACY_INTEL_SOURCE_ID), None
+    )
     if legacy is None:
         return metadata
     if legacy.get("url"):

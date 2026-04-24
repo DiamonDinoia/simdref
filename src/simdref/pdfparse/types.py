@@ -47,15 +47,19 @@ class PdfEnrichmentResult:
                 descriptions[str(key)] = PdfDescriptionPayload(
                     sections=dict(value.get("sections") or {}),
                     source_url=str(value.get("source_url") or ""),
-                    page_start=value.get("page_start") if isinstance(value.get("page_start"), int) else None,
-                    page_end=value.get("page_end") if isinstance(value.get("page_end"), int) else None,
+                    page_start=value.get("page_start")
+                    if isinstance(value.get("page_start"), int)
+                    else None,
+                    page_end=value.get("page_end")
+                    if isinstance(value.get("page_end"), int)
+                    else None,
                 )
         raw_stats = payload.get("stats") or {}
-        stats = {
-            str(key): int(value)
-            for key, value in raw_stats.items()
-            if isinstance(value, int)
-        } if isinstance(raw_stats, dict) else {}
+        stats = (
+            {str(key): int(value) for key, value in raw_stats.items() if isinstance(value, int)}
+            if isinstance(raw_stats, dict)
+            else {}
+        )
         fallback_page_count = payload.get("fallback_page_count")
         return cls(
             descriptions=descriptions,

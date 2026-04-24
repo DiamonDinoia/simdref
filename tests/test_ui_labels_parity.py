@@ -26,11 +26,15 @@ def _read(name: str) -> str:
 
 def test_ui_labels_cover_required_concepts() -> None:
     required = {
-        "kind_intrinsic", "kind_instruction",
+        "kind_intrinsic",
+        "kind_instruction",
         "aggregation",
-        "source_measured", "source_modeled",
-        "arch", "isa",
-        "no_matches", "results_for",
+        "source_measured",
+        "source_modeled",
+        "arch",
+        "isa",
+        "no_matches",
+        "results_for",
     }
     missing = required - set(UI_LABELS)
     assert not missing, f"UI_LABELS missing keys: {sorted(missing)}"
@@ -38,9 +42,16 @@ def test_ui_labels_cover_required_concepts() -> None:
 
 def test_keymap_has_canonical_actions() -> None:
     required = {
-        "focus_search", "toggle_filter_drawer", "cycle_kind", "cycle_arch",
-        "next_result", "prev_result", "open_detail", "switch_tab",
-        "help", "quit_or_close",
+        "focus_search",
+        "toggle_filter_drawer",
+        "cycle_kind",
+        "cycle_arch",
+        "next_result",
+        "prev_result",
+        "open_detail",
+        "switch_tab",
+        "help",
+        "quit_or_close",
     }
     missing = required - keymap_actions()
     assert not missing, f"KEYMAP missing actions: {sorted(missing)}"
@@ -58,17 +69,26 @@ def test_as_json_dict_is_serialisable() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("surface,needles", [
-    # TUI: the Annotate toolbar used to say "Agg"; the kind toggle said "asm".
-    ("tui.py", {
-        r'Label\("Agg"\)': '"Agg" Label — use UI_LABELS["aggregation"]',
-        r'KindToggle\("instruction",\s*"asm"': '"asm" kind label — use UI_LABELS["kind_instruction"]',
-    }),
-    # HTML: the kind-bar used to say "asm / instructions".
-    ("templates/index.html", {
-        r'> asm / instructions<': '"asm / instructions" — use "instructions"',
-    }),
-])
+@pytest.mark.parametrize(
+    "surface,needles",
+    [
+        # TUI: the Annotate toolbar used to say "Agg"; the kind toggle said "asm".
+        (
+            "tui.py",
+            {
+                r'Label\("Agg"\)': '"Agg" Label — use UI_LABELS["aggregation"]',
+                r'KindToggle\("instruction",\s*"asm"': '"asm" kind label — use UI_LABELS["kind_instruction"]',
+            },
+        ),
+        # HTML: the kind-bar used to say "asm / instructions".
+        (
+            "templates/index.html",
+            {
+                r"> asm / instructions<": '"asm / instructions" — use "instructions"',
+            },
+        ),
+    ],
+)
 def test_no_drifted_literals(surface: str, needles: dict) -> None:
     text = _read(surface)
     for pattern, reason in needles.items():

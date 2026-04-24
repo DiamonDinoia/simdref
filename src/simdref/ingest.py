@@ -47,7 +47,9 @@ def load_or_parse_intel_sdm(
     if cache_path.exists():
         try:
             payload = msgpack.unpackb(cache_path.read_bytes(), raw=False)
-            if payload.get("pdf_url") == INTEL_SDM_URL and payload.get("pdf_sha256") == _sha256_file(pdf_path):
+            if payload.get("pdf_url") == INTEL_SDM_URL and payload.get(
+                "pdf_sha256"
+            ) == _sha256_file(pdf_path):
                 descriptions = payload.get("descriptions")
                 if isinstance(descriptions, dict):
                     return descriptions
@@ -84,8 +86,12 @@ def _merge_descriptions(
         descriptions={
             key: PdfDescriptionPayload(
                 sections=dict(value.get("sections") or {}),
-                source_url=str(value.get("source_url") or "https://cdrdv2.intel.com/v1/dl/getContent/671200"),
-                page_start=value.get("page_start") if isinstance(value.get("page_start"), int) else None,
+                source_url=str(
+                    value.get("source_url") or "https://cdrdv2.intel.com/v1/dl/getContent/671200"
+                ),
+                page_start=value.get("page_start")
+                if isinstance(value.get("page_start"), int)
+                else None,
                 page_end=value.get("page_end") if isinstance(value.get("page_end"), int) else None,
             )
             for key, value in descriptions.items()

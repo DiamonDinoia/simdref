@@ -24,8 +24,10 @@ import httpx
 try:
     from pdfminer.pdftypes import resolve1
 except ImportError:  # pragma: no cover - exercised in minimal test envs
+
     def resolve1(value):
         return value
+
 
 from simdref.pdfparse.base import chars_to_lines, extract_sections_from_lines
 from simdref.pdfparse.registry import register_pdf_source
@@ -100,16 +102,20 @@ _SECTION_ALIASES: dict[str, str] = {
 _FOOTER_RE = re.compile(r"^.+Vol\.\s*2[A-D]?\s*\d+-\d+$")
 
 # Sections to discard (tabular data that doesn't render well as text).
-_DISCARD_SECTIONS: frozenset[str] = frozenset({
-    "Instruction Operand Encoding",
-    "Operand Encoding",
-})
+_DISCARD_SECTIONS: frozenset[str] = frozenset(
+    {
+        "Instruction Operand Encoding",
+        "Operand Encoding",
+    }
+)
 
 # Sections whose text is pseudocode and should preserve indentation from x0.
-_CODE_SECTIONS: frozenset[str] = frozenset({
-    "Operation",
-    "Intrinsic Equivalents",
-})
+_CODE_SECTIONS: frozenset[str] = frozenset(
+    {
+        "Operation",
+        "Intrinsic Equivalents",
+    }
+)
 
 # All heading names (lowercase) for content-based heading detection.
 # Some Intel SDM pages format section headings at body text size.
@@ -121,8 +127,8 @@ _ALL_HEADING_NAMES: frozenset[str] = frozenset(
 
 # Minimal safety-net for junk lines that appear outside table bounding boxes.
 _JUNK_LINE_RE = re.compile(
-    r"^\d+\.\s+See note "             # footnote references (1. See note ...)
-    r"|^NOTES:\s*$"                     # trailing NOTES: line
+    r"^\d+\.\s+See note "  # footnote references (1. See note ...)
+    r"|^NOTES:\s*$"  # trailing NOTES: line
 )
 
 
@@ -164,7 +170,9 @@ def _resolve_outline_page_number(pdf, dest) -> int | None:
         if objid is None:
             return None
         if not hasattr(pdf, "_simdref_page_map"):
-            pdf._simdref_page_map = {page.page_obj.pageid: i for i, page in enumerate(pdf.pages, start=1)}
+            pdf._simdref_page_map = {
+                page.page_obj.pageid: i for i, page in enumerate(pdf.pages, start=1)
+            }
         return pdf._simdref_page_map.get(objid)
     except Exception:
         return None
@@ -194,7 +202,7 @@ def _instruction_page_ranges(pdf) -> list[tuple[int, int]]:
             if not _outline_starts_instruction_range(level, title):
                 continue
             next_page = total + 1
-            for later_page, later_level, _later_title in outlines[idx + 1:]:
+            for later_page, later_level, _later_title in outlines[idx + 1 :]:
                 if later_page > page_number and later_level <= level:
                     next_page = later_page
                     break
@@ -255,8 +263,7 @@ def _line_is_tabular_noise(text: str) -> bool:
     if not stripped:
         return True
     return bool(
-        _FASTPATH_TABULAR_LINE_RE.match(stripped)
-        or _FASTPATH_TABULAR_CAPTION_RE.match(stripped)
+        _FASTPATH_TABULAR_LINE_RE.match(stripped) or _FASTPATH_TABULAR_CAPTION_RE.match(stripped)
     )
 
 
@@ -278,7 +285,9 @@ def _prepare_page_pdfplumber(page) -> _PreparedPage:
         ):
             continue
         body_chars.append(char)
-    return _PreparedPage(title=parsed_title, body_lines=chars_to_lines(body_chars), backend="pdfplumber")
+    return _PreparedPage(
+        title=parsed_title, body_lines=chars_to_lines(body_chars), backend="pdfplumber"
+    )
 
 
 def _prepare_page_from_pymupdf_dict(text_dict: dict[str, Any]) -> _PreparedPage:
@@ -341,7 +350,8 @@ def _prepared_page_needs_fallback(prepared: _PreparedPage) -> str | None:
     if not prepared.body_lines:
         return "empty-fast-path"
     heading_lines = [
-        text for _top, _size, _x0, text in prepared.body_lines
+        text
+        for _top, _size, _x0, text in prepared.body_lines
         if text.strip().lower() in _ALL_HEADING_NAMES
     ]
     if not heading_lines:
@@ -439,12 +449,20 @@ def parse_intel_sdm(
             )
 
     # Phase 1: preprocess each page once and collect instruction title pages.
-    scan_task = progress.add_task("Preprocessing pages", total=parse_pages) if interactive_progress else None
+    scan_task = (
+        progress.add_task("Preprocessing pages", total=parse_pages)
+        if interactive_progress
+        else None
+    )
     prepared_pages: dict[int, _PreparedPage] = {}
     title_pages: list[tuple[int, str, str]] = []
     fallback_pages = 0
     for offset, i in enumerate(page_indices):
-        prepared = _prepare_page_pymupdf(fitz_doc[i]) if fitz_doc is not None else _prepare_page_pdfplumber(pdf.pages[i])
+        prepared = (
+            _prepare_page_pymupdf(fitz_doc[i])
+            if fitz_doc is not None
+            else _prepare_page_pdfplumber(pdf.pages[i])
+        )
         fallback_reason = _prepared_page_needs_fallback(prepared)
         if fallback_reason is not None:
             fallback_pages += 1
@@ -465,10 +483,16 @@ def parse_intel_sdm(
             status(f"Fell back to pdfplumber on {fallback_pages} pages")
 
     # Phase 2: assemble sections from cached per-page lines.
-    extract_task = progress.add_task("Extracting descriptions", total=len(title_pages)) if interactive_progress else None
+    extract_task = (
+        progress.add_task("Extracting descriptions", total=len(title_pages))
+        if interactive_progress
+        else None
+    )
     result: dict[str, PdfDescriptionPayload] = {}
     for idx, (page_start, mnemonic, _summary) in enumerate(title_pages):
-        page_end = title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
+        page_end = (
+            title_pages[idx + 1][0] if idx + 1 < len(title_pages) else min(page_start + 10, total)
+        )
 
         all_lines: list[tuple[float, float, float, str]] = []
         for page_idx in range(page_start, page_end):
@@ -490,7 +514,8 @@ def parse_intel_sdm(
                 continue
             # Filter footer and residual junk lines.
             filtered = [
-                (x0, text) for x0, text in line_tuples
+                (x0, text)
+                for x0, text in line_tuples
                 if not _FOOTER_RE.match(text) and not _JUNK_LINE_RE.match(text)
             ]
             if not filtered:
@@ -508,14 +533,9 @@ def parse_intel_sdm(
                 # Filter footnote lines between tables that have a
                 # significantly different left-edge position (x0).
                 if len(filtered) > 3:
-                    x0_counts: Counter[int] = Counter(
-                        round(x0) for x0, _ in filtered
-                    )
+                    x0_counts: Counter[int] = Counter(round(x0) for x0, _ in filtered)
                     dominant_x0 = x0_counts.most_common(1)[0][0]
-                    filtered = [
-                        (x0, t) for x0, t in filtered
-                        if abs(round(x0) - dominant_x0) <= 3
-                    ]
+                    filtered = [(x0, t) for x0, t in filtered if abs(round(x0) - dominant_x0) <= 3]
                 prose_lines = [text for _, text in filtered]
                 # Join PDF-wrapped lines into paragraphs.  A new paragraph
                 # starts when the previous line ends with sentence-terminal

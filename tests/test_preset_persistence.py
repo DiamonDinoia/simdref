@@ -95,8 +95,9 @@ def test_save_is_best_effort_on_readonly_state(tmp_path, monkeypatch):
 
 
 def test_web_preset_precedence_in_app_js():
-    text = (Path(__file__).resolve().parent.parent
-            / "src" / "simdref" / "templates" / "app.js").read_text()
+    text = (
+        Path(__file__).resolve().parent.parent / "src" / "simdref" / "templates" / "app.js"
+    ).read_text()
     # localStorage read key
     assert 'localStorage.getItem("simdref-last-preset")' in text
     # URL-param check precedes localStorage read, and the fallback is
@@ -110,6 +111,7 @@ def test_web_preset_precedence_in_app_js():
 
 
 def test_web_persists_last_preset_on_click():
-    text = (Path(__file__).resolve().parent.parent
-            / "src" / "simdref" / "templates" / "app.js").read_text()
+    text = (
+        Path(__file__).resolve().parent.parent / "src" / "simdref" / "templates" / "app.js"
+    ).read_text()
     assert 'localStorage.setItem("simdref-last-preset"' in text

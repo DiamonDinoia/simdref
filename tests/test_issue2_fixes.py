@@ -54,14 +54,19 @@ class _FakeConn:
 def _fake_lookup(mapping):
     def _fake(mnemonic, conn):
         return mapping.get(mnemonic.lower(), [])
+
     return _fake
 
 
 def test_format_annotation_tags_missing_arch():
     rec = _make_record(arch_details={"cortex-a72": _arch_entry("3", "0.5")})
     out = format_annotation(
-        rec, performance=True, docs=False,
-        arch="sapphirerapids", agg="avg", include_modeled=False,
+        rec,
+        performance=True,
+        docs=False,
+        arch="sapphirerapids",
+        agg="avg",
+        include_modeled=False,
     )
     assert "[missing:sapphirerapids]" in out
     assert "lat=-" in out
@@ -69,6 +74,7 @@ def test_format_annotation_tags_missing_arch():
 
 def test_json_record_has_structured_latency_cpi_ports(monkeypatch):
     from simdref import annotate as annotate_mod
+
     rec = _make_record(
         arch_details={
             "SKX": _arch_entry("3", "0.5", ports="1*p015"),
@@ -89,6 +95,7 @@ def test_json_record_has_structured_latency_cpi_ports(monkeypatch):
 
 def test_json_record_none_when_perf_missing(monkeypatch):
     from simdref import annotate as annotate_mod
+
     rec = _make_record(arch_details={"cortex-a72": _arch_entry("3", "0.5")})
     monkeypatch.setattr(annotate_mod, "lookup", _fake_lookup({"vaddps": [rec]}))
     src = ["    vaddps %ymm2, %ymm1, %ymm0\n"]
@@ -125,6 +132,7 @@ def test_smart_lookup_does_not_launch_tui_on_non_tty(monkeypatch, capsys):
 
     def _boom(*a, **kw):
         raise AssertionError("TUI must not launch in non-TTY context")
+
     monkeypatch.setattr(cli, "_run_tui", _boom)
 
     rc = cli._smart_lookup("vgatherdpd")
@@ -140,7 +148,9 @@ def test_smart_lookup_prints_summary_on_non_tty_match(monkeypatch, capsys):
 
     rec = _make_record(arch_details={"cortex-a72": _arch_entry("3", "0.5")})
     monkeypatch.setattr(cli, "_find_instructions_fast", lambda q: [rec])
-    monkeypatch.setattr(cli, "_run_tui", lambda **kw: (_ for _ in ()).throw(AssertionError("no TUI")))
+    monkeypatch.setattr(
+        cli, "_run_tui", lambda **kw: (_ for _ in ()).throw(AssertionError("no TUI"))
+    )
 
     rc = cli._smart_lookup("vaddps")
     out = capsys.readouterr().out

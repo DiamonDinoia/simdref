@@ -85,9 +85,7 @@ def test_aggregate_perf_modes():
 
 
 def test_aggregate_perf_include_modeled_toggle():
-    rec = _make_record(
-        arch_details={"SKX": _arch_entry("4", "1.0", kind="modeled")}
-    )
+    rec = _make_record(arch_details={"SKX": _arch_entry("4", "1.0", kind="modeled")})
     measured_only = aggregate_perf(rec, mode="avg", include_modeled=False)
     # No measured data, falls through to any-kind mixed.
     assert measured_only.n_archs == 1
@@ -132,18 +130,15 @@ class _FakeConn:
 def _fake_lookup_factory(mapping):
     def _fake(mnemonic, conn):
         return mapping.get(mnemonic.lower(), [])
+
     return _fake
 
 
 def test_annotate_stream_inline(monkeypatch):
-    rec = _make_record(
-        arch_details={"SKX": _arch_entry("3", "0.5")}
-    )
+    rec = _make_record(arch_details={"SKX": _arch_entry("3", "0.5")})
     from simdref import annotate as annotate_mod
 
-    monkeypatch.setattr(
-        annotate_mod, "lookup", _fake_lookup_factory({"vaddps": [rec]})
-    )
+    monkeypatch.setattr(annotate_mod, "lookup", _fake_lookup_factory({"vaddps": [rec]}))
 
     src = [
         "main:\n",

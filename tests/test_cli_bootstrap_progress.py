@@ -42,6 +42,7 @@ def _stream_returning(body: bytes):
     @contextmanager
     def fake_stream(*args, **kwargs):
         yield _FakeResponse(body)
+
     with mock.patch("httpx.stream", fake_stream):
         yield
 
@@ -59,9 +60,11 @@ class DownloadProgressTests(unittest.TestCase):
         fake_console = Console(file=buf, force_terminal=False, width=200)
 
         tmp = Path(tempfile.mkdtemp())
-        with _stream_returning(b"x" * (2 * 1024 * 1024)), \
-             mock.patch.object(cli, "err_console", fake_console), \
-             mock.patch.object(cli, "DATA_DIR", tmp):
+        with (
+            _stream_returning(b"x" * (2 * 1024 * 1024)),
+            mock.patch.object(cli, "err_console", fake_console),
+            mock.patch.object(cli, "DATA_DIR", tmp),
+        ):
             cli._download_from_release()
 
         output = buf.getvalue()
@@ -85,10 +88,12 @@ class DownloadProgressTests(unittest.TestCase):
         def _typer_echo(msg, *args, **kwargs):
             captured_out.append(str(msg))
 
-        with mock.patch.object(cli.err_console, "print", side_effect=_err_print), \
-             mock.patch("simdref.cli.typer.echo", side_effect=_typer_echo), \
-             mock.patch("sys.stdout.isatty", return_value=False), \
-             mock.patch.object(cli, "_download_release_or_fallback"):
+        with (
+            mock.patch.object(cli.err_console, "print", side_effect=_err_print),
+            mock.patch("simdref.cli.typer.echo", side_effect=_typer_echo),
+            mock.patch("sys.stdout.isatty", return_value=False),
+            mock.patch.object(cli, "_download_release_or_fallback"),
+        ):
             cli._bootstrap_interactive()
 
         banner = "\n".join(captured_err)

@@ -82,14 +82,18 @@ class LspWebTests(unittest.TestCase):
 
     def test_export_web_produces_expected_files(self):
         catalog = build_fixture_catalog()
-        catalog.instructions[0].pdf_refs = [{
-            "source_id": "intel-sdm",
-            "label": "Intel SDM",
-            "url": "https://example.com/intel-sdm.pdf#page=42",
-            "page_start": "42",
-            "page_end": "43",
-        }]
-        catalog.instructions[0].metadata["intel-sdm-url"] = "https://example.com/intel-sdm.pdf#page=42"
+        catalog.instructions[0].pdf_refs = [
+            {
+                "source_id": "intel-sdm",
+                "label": "Intel SDM",
+                "url": "https://example.com/intel-sdm.pdf#page=42",
+                "page_start": "42",
+                "page_end": "43",
+            }
+        ]
+        catalog.instructions[0].metadata["intel-sdm-url"] = (
+            "https://example.com/intel-sdm.pdf#page=42"
+        )
         catalog.instructions[0].metadata["intel-sdm-page-start"] = "42"
         catalog.instructions[0].metadata["intel-sdm-page-end"] = "43"
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -147,6 +151,7 @@ class LspWebTests(unittest.TestCase):
             # client derives the bucket from the intrinsic name with the
             # same rule as ``simdref.web._intrinsic_chunk_prefix``.
             from simdref.web import _intrinsic_chunk_prefix
+
             intrinsic_chunks_dir = Path(tmpdir) / "intrinsic-chunks"
             self.assertTrue(intrinsic_chunks_dir.is_dir())
 
@@ -156,12 +161,19 @@ class LspWebTests(unittest.TestCase):
                 return chunk[name]
 
             arm_detail = _load_intrinsic_detail("vaddq_u8")
-            self.assertEqual(arm_detail["url"], "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8")
+            self.assertEqual(
+                arm_detail["url"],
+                "https://developer.arm.com/architectures/instruction-sets/intrinsics/vaddq_u8",
+            )
             self.assertIn("argument_preparation", arm_detail["metadata"])
-            riscv_intr = next(item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1")
+            riscv_intr = next(
+                item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1"
+            )
             self.assertEqual(riscv_intr["display_architecture"], "RISC-V")
             riscv_detail = _load_intrinsic_detail("__riscv_vadd_vv_i32m1")
-            self.assertEqual(riscv_detail["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc")
+            self.assertEqual(
+                riscv_detail["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc"
+            )
             self.assertIn("riscv:vsub.vv", [item["key"] for item in search["instructions"]])
             # Search index instructions have key but no measurements
             instr = search["instructions"][0]
@@ -193,7 +205,9 @@ class LspWebTests(unittest.TestCase):
                         self.assertEqual(pdf_refs[0]["page_start"], "42")
                     if metadata.get("intel-sdm-url"):
                         saw_sdm = True
-                        self.assertEqual(metadata["intel-sdm-url"], "https://example.com/intel-sdm.pdf#page=42")
+                        self.assertEqual(
+                            metadata["intel-sdm-url"], "https://example.com/intel-sdm.pdf#page=42"
+                        )
                         self.assertEqual(metadata["intel-sdm-page-start"], "42")
                         self.assertEqual(metadata["intel-sdm-page-end"], "43")
                     if detail["architecture"] == "riscv" and detail["mnemonic"] == "vsub.vv":
@@ -221,6 +235,7 @@ class LspWebTests(unittest.TestCase):
             # Intrinsic details live in per-prefix chunks; hydrate the
             # bucket that carries ``vaddq_u8`` and spot-check.
             from simdref.web import _intrinsic_chunk_prefix
+
             vaddq_bucket = _intrinsic_chunk_prefix("vaddq_u8")
             intr_chunk = json.loads(
                 (Path(tmpdir) / "intrinsic-chunks" / f"{vaddq_bucket}.json").read_text()
@@ -232,7 +247,11 @@ class LspWebTests(unittest.TestCase):
 
     def test_export_web_preserves_x86_detail_sections_for_rendering(self):
         catalog = build_fixture_catalog()
-        x86_instruction = next(item for item in catalog.instructions if item.architecture == "x86" and item.mnemonic == "VPEXPANDD")
+        x86_instruction = next(
+            item
+            for item in catalog.instructions
+            if item.architecture == "x86" and item.mnemonic == "VPEXPANDD"
+        )
         x86_instruction.description = {
             "Description": "Expand packed integers under writemask control.",
             "Operation": "FOR j := 0 TO KL-1",

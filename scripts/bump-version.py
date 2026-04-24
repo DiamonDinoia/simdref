@@ -13,6 +13,7 @@ Edits:
 Commit the result yourself. The release-candidate workflow refuses to
 cut a tag unless all three agree.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,7 +61,7 @@ def main() -> int:
     _rewrite_json(PLUGIN, lambda d: d.__setitem__("version", version))
 
     print(f"bumped pyproject + .claude-plugin metadata to {version}")
-    print("next: git commit -am 'chore(release): bump version to " f"{version}'")
+    print(f"next: git commit -am 'chore(release): bump version to {version}'")
     return 0
 
 

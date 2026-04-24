@@ -36,7 +36,9 @@ class _McaAdapter:
             return False
         # A minimal sniff: JSON object containing MCA keys.
         head_s = head.decode("utf-8", errors="replace")
-        return head_s.lstrip().startswith("{") and ("CodeRegions" in head_s or "Instructions" in head_s)
+        return head_s.lstrip().startswith("{") and (
+            "CodeRegions" in head_s or "Instructions" in head_s
+        )
 
     def ingest(self, path: Path, *, binary: Path | None) -> Iterable[SampleRow]:
         data = json.loads(path.read_text())
@@ -47,7 +49,11 @@ class _McaAdapter:
         idx = 0
         for region in regions:
             summary = region.get("SummaryView") or {}
-            instructions = region.get("Instructions") or region.get("InstructionInfoView", {}).get("InstructionList") or []
+            instructions = (
+                region.get("Instructions")
+                or region.get("InstructionInfoView", {}).get("InstructionList")
+                or []
+            )
             # Total cycles for the region, fall back to iterations * count.
             region_cycles = float(summary.get("TotalCycles", 0) or 0)
             n_insts = len(instructions) or 1
@@ -55,10 +61,7 @@ class _McaAdapter:
 
             for inst in instructions:
                 mnemonic = (
-                    inst.get("Instruction")
-                    or inst.get("Mnemonic")
-                    or inst.get("OpcodeName")
-                    or ""
+                    inst.get("Instruction") or inst.get("Mnemonic") or inst.get("OpcodeName") or ""
                 )
                 # Synthesize address: 4 bytes per instruction from idx=0.
                 synth_addr = 0x1000 + idx * 4

@@ -14,23 +14,53 @@ from typing import Any, Iterable
 
 
 ISA_FAMILY_ORDER: dict[str, int] = {
-    "x86": 0, "MMX": 1, "SSE": 2, "AVX": 3,
-    "AVX-512": 4, "AVX10": 5, "AMX": 6, "APX": 7,
-    "Arm": 8, "RISC-V": 9, "SVML": 10, "Other": 11,
+    "x86": 0,
+    "MMX": 1,
+    "SSE": 2,
+    "AVX": 3,
+    "AVX-512": 4,
+    "AVX10": 5,
+    "AMX": 6,
+    "APX": 7,
+    "Arm": 8,
+    "RISC-V": 9,
+    "SVML": 10,
+    "Other": 11,
 }
 
 DEFAULT_ENABLED_ISAS: tuple[str, ...] = ("SSE", "AVX", "AVX-512", "Arm", "RISC-V")
 
 FAMILY_SUB_ORDER: dict[str, list[str]] = {
     "SSE": ["SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2"],
-    "AVX": ["AVX", "AVX2", "FMA", "F16C", "AVX_VNNI", "AVX_VNNI_INT8",
-            "AVX_VNNI_INT16", "AVX_IFMA", "AVX_NE_CONVERT"],
+    "AVX": [
+        "AVX",
+        "AVX2",
+        "FMA",
+        "F16C",
+        "AVX_VNNI",
+        "AVX_VNNI_INT8",
+        "AVX_VNNI_INT16",
+        "AVX_IFMA",
+        "AVX_NE_CONVERT",
+    ],
     "AVX-512": [
-        "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
-        "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16",
-        "AVX512_VBMI", "AVX512_VBMI2", "AVX512_BITALG",
-        "AVX512IFMA52", "AVX512VPOPCNTDQ", "AVX512_VP2INTERSECT",
-        "VAES", "VPCLMULQDQ", "GFNI",
+        "AVX512F",
+        "AVX512VL",
+        "AVX512BW",
+        "AVX512DQ",
+        "AVX512CD",
+        "AVX512_VNNI",
+        "AVX512_FP16",
+        "AVX512_BF16",
+        "AVX512_VBMI",
+        "AVX512_VBMI2",
+        "AVX512_BITALG",
+        "AVX512IFMA52",
+        "AVX512VPOPCNTDQ",
+        "AVX512_VP2INTERSECT",
+        "VAES",
+        "VPCLMULQDQ",
+        "GFNI",
     ],
     "AMX": ["AMX-TILE", "AMX-INT8", "AMX-BF16", "AMX-FP16", "AMX-COMPLEX"],
     "Arm": ["NEON", "SVE", "SVE2"],
@@ -52,11 +82,28 @@ DEFAULT_SUBS: dict[str, set[str]] = {
 # _IFMA/_VP2INTERSECT, VAES, VPCLMULQDQ, GFNI, AMX, APX, AVX10, SVML.
 X86_64_V4_SUBS: set[str] = {
     # psABI x86-64-v2
-    "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2", "POPCNT",
+    "SSE",
+    "SSE2",
+    "SSE3",
+    "SSSE3",
+    "SSE4.1",
+    "SSE4.2",
+    "POPCNT",
     # psABI x86-64-v3
-    "AVX", "AVX2", "F16C", "FMA", "BMI1", "BMI2", "LZCNT", "MOVBE",
+    "AVX",
+    "AVX2",
+    "F16C",
+    "FMA",
+    "BMI1",
+    "BMI2",
+    "LZCNT",
+    "MOVBE",
     # psABI x86-64-v4
-    "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD",
+    "AVX512F",
+    "AVX512VL",
+    "AVX512BW",
+    "AVX512DQ",
+    "AVX512CD",
 }
 
 ARM_ALL_SUBS: set[str] = {"NEON", "SVE", "SVE2", "SME", "MVE"}
@@ -171,9 +218,7 @@ class FilterSpec:
         default_factory=lambda: {k: set(v) for k, v in DEFAULT_SUBS.items()}
     )
     categories: list[CategorySpec] = field(default_factory=list)
-    presets: dict[str, PresetSpec] = field(
-        default_factory=lambda: dict(ARCH_PRESETS)
-    )
+    presets: dict[str, PresetSpec] = field(default_factory=lambda: dict(ARCH_PRESETS))
     arm_arch_values: tuple[str, ...] = ARM_ARCH_VALUES
 
     def to_json(self) -> dict[str, Any]:
@@ -204,6 +249,7 @@ class FilterSpec:
         categories = set(enabled_categories) if enabled_categories is not None else None
         if families is not None:
             from simdref.display import isa_family  # local import avoids cycle
+
             record_families = {isa_family(v) for v in (getattr(record, "isa", None) or [])}
             if not record_families & families:
                 return False
@@ -270,6 +316,7 @@ def load_categories_from_db(conn: sqlite3.Connection) -> list[CategorySpec]:
     on the payload and are skipped here (schema lacks an indexed column).
     """
     from simdref.display import isa_family  # local import avoids cycle
+
     queries = [
         """
         SELECT category, subcategory, isa, COUNT(*) AS n
@@ -302,7 +349,9 @@ def load_categories_from_db(conn: sqlite3.Connection) -> list[CategorySpec]:
                 aggregate[key] = aggregate.get(key, 0) + int(count)
     specs = [
         CategorySpec(family=fam, category=cat, subcategory=sub, count=n)
-        for (fam, cat, sub), n in sorted(aggregate.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2]))
+        for (fam, cat, sub), n in sorted(
+            aggregate.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])
+        )
     ]
     return specs
 

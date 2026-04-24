@@ -18,6 +18,7 @@ Usage:
 
 Requires the venv created earlier at /tmp/pw-venv (playwright installed).
 """
+
 from __future__ import annotations
 
 import argparse

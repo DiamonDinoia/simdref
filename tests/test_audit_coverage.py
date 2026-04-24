@@ -41,9 +41,18 @@ def _aarchmrs_payload_with_noise() -> dict:
                                         "name": "aarch64/instrs/integer/arithmetic/add/Instruction",  # noqa: E501
                                         "assembly": {
                                             "symbols": [
-                                                {"_type": "Instruction.Symbols.Literal", "value": "ADD"},
-                                                {"_type": "Instruction.Symbols.Literal", "value": " "},
-                                                {"_type": "Instruction.Symbols.RuleReference", "rule_id": "Xd"},
+                                                {
+                                                    "_type": "Instruction.Symbols.Literal",
+                                                    "value": "ADD",
+                                                },
+                                                {
+                                                    "_type": "Instruction.Symbols.Literal",
+                                                    "value": " ",
+                                                },
+                                                {
+                                                    "_type": "Instruction.Symbols.RuleReference",
+                                                    "rule_id": "Xd",
+                                                },
                                             ],
                                         },
                                     },

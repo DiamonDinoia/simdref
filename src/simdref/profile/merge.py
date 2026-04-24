@@ -58,9 +58,7 @@ def _group_samples(
     dict[int, dict[str, list[SampleRow]]],
     dict[tuple[str, int], dict[str, list[SampleRow]]],
 ]:
-    by_addr: dict[int, dict[str, list[SampleRow]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    by_addr: dict[int, dict[str, list[SampleRow]]] = defaultdict(lambda: defaultdict(list))
     by_srcline: dict[tuple[str, int], dict[str, list[SampleRow]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -155,7 +153,11 @@ def merge(
         out.append(rec)
 
         primary_event = next(iter(hotness), None) if hotness else None
-        primary_weight = hotness[primary_event]["weight"] if primary_event and primary_event not in {"in_hot_loop"} else 0.0
+        primary_weight = (
+            hotness[primary_event]["weight"]
+            if primary_event and primary_event not in {"in_hot_loop"}
+            else 0.0
+        )
         by_weight.append((primary_weight, rec))
 
     # Assign ranks (1 = hottest) on a per-event basis using the first event.
@@ -185,9 +187,7 @@ def render_sa(records: list[MergedRecord]) -> str:
         bar = _bar(pct)
         star = " *" if rec.hotness.get("rank") == 1 else ""
         head = f"{pct:5.1f}% {bar} "
-        body = rec.raw or (
-            f"{rec.mnemonic}" + (f"   # {rec.annotation}" if rec.annotation else "")
-        )
+        body = rec.raw or (f"{rec.mnemonic}" + (f"   # {rec.annotation}" if rec.annotation else ""))
         tail = f" {kind_tag}{star}" if kind_tag or star else ""
         lines.append(f"{head}{body}{tail}")
     return "\n".join(lines) + "\n"
@@ -208,6 +208,8 @@ def _bar(pct: float) -> str:
 
 def write_merged_json(records: list[MergedRecord], path: Path) -> None:
     path.write_text(
-        json.dumps({"schema": "simdref.merged.v1", "records": [r.to_dict() for r in records]}, indent=2)
+        json.dumps(
+            {"schema": "simdref.merged.v1", "records": [r.to_dict() for r in records]}, indent=2
+        )
         + "\n"
     )

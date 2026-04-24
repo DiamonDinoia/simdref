@@ -155,13 +155,39 @@ class ArchPresetsTests(unittest.TestCase):
         self.assertEqual(preset.families, frozenset({"x86", "SSE", "AVX", "AVX-512"}))
         self.assertEqual(set(preset.subs), X86_64_V4_SUBS)
         # v2/v3/v4 baseline must all be present.
-        for sub in ("SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2",
-                    "AVX", "AVX2", "F16C", "FMA", "BMI1", "BMI2", "POPCNT", "LZCNT",
-                    "AVX512F", "AVX512VL", "AVX512BW", "AVX512DQ", "AVX512CD"):
+        for sub in (
+            "SSE",
+            "SSE2",
+            "SSE3",
+            "SSSE3",
+            "SSE4.1",
+            "SSE4.2",
+            "AVX",
+            "AVX2",
+            "F16C",
+            "FMA",
+            "BMI1",
+            "BMI2",
+            "POPCNT",
+            "LZCNT",
+            "AVX512F",
+            "AVX512VL",
+            "AVX512BW",
+            "AVX512DQ",
+            "AVX512CD",
+        ):
             self.assertIn(sub, preset.subs, f"Intel preset missing {sub}")
         # Intel preset must NOT enable AMX/APX/AVX10/SVML/VAES/GFNI/AVX-512 _VNNI etc.
-        forbidden = {"AMX-TILE", "AVX512_VNNI", "AVX512_FP16", "AVX512_BF16",
-                     "AVX512_VBMI", "VAES", "GFNI", "AVX512_VP2INTERSECT"}
+        forbidden = {
+            "AMX-TILE",
+            "AVX512_VNNI",
+            "AVX512_FP16",
+            "AVX512_BF16",
+            "AVX512_VBMI",
+            "VAES",
+            "GFNI",
+            "AVX512_VP2INTERSECT",
+        }
         self.assertFalse(preset.subs & frozenset(forbidden))
         self.assertEqual(preset.kind, frozenset({"intrinsic"}))
         self.assertIsNone(preset.arm_arch)
@@ -216,17 +242,13 @@ class ArchPresetsTests(unittest.TestCase):
 class ArmArchSqlPredicateTests(unittest.TestCase):
     def test_arm_arch_pushed_into_sql_where(self):
         spec = FilterSpec()
-        clause, binds = spec.sql_predicate(
-            "intrinsics_data", enabled_arm_arch=["A64", "BOTH"]
-        )
+        clause, binds = spec.sql_predicate("intrinsics_data", enabled_arm_arch=["A64", "BOTH"])
         self.assertIn("arm_arch IN", clause)
         self.assertEqual(set(binds), {"A64", "BOTH"})
 
     def test_arm_arch_ignored_for_instructions_table(self):
         spec = FilterSpec()
-        clause, binds = spec.sql_predicate(
-            "instructions_data", enabled_arm_arch=["A64"]
-        )
+        clause, binds = spec.sql_predicate("instructions_data", enabled_arm_arch=["A64"])
         self.assertNotIn("arm_arch", clause)
         self.assertEqual(binds, [])
 

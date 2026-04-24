@@ -94,6 +94,7 @@ def test_write_manpages_covers_every_intrinsic(catalog: Catalog, tmp_path: Path)
 # F3 — web export structure
 # ---------------------------------------------------------------------------
 
+
 def test_web_export_emits_expected_artifacts(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
     for name in ("index.html", "search-index.json", "filter_spec.json", "build_stamp.json"):
@@ -136,7 +137,15 @@ def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path
     assert intrinsics, "search-index.json exposes no intrinsics"
     # Slim shape: only what the client needs for search + result-card render.
     required = {"name", "subtitle", "isa", "display_isa", "isa_families", "search_fields"}
-    forbidden = {"signature", "header", "url", "notes", "metadata", "search_tokens", "display_isa_tokens"}
+    forbidden = {
+        "signature",
+        "header",
+        "url",
+        "notes",
+        "metadata",
+        "search_tokens",
+        "display_isa_tokens",
+    }
     for item in intrinsics:
         missing = required - item.keys()
         assert not missing, f"intrinsic {item.get('name')!r} missing {missing}"
@@ -188,6 +197,7 @@ def test_build_stamp_has_generated_at(catalog: Catalog, tmp_path: Path):
 # ---------------------------------------------------------------------------
 # F1 — CLI render (structural, captured via rich.console)
 # ---------------------------------------------------------------------------
+
 
 def test_cli_renders_intrinsic_detail_with_signature_and_isa(catalog: Catalog):
     from simdref import display

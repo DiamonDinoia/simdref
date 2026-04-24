@@ -34,19 +34,59 @@ _INSTR_LINE_RE = re.compile(
     r"(?P<body>.*?)\s*$"
 )
 _MNEM_RE = re.compile(r"^\s*(?:(?:[0-9a-fA-F]{2}\s+){1,10})?(?P<mnem>[a-zA-Z][a-zA-Z0-9.]*)")
-_BRANCH_TARGET_RE = re.compile(
-    r"\b(?P<addr>[0-9a-fA-F]+)\s+<"
+_BRANCH_TARGET_RE = re.compile(r"\b(?P<addr>[0-9a-fA-F]+)\s+<")
+_SRC_LINE_RE = re.compile(
+    r"^\s*(?P<file>[^ \t][^:]*):(?P<line>\d+)\s*(?:\(discriminator \d+\))?\s*$"
 )
-_SRC_LINE_RE = re.compile(r"^\s*(?P<file>[^ \t][^:]*):(?P<line>\d+)\s*(?:\(discriminator \d+\))?\s*$")
 
 _BRANCH_MNEMONICS = frozenset(
     {
-        "jmp", "jmpq", "je", "jne", "jz", "jnz", "jg", "jge", "jl", "jle",
-        "ja", "jae", "jb", "jbe", "jc", "jnc", "jo", "jno", "js", "jns",
-        "jp", "jnp", "jpe", "jpo", "jecxz", "jrcxz", "loop", "loope", "loopne",
-        "call", "callq", "ret", "retq",
-        "b", "bl", "br", "b.eq", "b.ne", "b.lt", "b.gt", "b.le", "b.ge",
-        "cbz", "cbnz", "tbz", "tbnz",
+        "jmp",
+        "jmpq",
+        "je",
+        "jne",
+        "jz",
+        "jnz",
+        "jg",
+        "jge",
+        "jl",
+        "jle",
+        "ja",
+        "jae",
+        "jb",
+        "jbe",
+        "jc",
+        "jnc",
+        "jo",
+        "jno",
+        "js",
+        "jns",
+        "jp",
+        "jnp",
+        "jpe",
+        "jpo",
+        "jecxz",
+        "jrcxz",
+        "loop",
+        "loope",
+        "loopne",
+        "call",
+        "callq",
+        "ret",
+        "retq",
+        "b",
+        "bl",
+        "br",
+        "b.eq",
+        "b.ne",
+        "b.lt",
+        "b.gt",
+        "b.le",
+        "b.ge",
+        "cbz",
+        "cbnz",
+        "tbz",
+        "tbnz",
     }
 )
 
@@ -174,9 +214,7 @@ def detect_loops(instrs: list[Instr]) -> list[LoopRegion]:
                 continue
             addr_to_instr = {i.address: i for i in sym_instrs}
             src_lines: list[int] = [
-                ln
-                for a in addrs
-                if (ln := addr_to_instr[a].source_line) is not None
+                ln for a in addrs if (ln := addr_to_instr[a].source_line) is not None
             ]
             src_files = {
                 addr_to_instr[a].source_file

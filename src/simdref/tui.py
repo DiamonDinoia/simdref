@@ -25,9 +25,11 @@ def _profile_log(tag: str, elapsed_ms: float, **extras: object) -> None:
     extras_str = " ".join(f"{k}={v}" for k, v in extras.items())
     sys.stderr.write(f"[simdref-profile] {tag} {elapsed_ms:.1f}ms {extras_str}\n")
 
+
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+
 try:
     from textual import events, on, work
     from textual.app import App, ComposeResult
@@ -51,6 +53,7 @@ try:
         TextArea,
     )
 except ImportError:  # pragma: no cover - allows non-TUI test environments
+
     class _TextualStub:
         def __init__(self, *args, **kwargs):
             pass
@@ -61,11 +64,13 @@ except ImportError:  # pragma: no cover - allows non-TUI test environments
     def on(*args, **kwargs):
         def _decorator(fn):
             return fn
+
         return _decorator
 
     def work(*args, **kwargs):
         def _decorator(fn):
             return fn
+
         return _decorator
 
     class App:  # type: ignore[override]
@@ -145,7 +150,9 @@ _INITIAL_RESULT_BATCH = 50
 _RESULT_BATCH_SIZE = 10
 _RESULT_PREFETCH_THRESHOLD = 5
 
-_ISA_FAMILIES: list[str] = [name for name, _ in sorted(ISA_FAMILY_ORDER.items(), key=lambda item: item[1])]
+_ISA_FAMILIES: list[str] = [
+    name for name, _ in sorted(ISA_FAMILY_ORDER.items(), key=lambda item: item[1])
+]
 
 
 def _isa_matches_sub(isa: str, sub_isa: str) -> bool:
@@ -250,7 +257,9 @@ def _fts_search(
     # isn't indexed, but it runs only over FTS-matching rows.
     if isa_like_tokens:
         normalized_tokens = [tok.replace("-", "") for tok in isa_like_tokens]
-        isa_like_sql = "(" + " OR ".join("REPLACE(isa, '-', '') LIKE ?" for _ in normalized_tokens) + ")"
+        isa_like_sql = (
+            "(" + " OR ".join("REPLACE(isa, '-', '') LIKE ?" for _ in normalized_tokens) + ")"
+        )
         isa_like_params = [f"%{tok}%" for tok in normalized_tokens]
     else:
         isa_like_sql = ""
@@ -296,7 +305,9 @@ def _fts_search(
                     break
                 except sqlite3.OperationalError:
                     continue
-            visible = sum(1 for row in rows if row["name"] not in seen and _isa_visible(row["isa"] or ""))
+            visible = sum(
+                1 for row in rows if row["name"] not in seen and _isa_visible(row["isa"] or "")
+            )
             if visible >= _target_candidate_count() or len(rows) < fetch_limit:
                 return rows
             fetch_limit *= 2
@@ -312,7 +323,7 @@ def _fts_search(
                     SELECT instructions_data.db_key, instructions_fts.key, instructions_fts.summary, instructions_fts.isa
                     FROM instructions_fts
                     JOIN instructions_data ON instructions_data.rowid = instructions_fts.rowid
-                    WHERE instructions_fts MATCH ?{isa_filter_clause.replace('REPLACE(isa,', 'REPLACE(instructions_fts.isa,')}
+                    WHERE instructions_fts MATCH ?{isa_filter_clause.replace("REPLACE(isa,", "REPLACE(instructions_fts.isa,")}
                     ORDER BY rank
                     LIMIT ?
                     """,
@@ -320,7 +331,9 @@ def _fts_search(
                 ).fetchall()
             except sqlite3.OperationalError:
                 return rows
-            visible = sum(1 for row in rows if row["db_key"] not in seen and _isa_visible(row["isa"] or ""))
+            visible = sum(
+                1 for row in rows if row["db_key"] not in seen and _isa_visible(row["isa"] or "")
+            )
             if visible >= _target_candidate_count() or len(rows) < fetch_limit:
                 return rows
             fetch_limit *= 2
@@ -336,7 +349,9 @@ def _fts_search(
             if row["name"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
             seen.add(row["name"])
-            subtitle = (row["summary"] if "summary" in row.keys() else "") or row["description"] or ""
+            subtitle = (
+                (row["summary"] if "summary" in row.keys() else "") or row["description"] or ""
+            )
             result = SearchResult(
                 kind="intrinsic",
                 key=row["name"],
@@ -362,9 +377,11 @@ def _fts_search(
 
     # Sort by match score descending, then by kind (intrinsics first)
     candidates.sort(key=lambda c: (-c[0], 0 if c[1].kind == "intrinsic" else 1))
-    results = [r for _, r in candidates[offset:offset + limit]]
+    results = [r for _, r in candidates[offset : offset + limit]]
     if _PROFILE:
-        _profile_log("_fts_search", (time.perf_counter() - _t_start) * 1000, q=repr(query), n=len(results))
+        _profile_log(
+            "_fts_search", (time.perf_counter() - _t_start) * 1000, q=repr(query), n=len(results)
+        )
     return results
 
 
@@ -599,9 +616,7 @@ class ResultItem(ListItem):
         if cpi and cpi != "-":
             chips.append(f"[yellow]tput {cpi}[/]")
         right = "  ".join(chips)
-        head = (
-            f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]"
-        )
+        head = f"[dim]{index:>2}[/] [{title_color} bold]{result.title}[/]"
         if subtitle:
             head = f"{head}  [dim italic]{subtitle}[/]"
         head = f"{head}    {right}"
@@ -694,7 +709,11 @@ class AnnContextMenu(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Button("Cut", id="ctx-cut", disabled=not self._has_selection)
-            yield Button("Copy", id="ctx-copy", disabled=not self._has_selection and self._target_id == "ann-input")
+            yield Button(
+                "Copy",
+                id="ctx-copy",
+                disabled=not self._has_selection and self._target_id == "ann-input",
+            )
             yield Button("Paste", id="ctx-paste")
             yield Button("Select All", id="ctx-select-all")
             yield Button("Clear", id="ctx-clear")
@@ -987,8 +1006,16 @@ class SimdrefApp(App):
                 yield VerticalScroll(id="sub-isa-container")
                 with Horizontal(id="kind-bar"):
                     yield ToggleAllLabel("Kind:", classes="isa-label", id="kind-label")
-                    yield KindToggle("intrinsic", UI_LABELS["kind_intrinsic"].lower(), enabled="intrinsic" in self._enabled_kinds)
-                    yield KindToggle("instruction", UI_LABELS["kind_instruction"].lower(), enabled="instruction" in self._enabled_kinds)
+                    yield KindToggle(
+                        "intrinsic",
+                        UI_LABELS["kind_intrinsic"].lower(),
+                        enabled="intrinsic" in self._enabled_kinds,
+                    )
+                    yield KindToggle(
+                        "instruction",
+                        UI_LABELS["kind_instruction"].lower(),
+                        enabled="instruction" in self._enabled_kinds,
+                    )
                 yield ListView(id="results-list")
                 yield VerticalScroll(id="detail-scroll")
             with Vertical(id="view-annotate"):
@@ -1002,7 +1029,12 @@ class SimdrefApp(App):
                     )
                     yield Label(UI_LABELS["aggregation"])
                     yield Select(
-                        [("avg", "avg"), ("median", "median"), ("best", "best"), ("worst", "worst")],
+                        [
+                            ("avg", "avg"),
+                            ("median", "median"),
+                            ("best", "best"),
+                            ("worst", "worst"),
+                        ],
                         value="avg",
                         allow_blank=False,
                         id="ann-agg",
@@ -1076,8 +1108,17 @@ class SimdrefApp(App):
                 if family and sub_isa:
                     family_subs.setdefault(family, set()).add(sub_isa)
         for fam, subs in family_subs.items():
-            self._family_subs[fam] = sorted(subs, key=lambda sub: FAMILY_SUB_ORDER.get(fam, []).index(sub) if sub in FAMILY_SUB_ORDER.get(fam, []) else len(FAMILY_SUB_ORDER.get(fam, [])))
-        self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+            self._family_subs[fam] = sorted(
+                subs,
+                key=lambda sub: (
+                    FAMILY_SUB_ORDER.get(fam, []).index(sub)
+                    if sub in FAMILY_SUB_ORDER.get(fam, [])
+                    else len(FAMILY_SUB_ORDER.get(fam, []))
+                ),
+            )
+        self._enabled_sub_isas = _normalize_sub_isa_selection(
+            self._enabled_families, self._enabled_sub_isas, self._family_subs
+        )
 
     def _refresh_sub_isa_bar(self) -> None:
         """Rebuild the sub-ISA rows — one or more rows per enabled family.
@@ -1204,14 +1245,18 @@ class SimdrefApp(App):
                 if self._enabled_sub_isas is not None:
                     fam_subs = set(self._family_subs.get(toggle.family, []))
                     self._enabled_sub_isas -= fam_subs
-            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+            self._enabled_sub_isas = _normalize_sub_isa_selection(
+                self._enabled_families, self._enabled_sub_isas, self._family_subs
+            )
             self._refresh_sub_isa_bar()
         elif isinstance(toggle, SubIsaToggle):
             all_subs = list(self.query(SubIsaToggle))
             enabled = {t.isa for t in all_subs if t.enabled}
             all_shown = {t.isa for t in all_subs}
             self._enabled_sub_isas = enabled if enabled != all_shown else None
-            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+            self._enabled_sub_isas = _normalize_sub_isa_selection(
+                self._enabled_families, self._enabled_sub_isas, self._family_subs
+            )
         elif isinstance(toggle, KindToggle):
             if toggle.enabled:
                 self._enabled_kinds.add(toggle.kind)
@@ -1241,7 +1286,9 @@ class SimdrefApp(App):
                 self._enabled_sub_isas = subs if subs else None
             else:
                 self._enabled_sub_isas = set()
-            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+            self._enabled_sub_isas = _normalize_sub_isa_selection(
+                self._enabled_families, self._enabled_sub_isas, self._family_subs
+            )
             self._refresh_sub_isa_bar()
         else:
             # Family-level sub toggle: find sibling SubIsaToggles in same row
@@ -1260,7 +1307,9 @@ class SimdrefApp(App):
             all_subs = list(self.query(SubIsaToggle))
             enabled = {t.isa for t in all_subs if t.enabled}
             self._enabled_sub_isas = enabled if enabled else set()
-            self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+            self._enabled_sub_isas = _normalize_sub_isa_selection(
+                self._enabled_families, self._enabled_sub_isas, self._family_subs
+            )
         query = self.query_one("#search-input", Input).value.strip()
         if query:
             self._do_search(query)
@@ -1300,6 +1349,7 @@ class SimdrefApp(App):
 
         try:
             from simdref.cli import _save_last_preset
+
             _save_last_preset(event.mode)
         except Exception:
             pass  # best-effort; must not break preset application
@@ -1318,7 +1368,9 @@ class SimdrefApp(App):
             self._enabled_sub_isas = subs if subs else set()
         self._enabled_arm_arch = set(preset.arm_arch) if preset.arm_arch else None
         self._enabled_kinds = set(preset.kind)
-        self._enabled_sub_isas = _normalize_sub_isa_selection(self._enabled_families, self._enabled_sub_isas, self._family_subs)
+        self._enabled_sub_isas = _normalize_sub_isa_selection(
+            self._enabled_families, self._enabled_sub_isas, self._family_subs
+        )
         # Update ISA toggle visuals
         for t in self.query(IsaToggle):
             target = t.family in self._enabled_families
@@ -1345,6 +1397,7 @@ class SimdrefApp(App):
         afford to be eager without overwhelming the event loop.
         """
         import asyncio
+
         await asyncio.sleep(0.05)
         self._do_search(query)
 
@@ -1427,7 +1480,10 @@ class SimdrefApp(App):
 
     def _maybe_load_more_results(self, current_index: int) -> None:
         """Load another page when navigation reaches the end of the loaded list."""
-        if not self._has_more_results or current_index < len(self._current_results) - _RESULT_PREFETCH_THRESHOLD:
+        if (
+            not self._has_more_results
+            or current_index < len(self._current_results) - _RESULT_PREFETCH_THRESHOLD
+        ):
             return
         assert self._conn is not None
         more = _fts_search(
@@ -1551,9 +1607,7 @@ class SimdrefApp(App):
                 container.mount(Static(section[1], markup=True))
             elif tag == "collapsible":
                 _, renderable, title, collapsed = section
-                container.mount(
-                    Collapsible(Static(renderable), title=title, collapsed=collapsed)
-                )
+                container.mount(Collapsible(Static(renderable), title=title, collapsed=collapsed))
 
     def _show_detail(self, result: SearchResult) -> None:
         """Render the detail pane for a search result.
@@ -1665,7 +1719,11 @@ class SimdrefApp(App):
         meta.add_row("isa", ", ".join(intrinsic.isa) or "-")
         category_display = intrinsic.category or "-"
         if intrinsic.subcategory:
-            category_display = f"{intrinsic.subcategory} / {intrinsic.category}" if intrinsic.category else intrinsic.subcategory
+            category_display = (
+                f"{intrinsic.subcategory} / {intrinsic.category}"
+                if intrinsic.category
+                else intrinsic.subcategory
+            )
         meta.add_row("category", category_display)
         if intrinsic.description:
             meta.add_row("description", intrinsic.description)
@@ -1743,7 +1801,9 @@ class SimdrefApp(App):
         if not rows:
             lat, cpi = variant_perf_summary(item.arch_details)
             if lat != "-" or cpi != "-":
-                payload.append(("static_markup", f"  [green]latency:[/] {lat}  [green]CPI:[/] {cpi}"))
+                payload.append(
+                    ("static_markup", f"  [green]latency:[/] {lat}  [green]CPI:[/] {cpi}")
+                )
             return
         label_map = {
             "uarch": "microarch",
@@ -1756,9 +1816,9 @@ class SimdrefApp(App):
         }
         for kind, group in split_perf_rows(rows):
             columns = [
-                k for k in _MEASUREMENT_PREFERRED_ORDER
-                if k not in _MEASUREMENT_EXCLUDE_KEYS
-                and any(k in row for row in group)
+                k
+                for k in _MEASUREMENT_PREFERRED_ORDER
+                if k not in _MEASUREMENT_EXCLUDE_KEYS and any(k in row for row in group)
             ]
             if not columns:
                 continue
@@ -1905,7 +1965,10 @@ class SimdrefApp(App):
             switcher.current = f"view-{name}"
         except Exception:
             return
-        for btn_id, active in (("tab-search", name == "search"), ("tab-annotate", name == "annotate")):
+        for btn_id, active in (
+            ("tab-search", name == "search"),
+            ("tab-annotate", name == "annotate"),
+        ):
             try:
                 btn = self.query_one(f"#{btn_id}", Static)
             except Exception:
@@ -2343,9 +2406,7 @@ class SimdrefApp(App):
             if not shutil.which(cmd[0]):
                 continue
             try:
-                proc = subprocess.run(
-                    cmd, capture_output=True, timeout=15
-                )
+                proc = subprocess.run(cmd, capture_output=True, timeout=15)
             except (subprocess.SubprocessError, OSError):
                 continue
             return proc.stdout.decode(errors="replace")

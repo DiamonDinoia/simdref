@@ -89,8 +89,7 @@ def test_catalog_carries_canonical_names():
     catalog = load_catalog()
     intrinsic_names = {r.name for r in catalog.intrinsics}
     instruction_mnemonics = {
-        (getattr(r, "mnemonic", "") or r.key.split()[0]).upper()
-        for r in catalog.instructions
+        (getattr(r, "mnemonic", "") or r.key.split()[0]).upper() for r in catalog.instructions
     }
 
     required_intrinsics = {"_mm_add_ps", "_mm256_fmadd_ps", "vaddq_u8"}

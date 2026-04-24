@@ -56,7 +56,9 @@ def _strip_tags(text: str) -> str:
     clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     clean = re.sub(r"</p\s*>", "\n\n", clean, flags=re.IGNORECASE)
     clean = re.sub(r"</?(?:code|span|strong|em)[^>]*>", "", clean, flags=re.IGNORECASE)
-    clean = re.sub(r"</?(?:pre|div|section|article|ul|ol|li)[^>]*>", "\n", clean, flags=re.IGNORECASE)
+    clean = re.sub(
+        r"</?(?:pre|div|section|article|ul|ol|li)[^>]*>", "\n", clean, flags=re.IGNORECASE
+    )
     clean = re.sub(r"<[^>]+>", " ", clean)
     clean = html.unescape(clean)
     clean = clean.replace("\r", "")
@@ -107,7 +109,9 @@ def _extract_instruction_section_semantics(doc: str, mnemonic: str) -> dict[str,
         return {}
 
     description = ""
-    paragraphs = re.findall(r"<div class=\"paragraph\">(.*?)</div>", section, re.IGNORECASE | re.DOTALL)
+    paragraphs = re.findall(
+        r"<div class=\"paragraph\">(.*?)</div>", section, re.IGNORECASE | re.DOTALL
+    )
     for raw in paragraphs:
         text = _strip_tags(raw)
         if not text:
@@ -119,7 +123,9 @@ def _extract_instruction_section_semantics(doc: str, mnemonic: str) -> dict[str,
     operation = ""
     op_heading = re.search(r"<dt[^>]*>\s*Operation\s*</dt>", section, re.IGNORECASE | re.DOTALL)
     if op_heading:
-        pre_match = re.search(r"<pre[^>]*>(.*?)</pre>", section[op_heading.end():], re.IGNORECASE | re.DOTALL)
+        pre_match = re.search(
+            r"<pre[^>]*>(.*?)</pre>", section[op_heading.end() :], re.IGNORECASE | re.DOTALL
+        )
         if pre_match:
             operation = _strip_tags(pre_match.group(1))
     if not operation:
@@ -129,7 +135,9 @@ def _extract_instruction_section_semantics(doc: str, mnemonic: str) -> dict[str,
                 operation = text
                 break
     if not operation:
-        listings = re.findall(r"<div class=\"listingblock\">(.*?)</div>\s*</div>", section, re.IGNORECASE | re.DOTALL)
+        listings = re.findall(
+            r"<div class=\"listingblock\">(.*?)</div>\s*</div>", section, re.IGNORECASE | re.DOTALL
+        )
         for listing in listings:
             text = _strip_tags(listing)
             if mnemonic.casefold() in text.casefold():
@@ -153,7 +161,9 @@ def _normalize_sections(item: dict[str, Any]) -> dict[str, str]:
         description = _string(item.get("description_text") or item.get("description"))
         if description:
             sections["Description"] = description
-        operation = _string(item.get("operation") or item.get("operation_text") or item.get("pseudocode"))
+        operation = _string(
+            item.get("operation") or item.get("operation_text") or item.get("pseudocode")
+        )
         if operation:
             sections["Operation"] = operation
     return sections
@@ -192,11 +202,15 @@ def _doc_candidates(url: str, docs_pages: dict[str, str]) -> list[str]:
     return [candidate for candidate in candidates if candidate in docs_pages]
 
 
-def _instruction_semantics(item: dict[str, Any], url: str, docs_pages: dict[str, str]) -> dict[str, str]:
+def _instruction_semantics(
+    item: dict[str, Any], url: str, docs_pages: dict[str, str]
+) -> dict[str, str]:
     sections = _normalize_sections(item)
     if sections.get("Description") and sections.get("Operation"):
         return sections
-    mnemonic = _string(item.get("mnemonic") or item.get("name") or item.get("instruction") or item.get("syntax")).casefold()
+    mnemonic = _string(
+        item.get("mnemonic") or item.get("name") or item.get("instruction") or item.get("syntax")
+    ).casefold()
     for candidate in _doc_candidates(url, docs_pages):
         page = docs_pages[candidate]
         if not sections.get("Description"):
@@ -309,7 +323,9 @@ def parse_riscv_instruction_payload(text: str) -> list[InstructionRecord]:
         metadata.setdefault("policy", policy)
         metadata.setdefault("masking", masking)
         metadata.setdefault("tail_policy", _tail_policy(policy))
-        mask_policy = _string(item.get("mask_policy") or metadata.get("mask_policy") or _mask_policy(policy, masking))
+        mask_policy = _string(
+            item.get("mask_policy") or metadata.get("mask_policy") or _mask_policy(policy, masking)
+        )
         if mask_policy:
             metadata.setdefault("mask_policy", mask_policy)
         if item.get("extension"):
@@ -324,7 +340,8 @@ def parse_riscv_instruction_payload(text: str) -> list[InstructionRecord]:
                     or item.get("brief")
                     or item.get("description_text")
                     or f"{mnemonic} instruction."
-                ).rstrip(".") + ".",
+                ).rstrip(".")
+                + ".",
                 architecture="riscv",
                 isa=_normalize_isa(
                     item.get("isa")
@@ -354,7 +371,11 @@ def parse_riscv_instruction_payload(text: str) -> list[InstructionRecord]:
 def _infer_intrinsic_policy(name: str) -> tuple[str, str]:
     lowered = name.casefold()
     policy = "agnostic"
-    masking = "masked" if lowered.endswith(("_m", "_mu", "_tum", "_tumu")) or "_m_" in lowered else "unmasked"
+    masking = (
+        "masked"
+        if lowered.endswith(("_m", "_mu", "_tum", "_tumu")) or "_m_" in lowered
+        else "unmasked"
+    )
     for suffix in ("_tumu", "_tum", "_mu", "_tu"):
         if lowered.endswith(suffix):
             policy = suffix.removeprefix("_")
@@ -366,7 +387,9 @@ def _normalize_instruction_ref(raw_ref: dict[str, Any], intrinsic_name: str) -> 
     ref_name = _string(raw_ref.get("name") or raw_ref.get("mnemonic") or raw_ref.get("instruction"))
     form = _string(raw_ref.get("form") or raw_ref.get("syntax") or ref_name)
     inferred_policy, inferred_masking = _infer_intrinsic_policy(intrinsic_name)
-    policy = _normalize_policy(raw_ref.get("policy") or raw_ref.get("tail_policy") or inferred_policy)
+    policy = _normalize_policy(
+        raw_ref.get("policy") or raw_ref.get("tail_policy") or inferred_policy
+    )
     masking = _normalize_masking(raw_ref.get("masking") or inferred_masking)
     ref = {
         "architecture": "riscv",
@@ -411,7 +434,9 @@ def parse_riscv_intrinsics_payload(text: str) -> list[IntrinsicRecord]:
             refs.append(ref)
         if not refs:
             for raw_instruction in item.get("instructions") or []:
-                ref = _normalize_instruction_ref({"name": raw_instruction, "form": raw_instruction}, name)
+                ref = _normalize_instruction_ref(
+                    {"name": raw_instruction, "form": raw_instruction}, name
+                )
                 if ref["name"]:
                     rendered_instructions.append(ref["form"])
                     refs.append(ref)
@@ -429,7 +454,9 @@ def parse_riscv_intrinsics_payload(text: str) -> list[IntrinsicRecord]:
                 signature=_string(item.get("signature") or name),
                 description=_string(item.get("description")),
                 header=_string(item.get("header") or "riscv_vector.h"),
-                url=_string(item.get("url") or item.get("reference_url") or RISCV_RVV_INTRINSICS_PROJECT_URL),
+                url=_string(
+                    item.get("url") or item.get("reference_url") or RISCV_RVV_INTRINSICS_PROJECT_URL
+                ),
                 architecture="riscv",
                 isa=_normalize_isa(item.get("isa") or ["V"]),
                 category=_string(item.get("category") or "RVV"),

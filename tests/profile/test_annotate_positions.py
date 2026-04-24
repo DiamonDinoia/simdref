@@ -30,7 +30,13 @@ def test_annotate_json_with_track_positions_emits_address(monkeypatch):
 
     class _FakeRecord:
         summary = "Fused multiply-add of packed single-precision floats."
-        arch_details = {"skylake-x": {"latencies": [{"cycles": 4}], "throughput": 0.5, "source_kind": "measured"}}
+        arch_details = {
+            "skylake-x": {
+                "latencies": [{"cycles": 4}],
+                "throughput": 0.5,
+                "source_kind": "measured",
+            }
+        }
         operand_details = []
         key = "VFMADD231PS (XMM, XMM, XMM)"
 

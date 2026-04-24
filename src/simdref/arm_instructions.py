@@ -69,7 +69,9 @@ def _collapse_section_value(value: Any) -> str:
     if isinstance(value, dict):
         if "title" in value and any(key in value for key in ("body", "content", "text", "value")):
             title = _strip_text(value.get("title"))
-            body = _strip_text(value.get("body") or value.get("content") or value.get("text") or value.get("value"))
+            body = _strip_text(
+                value.get("body") or value.get("content") or value.get("text") or value.get("value")
+            )
             return "\n".join(part for part in (title, body) if part).strip()
         flattened = []
         for item in value.values():
@@ -95,7 +97,12 @@ def _description_sections(item: dict[str, Any]) -> dict[str, str]:
                 if not isinstance(entry, dict):
                     continue
                 title = _strip_text(entry.get("title") or entry.get("name") or entry.get("heading"))
-                body = _collapse_section_value(entry.get("body") or entry.get("content") or entry.get("text") or entry.get("value"))
+                body = _collapse_section_value(
+                    entry.get("body")
+                    or entry.get("content")
+                    or entry.get("text")
+                    or entry.get("value")
+                )
                 if title and body:
                     sections[title] = body
 
@@ -111,7 +118,9 @@ def _description_sections(item: dict[str, Any]) -> dict[str, str]:
 
 
 def _infer_arm_isa(item: dict[str, Any]) -> list[str]:
-    explicit = _normalize_isa(item.get("isa") or item.get("isas") or item.get("extensions") or item.get("feature_tags"))
+    explicit = _normalize_isa(
+        item.get("isa") or item.get("isas") or item.get("extensions") or item.get("feature_tags")
+    )
     if explicit:
         return explicit
 
@@ -125,7 +134,18 @@ def _infer_arm_isa(item: dict[str, Any]) -> list[str]:
     haystack = " ".join(part.upper() for part in haystack_parts if part)
 
     isa: list[str] = []
-    for token in ("SME2", "SME", "SVE2", "SVE", "MVE", "HELIUM", "NEON", "ADVSIMD", "SIMD-FP", "SIMD&FP"):
+    for token in (
+        "SME2",
+        "SME",
+        "SVE2",
+        "SVE",
+        "MVE",
+        "HELIUM",
+        "NEON",
+        "ADVSIMD",
+        "SIMD-FP",
+        "SIMD&FP",
+    ):
         if token in haystack:
             if token in {"HELIUM", "MVE"}:
                 candidate = "MVE"
@@ -184,8 +204,14 @@ def _normalize_instruction_item(item: dict[str, Any]) -> InstructionRecord | Non
         return None
 
     operands = _strip_text(item.get("operands") or item.get("operand_form") or item.get("form"))
-    form = _canonical_instruction_key(mnemonic, operands) if operands and not operands.upper().startswith(f"{mnemonic} (") else operands
-    summary = _strip_text(item.get("summary") or item.get("brief") or item.get("title")) or _generated_summary(mnemonic)
+    form = (
+        _canonical_instruction_key(mnemonic, operands)
+        if operands and not operands.upper().startswith(f"{mnemonic} (")
+        else operands
+    )
+    summary = _strip_text(
+        item.get("summary") or item.get("brief") or item.get("title")
+    ) or _generated_summary(mnemonic)
     if not summary.endswith("."):
         summary += "."
     url = _strip_text(item.get("url") or item.get("source_url") or item.get("reference_url"))
@@ -256,35 +282,99 @@ def _records_from_payload(payload: Any) -> list[InstructionRecord]:
 
 _RULE_PLACEHOLDER: dict[str, str] = {
     # Scalar
-    "Xd": "x0", "Xn": "x1", "Xm": "x2", "Xa": "x3", "Xt": "x0", "Xt2": "x1",
-    "Xs": "x1", "Xt1": "x0",
-    "Wd": "w0", "Wn": "w1", "Wm": "w2", "Wa": "w3", "Wt": "w0", "Wt2": "w1",
-    "Ws": "w1", "Wt1": "w0",
+    "Xd": "x0",
+    "Xn": "x1",
+    "Xm": "x2",
+    "Xa": "x3",
+    "Xt": "x0",
+    "Xt2": "x1",
+    "Xs": "x1",
+    "Xt1": "x0",
+    "Wd": "w0",
+    "Wn": "w1",
+    "Wm": "w2",
+    "Wa": "w3",
+    "Wt": "w0",
+    "Wt2": "w1",
+    "Ws": "w1",
+    "Wt1": "w0",
     # Advanced SIMD vector registers
-    "Vd": "v0", "Vn": "v1", "Vm": "v2", "Va": "v3", "Vt": "v0", "Vt2": "v1",
-    "Vt3": "v2", "Vt4": "v3",
-    "Dd": "d0", "Dn": "d1", "Dm": "d2", "Da": "d3",
-    "Sd": "s0", "Sn": "s1", "Sm": "s2", "Sa": "s3",
-    "Hd": "h0", "Hn": "h1", "Hm": "h2", "Ha": "h3",
-    "Bd": "b0", "Bn": "b1", "Bm": "b2",
-    "Qd": "q0", "Qn": "q1", "Qm": "q2", "Qt": "q0", "Qt2": "q1",
+    "Vd": "v0",
+    "Vn": "v1",
+    "Vm": "v2",
+    "Va": "v3",
+    "Vt": "v0",
+    "Vt2": "v1",
+    "Vt3": "v2",
+    "Vt4": "v3",
+    "Dd": "d0",
+    "Dn": "d1",
+    "Dm": "d2",
+    "Da": "d3",
+    "Sd": "s0",
+    "Sn": "s1",
+    "Sm": "s2",
+    "Sa": "s3",
+    "Hd": "h0",
+    "Hn": "h1",
+    "Hm": "h2",
+    "Ha": "h3",
+    "Bd": "b0",
+    "Bn": "b1",
+    "Bm": "b2",
+    "Qd": "q0",
+    "Qn": "q1",
+    "Qm": "q2",
+    "Qt": "q0",
+    "Qt2": "q1",
     # SVE predicate / vector
-    "Zd": "z0", "Zn": "z1", "Zm": "z2", "Za": "z3", "Zdn": "z0", "Zt": "z0",
-    "Pd": "p0", "Pn": "p1", "Pm": "p2", "Pg": "p0", "Pt": "p0",
+    "Zd": "z0",
+    "Zn": "z1",
+    "Zm": "z2",
+    "Za": "z3",
+    "Zdn": "z0",
+    "Zt": "z0",
+    "Pd": "p0",
+    "Pn": "p1",
+    "Pm": "p2",
+    "Pg": "p0",
+    "Pt": "p0",
     # SME
-    "ZAd": "za0", "ZAn": "za0", "ZAt": "za0",
+    "ZAd": "za0",
+    "ZAn": "za0",
+    "ZAt": "za0",
     # Stack pointer / zero register
-    "SP": "sp", "XZR": "xzr", "WZR": "wzr", "XSP": "sp", "WSP": "wsp",
+    "SP": "sp",
+    "XZR": "xzr",
+    "WZR": "wzr",
+    "XSP": "sp",
+    "WSP": "wsp",
     # Condition codes / misc commonly referenced
-    "cond": "eq", "nzcv": "0",
+    "cond": "eq",
+    "nzcv": "0",
     # Arrangement specifiers and element size hints
-    "T": "4S", "Ta": "4S", "Tb": "4S", "Ts": "4S",
-    "T__1": "4S", "T__2": "4S", "T__3": "4S", "T__4": "4S",
-    "size": "4S", "size__1": "4S",
+    "T": "4S",
+    "Ta": "4S",
+    "Tb": "4S",
+    "Ts": "4S",
+    "T__1": "4S",
+    "T__2": "4S",
+    "T__3": "4S",
+    "T__4": "4S",
+    "size": "4S",
+    "size__1": "4S",
 }
 
-_LITERAL_KEEP = {"COMMA": ",", "SPACE": " ", "LBRACKET": "[", "RBRACKET": "]",
-                 "LBRACE": "{", "RBRACE": "}", "HASH": "#", "EXCLAM": "!"}
+_LITERAL_KEEP = {
+    "COMMA": ",",
+    "SPACE": " ",
+    "LBRACKET": "[",
+    "RBRACKET": "]",
+    "LBRACE": "{",
+    "RBRACE": "}",
+    "HASH": "#",
+    "EXCLAM": "!",
+}
 
 
 def _render_assembly(assembly: dict[str, Any]) -> str:
@@ -334,7 +424,13 @@ def _infer_aarchmrs_isa(group_path: list[str]) -> list[str]:
         isa.append("SVE2")
     elif "sve" in joined:
         isa.append("SVE")
-    if "advsimd" in joined or "asimd" in joined or "neon" in joined or "fp_" in joined or "simd" in joined:
+    if (
+        "advsimd" in joined
+        or "asimd" in joined
+        or "neon" in joined
+        or "fp_" in joined
+        or "simd" in joined
+    ):
         isa.append("NEON")
     if "mve" in joined:
         isa.append("MVE")

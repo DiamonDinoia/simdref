@@ -53,10 +53,7 @@ def _load_template() -> str:
     js = tpl.joinpath("app.js").read_text()
     ui_blob = json.dumps(_ui_labels_payload(), separators=(",", ":"))
     js_with_labels = f"window.SIMDREF_UI = {ui_blob};\n{js}"
-    return (
-        html.replace("/* __CSS__ */", css)
-            .replace("/* __JS__ */", js_with_labels)
-    )
+    return html.replace("/* __CSS__ */", css).replace("/* __JS__ */", js_with_labels)
 
 
 def _latency_value(latencies: list[dict]) -> str:
@@ -71,23 +68,25 @@ def _web_measurements(item) -> list[dict]:
         measurement = details.get("measurement") or {}
         if not measurement:
             continue
-        rows.append({
-            "uarch": uarch,
-            "ports": measurement.get("ports", "-"),
-            "latency": _latency_value(details.get("latencies") or []),
-            "tpLoop": measurement.get("TP_loop") or measurement.get("TP") or "-",
-            "tpUnrolled": measurement.get("TP_unrolled", "-"),
-            "tpPorts": measurement.get("TP_ports", "-"),
-            "uops": measurement.get("uops", "-"),
-            "sourceKind": details.get("source_kind") or "measured",
-        })
+        rows.append(
+            {
+                "uarch": uarch,
+                "ports": measurement.get("ports", "-"),
+                "latency": _latency_value(details.get("latencies") or []),
+                "tpLoop": measurement.get("TP_loop") or measurement.get("TP") or "-",
+                "tpUnrolled": measurement.get("TP_unrolled", "-"),
+                "tpPorts": measurement.get("TP_ports", "-"),
+                "uops": measurement.get("uops", "-"),
+                "sourceKind": details.get("source_kind") or "measured",
+            }
+        )
     return rows
 
 
 def _truncate(text: str, max_len: int = 120) -> str:
     if len(text) <= max_len:
         return text
-    return text[:max_len - 1] + "\u2026"
+    return text[: max_len - 1] + "\u2026"
 
 
 def _chunk_prefix(mnemonic: str) -> str:
@@ -120,7 +119,7 @@ def _intrinsic_chunk_prefix(name: str) -> str:
         s = s[6:]
     m = _INTRINSIC_PREFIX_STRIP.match(s)
     if m and m.end() < len(s):
-        s = s[m.end():]
+        s = s[m.end() :]
     s = s.lstrip("_")
     clean = "".join(_INTRINSIC_ALNUM.findall(s)).lower()
     if len(clean) < 2:
@@ -219,16 +218,22 @@ def _search_payload(catalog: Catalog) -> dict:
             "display_architecture": display_architecture(item.architecture),
             "display_isa": display_isa(item.isa),
             "isa_families": isa_families(item.isa),
-            "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
+            "isa_subs": list(
+                dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))
+            ),
             "search_fields": fields,
         }
         primary = _intrinsic_primary_instr(item)
         if primary:
             entry["primary_instr"] = primary
-        arm_arch = derive_arm_arch(item.isa, item.metadata if isinstance(item.metadata, dict) else {})
+        arm_arch = derive_arm_arch(
+            item.isa, item.metadata if isinstance(item.metadata, dict) else {}
+        )
         if arm_arch:
             entry["arm_arch"] = arm_arch
-        category = (item.metadata or {}).get("category", "") if isinstance(item.metadata, dict) else ""
+        category = (
+            (item.metadata or {}).get("category", "") if isinstance(item.metadata, dict) else ""
+        )
         if category:
             entry["category"] = category
         intrinsics_out.append(entry)
@@ -237,25 +242,29 @@ def _search_payload(catalog: Catalog) -> dict:
     for item in catalog.instructions:
         lat, cpi = instr_perf[item.db_key]
         fields = _instruction_search_fields(item)
-        instructions_out.append({
-            "key": item.db_key,
-            "mnemonic": item.mnemonic,
-            "form": item.form,
-            "architecture": item.architecture,
-            "summary": _truncate(item.summary or "", 80),
-            "isa": item.isa,
-            "linked_intrinsics": item.linked_intrinsics,
-            "lat": lat,
-            "cpi": cpi,
-            "display_architecture": display_architecture(item.architecture),
-            "display_key": display_instruction_form(item.key),
-            "display_form": display_instruction_form(item.form),
-            "display_mnemonic": strip_instruction_decorators(item.mnemonic),
-            "display_isa": display_isa(item.isa),
-            "isa_families": isa_families(item.isa),
-            "isa_subs": list(dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))),
-            "search_fields": fields,
-        })
+        instructions_out.append(
+            {
+                "key": item.db_key,
+                "mnemonic": item.mnemonic,
+                "form": item.form,
+                "architecture": item.architecture,
+                "summary": _truncate(item.summary or "", 80),
+                "isa": item.isa,
+                "linked_intrinsics": item.linked_intrinsics,
+                "lat": lat,
+                "cpi": cpi,
+                "display_architecture": display_architecture(item.architecture),
+                "display_key": display_instruction_form(item.key),
+                "display_form": display_instruction_form(item.form),
+                "display_mnemonic": strip_instruction_decorators(item.mnemonic),
+                "display_isa": display_isa(item.isa),
+                "isa_families": isa_families(item.isa),
+                "isa_subs": list(
+                    dict.fromkeys(filter(None, (isa_to_sub_isa(value) for value in item.isa)))
+                ),
+                "search_fields": fields,
+            }
+        )
 
     return {
         "generated_at": catalog.generated_at,
@@ -298,8 +307,18 @@ def _detail_chunks(catalog: Catalog) -> dict[str, dict]:
                 for op in item.operand_details
             ],
             "metadata": {
-                k: v for k, v in item.metadata.items()
-                if k in {"url", "url-ref", "category", "cpl", "intel-sdm-url", "intel-sdm-page-start", "intel-sdm-page-end"}
+                k: v
+                for k, v in item.metadata.items()
+                if k
+                in {
+                    "url",
+                    "url-ref",
+                    "category",
+                    "cpl",
+                    "intel-sdm-url",
+                    "intel-sdm-page-start",
+                    "intel-sdm-page-end",
+                }
             },
             "pdf_refs": normalize_pdf_refs(item.pdf_refs, item.metadata),
             "linked_intrinsics": item.linked_intrinsics,
@@ -345,6 +364,7 @@ def _intrinsic_chunks(catalog: Catalog) -> dict[str, dict]:
 def _build_stamp(catalog: Catalog) -> dict:
     from datetime import datetime, timezone
     import subprocess
+
     git_sha = ""
     try:
         git_sha = subprocess.check_output(

@@ -72,7 +72,13 @@ from simdref.ingest_sources import (
 from simdref.manpages import open_manpage, write_manpages
 from simdref.perf import variant_perf_summary
 from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
-from simdref.search import SearchResult, find_intrinsic, find_instructions, search_catalog, search_records
+from simdref.search import (
+    SearchResult,
+    find_intrinsic,
+    find_instructions,
+    search_catalog,
+    search_records,
+)
 from simdref.storage import (
     CATALOG_PATH,
     DATA_DIR,
@@ -97,6 +103,7 @@ from simdref.web import export_web
 def _tui_preset_pref_path() -> "Path":
     """Location of the persisted last-used TUI preset."""
     from pathlib import Path
+
     base = os.environ.get("XDG_STATE_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "state"
     )
@@ -195,6 +202,7 @@ def _pager_context():
         # Fallback: Rich's default pager without styles (safe)
         yield console.pager(styles=False)
 
+
 GITHUB_REPO = "DiamonDinoia/simdref"
 RELEASE_TAG = "data-latest"
 
@@ -264,16 +272,20 @@ def _download_from_release() -> None:
                         if total:
                             err_console.print(
                                 f"downloaded {asset}: {written / 1_048_576:.1f} MB "
-                                f"({written}/{total} bytes)", style="dim")
+                                f"({written}/{total} bytes)",
+                                style="dim",
+                            )
                         else:
                             err_console.print(
-                                f"downloaded {asset}: {written / 1_048_576:.1f} MB", style="dim")
+                                f"downloaded {asset}: {written / 1_048_576:.1f} MB", style="dim"
+                            )
                     return True
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
                     continue
                 err_console.print(
-                    f"failed to download {asset}: {exc.response.status_code}", style="red")
+                    f"failed to download {asset}: {exc.response.status_code}", style="red"
+                )
                 raise typer.Exit(code=1) from exc
         return False
 
@@ -281,7 +293,8 @@ def _download_from_release() -> None:
         dest = DATA_DIR / asset
         if not _fetch_into(asset, dest):
             err_console.print(
-                f"failed to download {asset}: no compatible release asset found", style="red")
+                f"failed to download {asset}: no compatible release asset found", style="red"
+            )
             err_console.print("try 'simdref build' to build locally", style="yellow")
             raise typer.Exit(code=1)
     err_console.print("download complete", style="green")
@@ -297,6 +310,7 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
     interactive_progress = console.is_terminal and os.environ.get("GITHUB_ACTIONS") != "true"
 
     if not interactive_progress:
+
         def _status(msg: str) -> None:
             err_console.print(msg, style="dim")
 
@@ -359,7 +373,9 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         arm_task = count_progress.add_task("Arm intrinsics JSON bundle", total=3)
         try:
             refresh_local_arm_intrinsics_bundle(
-                on_progress=lambda done, total: count_progress.update(arm_task, completed=done, total=total),
+                on_progress=lambda done, total: count_progress.update(
+                    arm_task, completed=done, total=total
+                ),
             )
         except Exception as exc:
             count_progress.update(arm_task, description=f"Arm intrinsics download failed: {exc}")
@@ -383,7 +399,9 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
             except Exception as exc:
                 download_progress.update(a64_task, description=f"AARCHMRS download failed: {exc}")
                 raise typer.Exit(code=1) from exc
-            download_progress.update(a64_task, description=f"Arm A64 AARCHMRS archive \u2713 ({archive_path.name})")
+            download_progress.update(
+                a64_task, description=f"Arm A64 AARCHMRS archive \u2713 ({archive_path.name})"
+            )
 
         build_task = count_progress.add_task("Building catalog from sources", total=None)
 
@@ -391,7 +409,9 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
             count_progress.update(build_task, description=f"Building catalog: {msg}")
 
         catalog = build_catalog(include_sdm=include_sdm, status=_build_status)
-        count_progress.update(build_task, description="Building catalog \u2713", completed=1, total=1)
+        count_progress.update(
+            build_task, description="Building catalog \u2713", completed=1, total=1
+        )
 
         save_task = count_progress.add_task("Saving catalog snapshot", total=1)
         save_catalog(catalog)
@@ -399,20 +419,26 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
 
         sqlite_task = count_progress.add_task("Building SQLite search database", total=1)
         build_sqlite(catalog)
-        count_progress.update(sqlite_task, completed=1, description="Building SQLite search database \u2713")
+        count_progress.update(
+            sqlite_task, completed=1, description="Building SQLite search database \u2713"
+        )
 
         man_total = len(catalog.intrinsics) + len(catalog.instructions)
         man_task = count_progress.add_task("Writing manpages", total=man_total)
         write_manpages(
             catalog,
             man_dir,
-            on_progress=lambda done, total: count_progress.update(man_task, completed=done, total=total),
+            on_progress=lambda done, total: count_progress.update(
+                man_task, completed=done, total=total
+            ),
         )
         count_progress.update(man_task, description="Writing manpages \u2713")
 
         web_task = count_progress.add_task("Exporting static web bundle", total=1)
         export_web(catalog, WEB_DIR)
-        count_progress.update(web_task, completed=1, description="Exporting static web bundle \u2713")
+        count_progress.update(
+            web_task, completed=1, description="Exporting static web bundle \u2713"
+        )
 
     err_console.print(
         f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
@@ -465,19 +491,34 @@ def _download_release_or_fallback(*, man_dir: Path) -> None:
             _finalize_runtime_from_download(man_dir=man_dir)
             return
         if CATALOG_PATH.exists():
-            err_console.print("downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog", style="yellow")
+            err_console.print(
+                "downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog",
+                style="yellow",
+            )
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
-        err_console.print("[bold red]downloaded runtime schema is not current[/bold red] and no local catalog exists", style="yellow")
-        err_console.print("run `simdref update --build` to build from upstream sources (requires llvm-mca)")
+        err_console.print(
+            "[bold red]downloaded runtime schema is not current[/bold red] and no local catalog exists",
+            style="yellow",
+        )
+        err_console.print(
+            "run `simdref update --build` to build from upstream sources (requires llvm-mca)"
+        )
         raise typer.Exit(code=1)
     except typer.Exit:
         if CATALOG_PATH.exists():
-            err_console.print("download failed; refreshing runtime from the existing local catalog", style="yellow")
+            err_console.print(
+                "download failed; refreshing runtime from the existing local catalog",
+                style="yellow",
+            )
             _refresh_runtime_from_existing_catalog(man_dir=man_dir)
             return
-        err_console.print("[bold red]no pre-built catalog available and no local cache[/bold red]", style="yellow")
-        err_console.print("run `simdref update --build` to build from upstream sources (requires llvm-mca)")
+        err_console.print(
+            "[bold red]no pre-built catalog available and no local cache[/bold red]", style="yellow"
+        )
+        err_console.print(
+            "run `simdref update --build` to build from upstream sources (requires llvm-mca)"
+        )
         raise
 
 
@@ -523,7 +564,10 @@ def ensure_runtime() -> None:
         _bootstrap_interactive()
         return
     if not sqlite_schema_is_current():
-        err_console.print("runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog", style="yellow")
+        err_console.print(
+            "runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog",
+            style="yellow",
+        )
         _refresh_runtime_from_existing_catalog(man_dir=DEFAULT_MAN_DIR)
 
 
@@ -534,8 +578,9 @@ def _catalog_meta(catalog) -> dict:
     }
 
 
-
-def _search_runtime(conn, query: str, limit: int = 20) -> tuple[list[SearchResult], dict[str, object], dict[str, object]]:
+def _search_runtime(
+    conn, query: str, limit: int = 20
+) -> tuple[list[SearchResult], dict[str, object], dict[str, object]]:
     candidate_limit = max(limit * 6, 60)
     intrinsics = search_intrinsic_candidates_from_db(conn, query, limit=candidate_limit)
     instructions = search_instruction_candidates_from_db(conn, query, limit=candidate_limit)
@@ -644,7 +689,9 @@ def _resolve_query_payload(catalog, query: str, limit: int = 8) -> dict:
     }
 
 
-def _llm_result_payload(conn, result: SearchResult, intrinsic_map: dict[str, object], instruction_map: dict[str, object]) -> dict:
+def _llm_result_payload(
+    conn, result: SearchResult, intrinsic_map: dict[str, object], instruction_map: dict[str, object]
+) -> dict:
     if result.kind == "intrinsic":
         item = intrinsic_map.get(result.key)
         if item is None:
@@ -679,7 +726,14 @@ def _llm_result_payload(conn, result: SearchResult, intrinsic_map: dict[str, obj
             "lat": lat,
             "cpi": cpi,
         }
-    return {"query": result.title, "intrinsic": [], "summary": result.subtitle, "isa": [], "lat": "-", "cpi": "-"}
+    return {
+        "query": result.title,
+        "intrinsic": [],
+        "summary": result.subtitle,
+        "isa": [],
+        "lat": "-",
+        "cpi": "-",
+    }
 
 
 def _llm_intrinsic_payload(conn, intrinsic) -> dict:
@@ -744,7 +798,14 @@ def _print_search_results_runtime(conn, query: str, limit: int = 20) -> None:
                 isa_sort = isa_sort_key(item.isa)
                 lat, cpi = intrinsic_perf_summary_runtime(conn, item, instruction_map)
         prepared_rows.append((result, arch, isa, lat, cpi, isa_sort))
-    prepared_rows.sort(key=lambda row: (row[0].kind != "instruction", row[5], row[0].title.casefold(), row[0].key.casefold()))
+    prepared_rows.sort(
+        key=lambda row: (
+            row[0].kind != "instruction",
+            row[5],
+            row[0].title.casefold(),
+            row[0].key.casefold(),
+        )
+    )
     render_search_results([(r, arch, isa, lat, cpi) for r, arch, isa, lat, cpi, _ in prepared_rows])
 
 
@@ -799,12 +860,8 @@ def _print_non_interactive_summary(
     if arch is not None:
         canonical_arch = canonical_core_id(arch)
         if canonical_arch is None:
-            err_console.print(
-                f"arch {arch!r} is not in the local catalog.", style="red"
-            )
-            err_console.print(
-                f"supported cores: {', '.join(supported_core_ids())}", style="yellow"
-            )
+            err_console.print(f"arch {arch!r} is not in the local catalog.", style="red")
+            err_console.print(f"supported cores: {', '.join(supported_core_ids())}", style="yellow")
             return 1
 
     if records is None:
@@ -815,39 +872,46 @@ def _print_non_interactive_summary(
 
     if as_json:
         import json as _json
+
         payload = {
             "query": query,
             "arch": canonical_arch,
             "variants": [],
         }
         for rec in records:
-            iter_archs = [canonical_arch] if canonical_arch else sorted((rec.arch_details or {}).keys())
+            iter_archs = (
+                [canonical_arch] if canonical_arch else sorted((rec.arch_details or {}).keys())
+            )
             per_arch = []
             for core in iter_archs:
                 if core is None:
                     continue
                 lat, cpi, kind = arch_perf(rec, core)
                 ports = collect_ports(rec, arch=core, archs_used=[core])
-                per_arch.append({
-                    "arch": core,
-                    "latency_cycles": lat,
-                    "tput_cpi": cpi,
-                    "source_kind": kind,
-                    "ports": ports,
-                })
+                per_arch.append(
+                    {
+                        "arch": core,
+                        "latency_cycles": lat,
+                        "tput_cpi": cpi,
+                        "source_kind": kind,
+                        "ports": ports,
+                    }
+                )
             summary = aggregate_perf(rec, mode="avg", include_modeled=False)
-            payload["variants"].append({
-                "key": rec.key,
-                "summary": (rec.summary or "").strip() or None,
-                "aggregate": {
-                    "latency_cycles": summary.latency,
-                    "tput_cpi": summary.cpi,
-                    "n_archs": summary.n_archs,
-                    "source_kind": summary.source_kind,
-                    "archs_used": summary.archs_used,
-                },
-                "per_arch": per_arch,
-            })
+            payload["variants"].append(
+                {
+                    "key": rec.key,
+                    "summary": (rec.summary or "").strip() or None,
+                    "aggregate": {
+                        "latency_cycles": summary.latency,
+                        "tput_cpi": summary.cpi,
+                        "n_archs": summary.n_archs,
+                        "source_kind": summary.source_kind,
+                        "archs_used": summary.archs_used,
+                    },
+                    "per_arch": per_arch,
+                }
+            )
         typer.echo(_json.dumps(payload, indent=2, default=str))
         return 0
 
@@ -898,15 +962,39 @@ def _is_completion_invocation(env: dict[str, str] | None = None) -> bool:
 
 @app.command(rich_help_panel="Commands")
 def annotate(
-    input_path: Path | None = typer.Argument(None, help="Input .s assembly file, or '-' for stdin. Omit to open the TUI annotate tab."),
-    output: Path = typer.Option(None, "-o", "--output", help="Output .sa path (default: <input>.sa, or '-' for stdout)."),
-    performance: bool = typer.Option(True, "--performance/--no-performance", help="Include latency/CPI annotations."),
-    docs: bool = typer.Option(True, "--docs/--no-docs", help="Include human-readable instruction summaries."),
-    arch: str | None = typer.Option(None, "--arch", help="Pin annotations to a specific microarch (e.g. skylake-x, zen4)."),
-    agg: str = typer.Option("avg", "--agg", help="Aggregation across archs when --arch is not set: avg|median|best|worst."),
-    include_modeled: bool = typer.Option(False, "--include-modeled", help="Fall back to modeled perf data when no arch has measured data."),
-    block: bool = typer.Option(False, "--block/--inline", help="Emit annotation as a comment block above each instruction (default: inline trailing)."),
-    unknown: str = typer.Option("mark", "--unknown", help="Handling of unknown mnemonics: keep|drop|mark."),
+    input_path: Path | None = typer.Argument(
+        None, help="Input .s assembly file, or '-' for stdin. Omit to open the TUI annotate tab."
+    ),
+    output: Path = typer.Option(
+        None, "-o", "--output", help="Output .sa path (default: <input>.sa, or '-' for stdout)."
+    ),
+    performance: bool = typer.Option(
+        True, "--performance/--no-performance", help="Include latency/CPI annotations."
+    ),
+    docs: bool = typer.Option(
+        True, "--docs/--no-docs", help="Include human-readable instruction summaries."
+    ),
+    arch: str | None = typer.Option(
+        None, "--arch", help="Pin annotations to a specific microarch (e.g. skylake-x, zen4)."
+    ),
+    agg: str = typer.Option(
+        "avg",
+        "--agg",
+        help="Aggregation across archs when --arch is not set: avg|median|best|worst.",
+    ),
+    include_modeled: bool = typer.Option(
+        False,
+        "--include-modeled",
+        help="Fall back to modeled perf data when no arch has measured data.",
+    ),
+    block: bool = typer.Option(
+        False,
+        "--block/--inline",
+        help="Emit annotation as a comment block above each instruction (default: inline trailing).",
+    ),
+    unknown: str = typer.Option(
+        "mark", "--unknown", help="Handling of unknown mnemonics: keep|drop|mark."
+    ),
     fmt: str = typer.Option("sa", "--format", help="Output format: sa|md|json."),
     track_positions: bool = typer.Option(
         False,
@@ -937,6 +1025,7 @@ def annotate(
 
     if arch is not None:
         from simdref.perf_sources.cores import canonical_core_id, supported_core_ids
+
         canonical = canonical_core_id(arch)
         if canonical is None:
             supported = ", ".join(supported_core_ids())
@@ -961,7 +1050,11 @@ def annotate(
             err_console.print(f"input not found: {input_path}", style="red")
             raise typer.Exit(code=1)
         source_lines = input_path.read_text().splitlines(keepends=True)
-        default_out = input_path.with_suffix(input_path.suffix + "a") if input_path.suffix == ".s" else input_path.with_suffix(".sa")
+        default_out = (
+            input_path.with_suffix(input_path.suffix + "a")
+            if input_path.suffix == ".s"
+            else input_path.with_suffix(".sa")
+        )
 
     out_path = output if output is not None else default_out
     opts = AnnotateOptions(
@@ -988,7 +1081,9 @@ def annotate(
 
 @app.command(rich_help_panel="Commands")
 def update(
-    from_release: bool = typer.Option(False, "--from-release", help="Download pre-built data from GitHub Release."),
+    from_release: bool = typer.Option(
+        False, "--from-release", help="Download pre-built data from GitHub Release."
+    ),
     man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
     """Download the pre-built release catalog (no llvm-mca required)."""
@@ -1016,6 +1111,7 @@ def _require_llvm_mca_or_hint() -> None:
     Users who only want pre-built data can drop the flag.
     """
     from simdref.perf_sources.llvm_mca import LLVMMcaUnavailable, detect_llvm_mca_version
+
     try:
         detect_llvm_mca_version()
     except LLVMMcaUnavailable as exc:
@@ -1043,6 +1139,7 @@ def _resolve_preset_filters(preset: str | None) -> tuple[list[str] | None, list[
     if not preset:
         return None, None
     from simdref.filters import ARCH_PRESETS
+
     spec = ARCH_PRESETS.get(preset)
     if spec is None:
         return None, None
@@ -1057,6 +1154,7 @@ def _llm_filter_records(
 ) -> list[dict]:
     """Filter llm payload dicts by ISA family, category, and source-kind."""
     from simdref.display import isa_family as _isa_family
+
     source_kind = (source_kind or "").strip().lower()
     if source_kind in ("", "any"):
         source_kind = ""
@@ -1161,7 +1259,11 @@ def _llm_exit_code(payload: dict) -> int:
             return LLM_EXIT_MATCH
         results = payload.get("results") or []
         if len(results) > 1 and payload.get("match_kind") == "instruction":
-            exact_name_hits = sum(1 for r in results if r.get("query", "").casefold() == payload.get("query", "").casefold())
+            exact_name_hits = sum(
+                1
+                for r in results
+                if r.get("query", "").casefold() == payload.get("query", "").casefold()
+            )
             if exact_name_hits > 1:
                 return LLM_EXIT_AMBIGUOUS
         return LLM_EXIT_MATCH if results else LLM_EXIT_NO_MATCH
@@ -1229,7 +1331,9 @@ def _llm_schema_payload() -> dict:
     }
 
 
-llm_app = typer.Typer(help="Structured output for LLM/tool consumption.", invoke_without_command=False)
+llm_app = typer.Typer(
+    help="Structured output for LLM/tool consumption.", invoke_without_command=False
+)
 _LLM_HELP_PANEL = "Commands"
 
 
@@ -1251,7 +1355,8 @@ def _build_llm_payload(
         result = _llm_intrinsic_payload(conn, intrinsic)
         kept = _llm_filter_records([result], isa, category, source_kind=source_kind)
         return {
-            "query": query_str, "mode": "exact",
+            "query": query_str,
+            "mode": "exact",
             "match_kind": "intrinsic" if kept else None,
             **({"result": kept[0]} if kept else {"results": []}),
         }
@@ -1260,7 +1365,8 @@ def _build_llm_payload(
         items = [_llm_instruction_payload(item) for item in instructions]
         items = _llm_filter_records(items, isa, category, source_kind=source_kind)
         return {
-            "query": query_str, "mode": "exact",
+            "query": query_str,
+            "mode": "exact",
             "match_kind": "instruction",
             "results": items,
         }
@@ -1268,7 +1374,8 @@ def _build_llm_payload(
     items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
     items = _llm_filter_records(items, isa, category, source_kind=source_kind)
     return {
-        "query": query_str, "mode": "search",
+        "query": query_str,
+        "mode": "search",
         "match_kind": None,
         "results": items,
     }
@@ -1289,6 +1396,7 @@ def _resolve_preset_or_exit(preset: str | None, isa: list[str] | None) -> list[s
     if not preset:
         return isa
     from simdref.filters import ARCH_PRESETS
+
     if preset not in ARCH_PRESETS:
         known = ", ".join(sorted(ARCH_PRESETS))
         typer.echo(f"error: unknown --preset '{preset}' (known: {known})", err=True)
@@ -1311,7 +1419,9 @@ def _llm_query_impl(
     fmt_lower = _normalize_fmt(fmt, {"json", "ndjson", "markdown"})
     isa = _resolve_preset_or_exit(preset, isa)
     if not query_tokens:
-        typer.echo("error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True)
+        typer.echo(
+            "error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True
+        )
         raise typer.Exit(code=LLM_EXIT_USAGE)
     query_str = " ".join(query_tokens)
     ensure_runtime()
@@ -1331,10 +1441,18 @@ def _llm_query_impl(
 def llm_query(
     query: list[str] = typer.Argument(..., help="Search query (multiple tokens allowed)."),
     limit: int = typer.Option(8, help="Maximum number of search results in search mode."),
-    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json, ndjson, or markdown."),
+    fmt: str = typer.Option(
+        "json", "--format", "-F", help="Output format: json, ndjson, or markdown."
+    ),
     isa: list[str] = typer.Option(None, "--isa", help="Filter by ISA family (repeatable)."),
-    preset: str = typer.Option(None, "--preset", help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all)."),
-    source_kind: str = typer.Option("any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."),
+    preset: str = typer.Option(
+        None,
+        "--preset",
+        help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all).",
+    ),
+    source_kind: str = typer.Option(
+        "any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."
+    ),
 ) -> None:
     """Resolve a query and emit an LLM-friendly payload.
 
@@ -1355,6 +1473,7 @@ def _emit_filtered_names(
     emitted (caller uses this to decide the exit code).
     """
     from simdref.display import isa_family as _isa_family
+
     glob_pat = pattern
     isa_set = {f.strip() for f in (isa or []) if f and f.strip()}
     emitted = 0
@@ -1364,17 +1483,21 @@ def _emit_filtered_names(
     ).fetchall()
     for row in intrinsic_rows:
         name = row["name"]
-        if not fnmatch.fnmatchcase(name, glob_pat) and not fnmatch.fnmatch(name.casefold(), glob_pat.casefold()):
+        if not fnmatch.fnmatchcase(name, glob_pat) and not fnmatch.fnmatch(
+            name.casefold(), glob_pat.casefold()
+        ):
             continue
         isas = [s.strip() for s in (row["isa"] or "").split(",") if s.strip()]
         if isa_set:
             families = {_isa_family(s) for s in isas}
             if not families & isa_set:
                 continue
-        typer.echo(json.dumps(
-            {"name": name, "kind": "intrinsic", "isa": isas, "category": row["category"] or ""},
-            sort_keys=True,
-        ))
+        typer.echo(
+            json.dumps(
+                {"name": name, "kind": "intrinsic", "isa": isas, "category": row["category"] or ""},
+                sort_keys=True,
+            )
+        )
         emitted += 1
 
     instruction_rows = conn.execute(
@@ -1394,19 +1517,37 @@ def _emit_filtered_names(
             families = {_isa_family(s) for s in isas}
             if not families & isa_set:
                 continue
-        typer.echo(json.dumps(
-            {"name": key, "kind": "instruction", "isa": isas, "category": row["category"] or ""},
-            sort_keys=True,
-        ))
+        typer.echo(
+            json.dumps(
+                {
+                    "name": key,
+                    "kind": "instruction",
+                    "isa": isas,
+                    "category": row["category"] or "",
+                },
+                sort_keys=True,
+            )
+        )
         emitted += 1
     return emitted
 
 
 @llm_app.command("list")
 def llm_list(
-    fmt: str = typer.Option("json", "--format", "-F", help="Output format: json or markdown (ignored when --pattern is given)."),
-    pattern: str = typer.Option(None, "--pattern", help="Glob filter over intrinsic/instruction names. When set, the command emits NDJSON {name, kind, isa, category} records instead of the FilterSpec."),
-    isa: list[str] = typer.Option(None, "--isa", help="Restrict --pattern output to the given ISA family (repeatable)."),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-F",
+        help="Output format: json or markdown (ignored when --pattern is given).",
+    ),
+    pattern: str = typer.Option(
+        None,
+        "--pattern",
+        help="Glob filter over intrinsic/instruction names. When set, the command emits NDJSON {name, kind, isa, category} records instead of the FilterSpec.",
+    ),
+    isa: list[str] = typer.Option(
+        None, "--isa", help="Restrict --pattern output to the given ISA family (repeatable)."
+    ),
 ) -> None:
     """Emit the FilterSpec or stream matching catalog entries.
 
@@ -1423,6 +1564,7 @@ def llm_list(
         raise typer.Exit(code=LLM_EXIT_MATCH if emitted else LLM_EXIT_NO_MATCH)
 
     from simdref.filters import build_filter_spec
+
     with open_db() as conn:
         spec = build_filter_spec(conn)
     payload = spec.to_json()
@@ -1445,8 +1587,14 @@ def llm_list(
 def llm_batch(
     limit: int = typer.Option(8, help="Maximum number of search results per query in search mode."),
     isa: list[str] = typer.Option(None, "--isa", help="Filter results by ISA family (repeatable)."),
-    preset: str = typer.Option(None, "--preset", help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all)."),
-    source_kind: str = typer.Option("any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."),
+    preset: str = typer.Option(
+        None,
+        "--preset",
+        help="Apply a named preset (default, intel, arm32, arm64, riscv, none, all).",
+    ),
+    source_kind: str = typer.Option(
+        "any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."
+    ),
 ) -> None:
     """Resolve queries from stdin (one per line); emit NDJSON records.
 
@@ -1470,15 +1618,19 @@ def llm_batch(
                     status = "ambiguous"
                 else:
                     status = "no_match"
-                typer.echo(json.dumps(
-                    {"query": query, "status": status, "payload": payload},
-                    sort_keys=True,
-                ))
+                typer.echo(
+                    json.dumps(
+                        {"query": query, "status": status, "payload": payload},
+                        sort_keys=True,
+                    )
+                )
             except Exception as exc:  # pragma: no cover - defensive
-                typer.echo(json.dumps(
-                    {"query": query, "status": "error", "error": str(exc)},
-                    sort_keys=True,
-                ))
+                typer.echo(
+                    json.dumps(
+                        {"query": query, "status": "error", "error": str(exc)},
+                        sort_keys=True,
+                    )
+                )
 
 
 @llm_app.command("schema")
@@ -1506,10 +1658,14 @@ profile_app = typer.Typer(
 
 @profile_app.command("ingest", rich_help_panel="Profile")
 def profile_ingest(
-    adapter: str = typer.Option(..., "--adapter", help="Adapter id: perf|vtune|uprof|xctrace|mca|exegesis."),
+    adapter: str = typer.Option(
+        ..., "--adapter", help="Adapter id: perf|vtune|uprof|xctrace|mca|exegesis."
+    ),
     input_path: Path = typer.Option(..., "--input", help="Input file (perf.data, CSV, JSON, ...)."),
     output: Path = typer.Option(..., "-o", "--output", help="Output samples JSON."),
-    binary: Path | None = typer.Option(None, "--binary", help="Program binary (used for addr2line)."),
+    binary: Path | None = typer.Option(
+        None, "--binary", help="Program binary (used for addr2line)."
+    ),
 ) -> None:
     """Ingest profiler output into a normalized SampleRow JSON file."""
     from simdref.profile import get_profiler
@@ -1533,7 +1689,11 @@ def profile_hotloops(
     disasm: Path = typer.Argument(..., help="objdump -d output (with or without -S)."),
     samples: Path = typer.Argument(..., help="samples JSON from `simdref profile ingest`."),
     output: Path = typer.Option(..., "-o", "--output", help="Output loops JSON."),
-    event: str = typer.Option("cycles", "--event", help="Event name to rank by (cycles|instructions|cache-misses|mca:cycles...)."),
+    event: str = typer.Option(
+        "cycles",
+        "--event",
+        help="Event name to rank by (cycles|instructions|cache-misses|mca:cycles...).",
+    ),
     top: int = typer.Option(3, "--top", help="Keep top-N ranked loops."),
 ) -> None:
     """Detect natural loops in a disassembly and rank them by sample weight."""
@@ -1551,11 +1711,15 @@ def profile_hotloops(
 
 @profile_app.command("merge", rich_help_panel="Profile")
 def profile_merge(
-    annotated: Path = typer.Argument(..., help="Annotated JSON from `simdref annotate --format json --track-positions`."),
+    annotated: Path = typer.Argument(
+        ..., help="Annotated JSON from `simdref annotate --format json --track-positions`."
+    ),
     samples: Path = typer.Argument(..., help="Samples JSON from `simdref profile ingest`."),
     output: Path = typer.Option(..., "-o", "--output", help="Output file."),
     fmt: str = typer.Option("sa", "--format", help="Output format: sa|json."),
-    restrict_to: Path | None = typer.Option(None, "--restrict-to", help="loops JSON: mark instructions inside these loops."),
+    restrict_to: Path | None = typer.Option(
+        None, "--restrict-to", help="loops JSON: mark instructions inside these loops."
+    ),
 ) -> None:
     """Attach hotness data to the annotated instruction stream."""
     import json as _json
@@ -1568,7 +1732,9 @@ def profile_merge(
         raise typer.Exit(code=1)
     annotated_records = _json.loads(annotated.read_text())
     if isinstance(annotated_records, dict):
-        annotated_records = annotated_records.get("records") or annotated_records.get("instructions") or []
+        annotated_records = (
+            annotated_records.get("records") or annotated_records.get("instructions") or []
+        )
     sample_rows = read_samples(samples)
     loops = read_loops(restrict_to) if restrict_to else None
     merged = merge(annotated_records, sample_rows, restrict_to=loops)
@@ -1586,11 +1752,19 @@ def profile_merge(
 @profile_app.command("run", rich_help_panel="Profile")
 def profile_run(
     target: Path = typer.Option(..., "--target", help="Program binary to profile."),
-    program_args: str = typer.Option("", "--args", help="Arguments to pass to the target (space-separated)."),
+    program_args: str = typer.Option(
+        "", "--args", help="Arguments to pass to the target (space-separated)."
+    ),
     adapter: str = typer.Option("perf", "--adapter", help="Profiler adapter: perf|mca."),
-    events: str = typer.Option("cycles:pp,instructions", "--event", help="Comma-separated perf events to record."),
-    duration: float | None = typer.Option(None, "--duration", help="Max runtime in seconds (uses `timeout`)."),
-    arch: str | None = typer.Option(None, "--arch", help="Pin annotations to a microarch (zen4, skylake-x, ...)."),
+    events: str = typer.Option(
+        "cycles:pp,instructions", "--event", help="Comma-separated perf events to record."
+    ),
+    duration: float | None = typer.Option(
+        None, "--duration", help="Max runtime in seconds (uses `timeout`)."
+    ),
+    arch: str | None = typer.Option(
+        None, "--arch", help="Pin annotations to a microarch (zen4, skylake-x, ...)."
+    ),
     top: int = typer.Option(3, "--top", help="Top-N hot loops to keep."),
     outdir: Path = typer.Option(Path("report"), "-o", "--outdir", help="Output directory."),
 ) -> None:
@@ -1662,11 +1836,14 @@ def _completion_prog_name() -> str:
 
 @completion_app.command("show")
 def completion_show(
-    shell: str = typer.Argument(None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."),
+    shell: str = typer.Argument(
+        None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."
+    ),
 ) -> None:
     """Print a shell completion script to stdout."""
     shell = _resolve_completion_shell(shell)
     from typer._completion_shared import get_completion_script
+
     prog_name = _completion_prog_name()
     complete_var = f"_{prog_name.upper().replace('-', '_')}_COMPLETE"
     typer.echo(get_completion_script(prog_name=prog_name, complete_var=complete_var, shell=shell))
@@ -1674,19 +1851,26 @@ def completion_show(
 
 @completion_app.command("install")
 def completion_install(
-    shell: str = typer.Argument(None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."),
+    shell: str = typer.Argument(
+        None, help="Shell: bash, zsh, fish, or powershell. Detected from $SHELL when omitted."
+    ),
 ) -> None:
     """Install shell completion into the user's shell profile."""
     shell = _resolve_completion_shell(shell)
     from typer._completion_shared import install as _install_completion
+
     prog_name = _completion_prog_name()
     complete_var = f"_{prog_name.upper().replace('-', '_')}_COMPLETE"
     try:
-        shell_detected, path = _install_completion(shell=shell, prog_name=prog_name, complete_var=complete_var)
+        shell_detected, path = _install_completion(
+            shell=shell, prog_name=prog_name, complete_var=complete_var
+        )
     except Exception as exc:
         err_console.print(f"error: completion install failed: {exc}", style="red")
         raise typer.Exit(code=1) from exc
-    err_console.print(f"installed {shell_detected} completion for {prog_name} at {path}", style="green")
+    err_console.print(
+        f"installed {shell_detected} completion for {prog_name} at {path}", style="green"
+    )
 
 
 app.add_typer(completion_app, name="completion", rich_help_panel="Dev commands")
@@ -1740,11 +1924,15 @@ def doctor() -> None:
             table.add_row(fail_icon, "catalog", "[red]unreadable[/]", f"{CATALOG_PATH}: {exc}")
             failures += 1
             console.print(table)
-            console.print(f"\n[red]{failures} check failed — run[/] [cyan]simdref ingest[/] [red]to rebuild.[/]")
+            console.print(
+                f"\n[red]{failures} check failed — run[/] [cyan]simdref ingest[/] [red]to rebuild.[/]"
+            )
             raise typer.Exit(1)
         table.add_row(ok_icon, "catalog", "[green]present[/]", str(CATALOG_PATH))
     else:
-        table.add_row(fail_icon, "catalog", "[red]missing[/]", f"{CATALOG_PATH} — run `simdref ingest`")
+        table.add_row(
+            fail_icon, "catalog", "[red]missing[/]", f"{CATALOG_PATH} — run `simdref ingest`"
+        )
         failures += 1
         console.print(table)
         console.print(f"\n[red]{failures} check failed.[/]")
@@ -1752,10 +1940,14 @@ def doctor() -> None:
 
     # SQLite index
     if not SQLITE_PATH.exists():
-        table.add_row(fail_icon, "sqlite index", "[red]missing[/]", f"{SQLITE_PATH} — run `simdref ingest`")
+        table.add_row(
+            fail_icon, "sqlite index", "[red]missing[/]", f"{SQLITE_PATH} — run `simdref ingest`"
+        )
         failures += 1
     elif not sqlite_schema_is_current():
-        table.add_row(warn_icon, "sqlite index", "[yellow]outdated schema[/]", "rebuild with `simdref ingest`")
+        table.add_row(
+            warn_icon, "sqlite index", "[yellow]outdated schema[/]", "rebuild with `simdref ingest`"
+        )
         warnings += 1
     else:
         table.add_row(ok_icon, "sqlite index", "[green]current[/]", str(SQLITE_PATH))
@@ -1764,9 +1956,19 @@ def doctor() -> None:
     n_intr = len(catalog.intrinsics)
     n_instr = len(catalog.instructions)
     if n_intr > 0 and n_instr > 0:
-        table.add_row(ok_icon, "catalog data", "[green]populated[/]", f"{n_intr:,} intrinsics · {n_instr:,} instructions")
+        table.add_row(
+            ok_icon,
+            "catalog data",
+            "[green]populated[/]",
+            f"{n_intr:,} intrinsics · {n_instr:,} instructions",
+        )
     else:
-        table.add_row(fail_icon, "catalog data", "[red]empty[/]", f"{n_intr} intrinsics · {n_instr} instructions")
+        table.add_row(
+            fail_icon,
+            "catalog data",
+            "[red]empty[/]",
+            f"{n_intr} intrinsics · {n_instr} instructions",
+        )
         failures += 1
 
     # Sources
@@ -1775,13 +1977,16 @@ def doctor() -> None:
         for source in catalog.sources:
             table.add_row("", f"  {source.source}", "", f"version={source.version}")
     else:
-        table.add_row(warn_icon, "sources", "[yellow]none recorded[/]", "catalog has no provenance entries")
+        table.add_row(
+            warn_icon, "sources", "[yellow]none recorded[/]", "catalog has no provenance entries"
+        )
         warnings += 1
 
     # FTS smoke test
     if SQLITE_PATH.exists() and sqlite_schema_is_current():
         try:
             from simdref.storage import open_db
+
             with open_db() as conn:
                 row = conn.execute(
                     "SELECT count(*) AS c FROM intrinsics_fts WHERE intrinsics_fts MATCH ?",
@@ -1789,9 +1994,13 @@ def doctor() -> None:
                 ).fetchone()
                 hits = row["c"] if row else 0
             if hits > 0:
-                table.add_row(ok_icon, "fts search", "[green]working[/]", f"query 'add' -> {hits} hits")
+                table.add_row(
+                    ok_icon, "fts search", "[green]working[/]", f"query 'add' -> {hits} hits"
+                )
             else:
-                table.add_row(warn_icon, "fts search", "[yellow]no hits[/]", "query 'add' returned 0 hits")
+                table.add_row(
+                    warn_icon, "fts search", "[yellow]no hits[/]", "query 'add' returned 0 hits"
+                )
                 warnings += 1
         except Exception as exc:
             table.add_row(fail_icon, "fts search", "[red]error[/]", str(exc))
@@ -1802,15 +2011,24 @@ def doctor() -> None:
     if man_present:
         table.add_row(ok_icon, "man pages", "[green]present[/]", str(DEFAULT_MAN_DIR))
     else:
-        table.add_row(warn_icon, "man pages", "[dim]not installed[/]", f"{DEFAULT_MAN_DIR} — optional; install with `simdref install-manpages`")
+        table.add_row(
+            warn_icon,
+            "man pages",
+            "[dim]not installed[/]",
+            f"{DEFAULT_MAN_DIR} — optional; install with `simdref install-manpages`",
+        )
 
     console.print(table)
 
     if failures:
-        console.print(f"\n[red]{failures} failed[/], [yellow]{warnings} warnings[/] — simdref is not ready.")
+        console.print(
+            f"\n[red]{failures} failed[/], [yellow]{warnings} warnings[/] — simdref is not ready."
+        )
         raise typer.Exit(1)
     if warnings:
-        console.print(f"\n[yellow]OK with {warnings} warning(s)[/] — simdref will run but consider the notes above.")
+        console.print(
+            f"\n[yellow]OK with {warnings} warning(s)[/] — simdref will run but consider the notes above."
+        )
         return
     console.print("\n[bold green]All checks passed.[/] simdref is ready.")
 
@@ -1822,7 +2040,9 @@ def _export_web_impl(web_dir: Path) -> None:
 
 
 @app.command("web", rich_help_panel="Dev commands")
-def web_command(web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets.")) -> None:
+def web_command(
+    web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets."),
+) -> None:
     """Export static web app."""
     _export_web_impl(web_dir)
 
@@ -1832,7 +2052,9 @@ def serve_command(
     web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(8765),
-    preset: str = typer.Option(None, "--preset", help="Open URL with ?preset=NAME so the web UI applies it on load."),
+    preset: str = typer.Option(
+        None, "--preset", help="Open URL with ?preset=NAME so the web UI applies it on load."
+    ),
 ) -> None:
     """Serve the exported web app with gzip support.
 
@@ -1891,6 +2113,7 @@ def serve_command(
         query_suffix = ""
         if preset:
             from urllib.parse import quote
+
             query_suffix = f"?preset={quote(preset)}"
         console.print(
             f"serving [cyan]{web_dir}[/cyan] at [cyan]http://{host}:{port}/{query_suffix}[/cyan] (gzip-aware)"
@@ -1970,9 +2193,17 @@ def main() -> int:
     # subcommand dispatch (list/batch/schema/query) works without stealing
     # bare queries. Derived from Typer introspection so new subcommands
     # automatically become recognised.
-    llm_subcommands = {info.name for info in getattr(llm_app, "registered_commands", []) if info.name}
+    llm_subcommands = {
+        info.name for info in getattr(llm_app, "registered_commands", []) if info.name
+    }
     llm_subcommands |= {"--help", "-h"}
-    if argv and argv[0] == "llm" and len(argv) >= 2 and argv[1] not in llm_subcommands and not argv[1].startswith("-"):
+    if (
+        argv
+        and argv[0] == "llm"
+        and len(argv) >= 2
+        and argv[1] not in llm_subcommands
+        and not argv[1].startswith("-")
+    ):
         argv = ["llm", "query", *argv[1:]]
     sys.argv = [sys.argv[0], *argv]
     commands = _registered_command_names()

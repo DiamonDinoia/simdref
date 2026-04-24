@@ -144,6 +144,7 @@ def best_latency_labeled(
     it is picked over all modeled rows. Pass ``kind_filter="modeled"`` to
     select only modeled data.
     """
+
     def lat_values(details: dict[str, Any]) -> list[str]:
         return latency_cycle_values(details.get("latencies") or [])
 

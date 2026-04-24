@@ -109,8 +109,7 @@ def test_intrinsic_family_pushdown_matches_in_memory(db_path: Path):
     in_memory = {
         r.name
         for r in cat.intrinsics
-        if spec.matches(r, enabled_families={"x86", "SSE", "AVX"})
-        and "add" in r.name.casefold()
+        if spec.matches(r, enabled_families={"x86", "SSE", "AVX"}) and "add" in r.name.casefold()
     }
     assert pushed == in_memory
     assert "vaddq_u8" not in pushed  # Arm excluded by family filter
@@ -195,8 +194,13 @@ def test_arm_arch_pushdown_filters_intrinsics(tmp_path: Path):
         ),
     ]
     cat = Catalog(
-        intrinsics=intrinsics, instructions=[],
-        sources=[SourceVersion(source="t", version="t", fetched_at="2025-01-01T00:00:00+00:00", url="test://")],
+        intrinsics=intrinsics,
+        instructions=[],
+        sources=[
+            SourceVersion(
+                source="t", version="t", fetched_at="2025-01-01T00:00:00+00:00", url="test://"
+            )
+        ],
         generated_at="2025-01-01T00:00:00+00:00",
     )
     db = tmp_path / "catalog.db"
