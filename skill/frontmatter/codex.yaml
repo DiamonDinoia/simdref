@@ -1,0 +1,10 @@
+name: asm-analysis
+description: |-
+  Use when the user asks Codex to inspect, annotate, profile, or optimise
+  generated assembly for C/C++ or raw .s/object/binary inputs. Triggers
+  include "look at the asm", "inspect codegen", "why is this loop slow",
+  "vectorise this", "make this faster", "tune this loop", "use AVX-512",
+  "make this faster on Zen4/Skylake-X/Apple M2", or requests for
+  intrinsic-level replacements with cited latency/CPI. Do not use for
+  pure source-level refactoring, style changes, or C++ semantics questions
+  that do not require generated code.

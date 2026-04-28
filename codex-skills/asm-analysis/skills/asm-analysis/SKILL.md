@@ -11,10 +11,11 @@ description: |-
   that do not require generated code.
 ---
 
+<!-- generated from skill/ — do not edit -->
+
 # asm-analysis
 
-This is the Codex entrypoint for the shared simdref assembly analysis
-workflow.
+Entrypoint for the shared simdref assembly analysis workflow.
 
 Before doing any assembly analysis, read and follow
 `references/workflow.md`. Treat that file as the source of truth for the
