@@ -141,11 +141,11 @@ ______________________________________________________________________
 
 ## 1. Input dispatch — always reuse the project's build system when one exists
 
-**Rule:** do NOT invent `g++ -O2 -march=native …` when the project already specifies how its code is compiled. Wrong `-O`, wrong `-march`, wrong defines, wrong include paths → analysed asm doesn't match what ships. Resolve the compile command for a source file in this order:
+**Rule:** do NOT invent `g++ -O3 -march=native …` when the project already specifies how its code is compiled. Wrong `-O`, wrong `-march`, wrong defines, wrong include paths → analysed asm doesn't match what ships. Resolve the compile command for a source file in this order:
 
 ### 1a. `compile_commands.json` (preferred)
 
-Produced by CMake with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, by Bear (`bear -- make`), or by `intercept-build`.
+Produced by CMake with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, by Bear (`bear -- make`), or by `intercept-build`, build Release and use command line arguments to inject debug symbols do not omit frame pointer and so on.
 
 Search order:
 
@@ -227,7 +227,7 @@ Use as-is.
 
 ### Invariants for every path
 
-- Output always goes to `/tmp/asm-analysis.s` — never inside the user's repo.
+- Output always goes to `/tmp/asm-analysis.s` - or in the build directory but never back to the source directory.
 - **AT&T syntax only** — simdref's parser expects it.
 - Never modify the user's build artefacts or `build/` directory beyond what `cmake -B build` creates.
 - Do not create `CMakeLists.txt`, `Makefile`, or `build.ninja` for the user. If the project has no build system, the user owns that decision; we only analyse what exists.
@@ -413,3 +413,7 @@ ______________________________________________________________________
 - Inline asm or hand-written `.s` → confirm with the user before suggesting changes.
 - Files >5000 lines with no region specified → refuse whole-file annotation; require a symbol.
 - If the spot-checks in §4a contradict simdref's payload on the dominant mnemonic, stop and report the disagreement before proposing a swap.
+
+## 10. Simdref limitations and bug reporting
+
+- always verify that simdref is correct and if you spot a bug, discrepancy, missing feature, missing annotation, or anything else that looks wrong, report it to the simdref team with a minimal repro and steps to verify. Do not silently work around or hand-wave simdref's output.
