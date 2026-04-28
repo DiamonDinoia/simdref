@@ -41,15 +41,13 @@ dependencies = [
 simdref = "simdref.cli:main"
 isa = "simdref.cli:main"
 simdref-lsp = "simdref.lsp:main"
-simdref-build-skills = "scripts.build_skill_bundles:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["simdref*", "scripts*"]
+where = ["src"]
 
 [tool.setuptools.package-data]
 simdref = ["templates/*"]
