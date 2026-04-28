@@ -218,16 +218,21 @@ and `ld` still consume it.
 
 **Commands**
 
-| Command                 | Description                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------------- |
-| `isa` / `isa <query>`   | Open the TUI, pre-filling the query when one is given                                             |
-| `isa doctor`            | Check the installation — pass/fail per component, non-zero exit on failure                        |
-| `isa update`            | Download the pre-built release catalog (no `llvm-mca` required)                                   |
-| `isa llm query <q>`     | Strict lookup → JSON/NDJSON/Markdown (see [docs/LLM.md](docs/LLM.md))                             |
-| `isa llm batch`         | Resolve many queries from stdin in one invocation (NDJSON out)                                    |
-| `isa llm list`          | Dump the `FilterSpec` or stream matching catalog entries                                          |
-| `isa llm schema`        | Print the JSON schema for `llm` payloads                                                          |
-| `isa annotate <file.s>` | Annotate a `.s` assembly file with per-instruction summaries and latency/CPI — writes `<file>.sa` |
+| Command                 | Description                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `isa`                   | Open the TUI                                                                                                      |
+| `isa <query>`           | Open the TUI pre-filled with the query in a TTY; print ranked records to stdout otherwise                         |
+| `isa doctor`            | Check the installation — pass/fail per component, non-zero exit on failure                                        |
+| `isa update`            | Download the pre-built release catalog (no `llvm-mca` required); `--from-release` for the GitHub Release artifact |
+| `isa annotate <file.s>` | Annotate a `.s` assembly file with per-instruction summaries and latency/CPI — writes `<file>.sa`                 |
+| `isa profile run`       | Compile→record→disassemble→annotate→merge in one shot (perf or llvm-mca)                                          |
+| `isa profile ingest`    | Convert profiler output (perf / VTune / uProf / xctrace / llvm-mca / exegesis) to normalized samples              |
+| `isa profile hotloops`  | Detect natural loops in a disassembly and rank them by sample weight                                              |
+| `isa profile merge`     | Attach hotness data to the annotated instruction stream                                                           |
+| `isa llm query <q>`     | Strict lookup → JSON/NDJSON/Markdown (see [docs/LLM.md](docs/LLM.md))                                             |
+| `isa llm batch`         | Resolve many queries from stdin in one invocation (NDJSON out)                                                    |
+| `isa llm list`          | Dump the `FilterSpec` or stream matching catalog entries                                                          |
+| `isa llm schema`        | Print the JSON schema for `llm` payloads                                                                          |
 
 **Dev commands**
 
