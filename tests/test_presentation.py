@@ -124,9 +124,13 @@ def test_filter_spec_json_exposes_presets(catalog: Catalog, tmp_path: Path):
     assert presets["arm32"]["arm_arch"] == ["A32", "BOTH"]
     assert presets["arm64"]["arm_arch"] == ["A64", "BOTH"]
     assert presets["intel"]["arm_arch"] is None
-    # Named presets (non-All) force kind=intrinsic only.
-    for name in ("default", "intel", "arm32", "arm64", "riscv"):
-        assert presets[name]["kind"] == ["intrinsic"], f"{name} must force intrinsic-only"
+    # The default preset stays intrinsic-only; ISA-targeted presets surface
+    # both kinds so e.g. selecting "Intel" still finds VADDPS the instruction.
+    assert presets["default"]["kind"] == ["intrinsic"]
+    for name in ("intel", "arm32", "arm64", "riscv"):
+        assert set(presets[name]["kind"]) == {"intrinsic", "instruction"}, (
+            f"{name} must include both kinds"
+        )
     assert set(presets["all"]["kind"]) == {"intrinsic", "instruction"}
 
 

@@ -189,7 +189,7 @@ class ArchPresetsTests(unittest.TestCase):
             "AVX512_VP2INTERSECT",
         }
         self.assertFalse(preset.subs & frozenset(forbidden))
-        self.assertEqual(preset.kind, frozenset({"intrinsic"}))
+        self.assertEqual(preset.kind, frozenset({"intrinsic", "instruction"}))
         self.assertIsNone(preset.arm_arch)
 
     def test_arm32_preset_restricts_to_a32_and_both(self):
@@ -197,19 +197,19 @@ class ArchPresetsTests(unittest.TestCase):
         self.assertEqual(preset.families, frozenset({"Arm"}))
         self.assertEqual(set(preset.subs), ARM32_SUBS)
         self.assertEqual(preset.arm_arch, frozenset({"A32", "BOTH"}))
-        self.assertEqual(preset.kind, frozenset({"intrinsic"}))
+        self.assertEqual(preset.kind, frozenset({"intrinsic", "instruction"}))
 
     def test_arm64_preset_restricts_to_a64_and_both(self):
         preset = ARCH_PRESETS["arm64"]
         self.assertEqual(preset.families, frozenset({"Arm"}))
         self.assertEqual(set(preset.subs), ARM64_SUBS)
         self.assertEqual(preset.arm_arch, frozenset({"A64", "BOTH"}))
-        self.assertEqual(preset.kind, frozenset({"intrinsic"}))
+        self.assertEqual(preset.kind, frozenset({"intrinsic", "instruction"}))
 
-    def test_riscv_preset_is_intrinsic_only_rvv(self):
+    def test_riscv_preset_includes_instructions(self):
         preset = ARCH_PRESETS["riscv"]
         self.assertEqual(preset.families, frozenset({"RISC-V"}))
-        self.assertEqual(preset.kind, frozenset({"intrinsic"}))
+        self.assertEqual(preset.kind, frozenset({"intrinsic", "instruction"}))
 
     def test_default_preset_is_intrinsic_only(self):
         preset = ARCH_PRESETS["default"]
