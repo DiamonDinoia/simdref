@@ -1,15 +1,15 @@
 {
   "catalog": {
-    "generated_at": "2026-04-21T15:44:44+00:00",
+    "generated_at": "2026-04-28T20:26:01+00:00",
     "instructions": 29423,
-    "intrinsics": 92256
+    "intrinsics": 92837
   },
   "sources": {
     "arm-a64": {
       "coverage": 0.9823182711198428,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "/home/marco/repos/simdref/vendor/arm/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/arm/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz",
       "fetched_version": "archive:AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz:Instructions.json",
       "label": "Arm AARCHMRS A64",
       "local": 1500,
@@ -75,7 +75,7 @@
         "svabalb_s64"
       ],
       "extra_total": 6149,
-      "fetched_url": "/home/marco/repos/simdref/vendor/arm",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/arm",
       "fetched_version": "local-json-bundle",
       "label": "Arm ACLE intrinsics",
       "local": 10791,
@@ -115,35 +115,35 @@
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "/home/marco/repos/simdref/vendor/intel/Intel-Intrinsics-Guide-Offline-3.6.9.zip",
-      "fetched_version": "offline-package:Intel-Intrinsics-Guide-Offline-3.6.9",
+      "fetched_url": "https://cdrdv2.intel.com/v1/dl/getContent/764289?fileName=Intel-Intrinsics-Guide-Offline-3.6.4.zip",
+      "fetched_version": "offline-zip-download",
       "label": "Intel Intrinsics Guide",
-      "local": 7126,
-      "matched": 7126,
+      "local": 7381,
+      "matched": 7381,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 7126
+      "upstream": 7381
     },
     "riscv-rvv": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "/home/marco/repos/simdref/vendor/riscv/rvv_intrinsics_bundle.json",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/riscv/rvv_intrinsics_bundle.json",
       "fetched_version": "local-json:rvv_intrinsics_bundle.json",
       "label": "RISC-V RVV intrinsics",
-      "local": 74319,
-      "matched": 74319,
+      "local": 74289,
+      "matched": 74289,
       "missing_sample": [],
       "missing_total": 0,
       "threshold": 0.99,
-      "upstream": 74319
+      "upstream": 74289
     },
     "riscv-unified-db": {
       "coverage": 1.0,
       "extra_sample": [],
       "extra_total": 0,
-      "fetched_url": "/home/marco/repos/simdref/vendor/riscv/unified_db_bundle.json",
+      "fetched_url": "/home/runner/work/simdref/simdref/vendor/riscv/unified_db_bundle.json",
       "fetched_version": "local-json:unified_db_bundle.json",
       "label": "RISC-V unified DB",
       "local": 672,
@@ -183,8 +183,8 @@
         "REPE CMPSW"
       ],
       "extra_total": 670,
-      "fetched_url": "/home/marco/repos/simdref/vendor/uops/instructions.xml",
-      "fetched_version": "local-xml:instructions.xml",
+      "fetched_url": "https://uops.info/instructions.xml",
+      "fetched_version": "live",
       "label": "uops.info instructions.xml",
       "local": 2558,
       "matched": 1888,
