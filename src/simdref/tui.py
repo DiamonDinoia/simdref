@@ -242,6 +242,7 @@ def _fts_search(
     enabled_sub_isas: set[str] | None = None,
     offset: int = 0,
     limit: int = 30,
+    enabled_kinds: set[str] | None = None,
 ) -> list[SearchResult]:
     """Search using SQLite FTS5 with ISA family and sub-ISA filtering."""
     _t_start = time.perf_counter() if _PROFILE else 0.0
@@ -375,8 +376,10 @@ def _fts_search(
     # The name-only query uses {name name_tokens} column filter which
     # requires schema v7+; fall back to broad search on OperationalError.
     search_exprs = [fts_expr, fts_expr_broad]
+    want_intrinsic = enabled_kinds is None or "intrinsic" in enabled_kinds
+    want_instruction = enabled_kinds is None or "instruction" in enabled_kinds
     for expr in search_exprs:
-        rows = _query_intrinsic_rows(expr)
+        rows = _query_intrinsic_rows(expr) if want_intrinsic else []
         for row in rows:
             if row["name"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
@@ -393,7 +396,7 @@ def _fts_search(
             )
             candidates.append((_name_match_score(row["name"], terms) + intrinsic_bias, result))
 
-        irows = _query_instruction_rows(expr)
+        irows = _query_instruction_rows(expr) if want_instruction else []
         for row in irows:
             if row["db_key"] in seen or not _isa_visible(row["isa"] or ""):
                 continue
@@ -1495,9 +1498,8 @@ class SimdrefApp(App):
             self._enabled_sub_isas,
             offset=0,
             limit=_INITIAL_RESULT_BATCH,
+            enabled_kinds=set(self._enabled_kinds) if self._enabled_kinds else None,
         )
-        if self._enabled_kinds and len(self._enabled_kinds) < 2:
-            results = [r for r in results if r.kind in self._enabled_kinds]
         self._current_results = results
         self._has_more_results = len(results) == _INITIAL_RESULT_BATCH
         for i, result in enumerate(results, 1):
@@ -1532,9 +1534,8 @@ class SimdrefApp(App):
             self._enabled_sub_isas,
             offset=len(self._current_results),
             limit=_RESULT_BATCH_SIZE,
+            enabled_kinds=set(self._enabled_kinds) if self._enabled_kinds else None,
         )
-        if self._enabled_kinds and len(self._enabled_kinds) < 2:
-            more = [r for r in more if r.kind in self._enabled_kinds]
         if not more:
             self._has_more_results = False
             return
