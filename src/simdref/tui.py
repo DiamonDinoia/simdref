@@ -191,6 +191,24 @@ def _normalize_sub_isa_selection(
 # ---------------------------------------------------------------------------
 
 
+_MNEMONIC_HINT_TOKENS = frozenset({"add", "sub", "mul", "div", "mov", "cmp", "and", "or", "xor"})
+
+
+def _classify_query(query: str) -> str:
+    """Mirror the web SPA's `classifyQuery` so ranking biases match."""
+    lo = query.strip().lower()
+    if not lo:
+        return "neutral"
+    if lo.startswith("_mm") or lo.startswith("__m") or "_mm" in lo:
+        return "intrinsic"
+    parts = lo.replace("_", " ").split()
+    if parts:
+        first = parts[0]
+        if first in _MNEMONIC_HINT_TOKENS or first.startswith("v"):
+            return "instruction"
+    return "neutral"
+
+
 def _name_match_score(name: str, terms: list[str]) -> int:
     """Score how well query terms match a name. Higher = better match.
 
@@ -240,17 +258,31 @@ def _fts_search(
     fts_expr_broad = term_expr
 
     # Build an ISA LIKE-clause fragment so SQLite can drop non-matching rows
-    # before we ever hand them to Python. Sub-ISA tokens (e.g. "SSE2") and
-    # family names (e.g. "Arm") are substring-matched against the space-joined
-    # isa column. Families without a sub-ISA breakdown (RISC-V "x86", etc.)
-    # get their family name added so a plain family-level toggle still matches.
+    # before we ever hand them to Python. Sub-ISA tokens (e.g. "SSE2") are
+    # substring-matched against the isa column.
+    #
+    # Families without a sub-ISA breakdown (e.g. "x86", "MMX", "APX", "AVX10",
+    # "SVML", "Other") have raw ISA tokens like "I86" or "BMI1" — none of which
+    # contain the family-name string. We can't construct a sound LIKE pattern
+    # for those, so when any such family is enabled we skip the SQL pushdown
+    # entirely and let the Python `_isa_visible` post-filter do the work.
+    # Bias scoring by query classification (mirrors the web SPA): a mnemonic
+    # query like "add" should rank instructions above intrinsics, while an
+    # `_mm…`/`__m…` query should still favour intrinsics. Neutral queries get
+    # no kind bias.
+    qkind = _classify_query(query)
+    if qkind == "instruction":
+        intrinsic_bias, instruction_bias, default_kind = -10, 35, "instruction"
+    elif qkind == "intrinsic":
+        intrinsic_bias, instruction_bias, default_kind = 35, -10, "intrinsic"
+    else:
+        intrinsic_bias, instruction_bias, default_kind = 0, 0, "intrinsic"
+
+    has_no_sub_family = bool(enabled_families) and any(
+        not FAMILY_SUB_ORDER.get(fam) for fam in enabled_families
+    )
     isa_like_tokens: list[str] = []
-    if enabled_families:
-        for fam in enabled_families:
-            subs = FAMILY_SUB_ORDER.get(fam)
-            if not subs:
-                isa_like_tokens.append(fam)
-    if enabled_sub_isas is not None:
+    if not has_no_sub_family and enabled_sub_isas is not None:
         isa_like_tokens.extend(enabled_sub_isas)
     # Normalise the isa column the same way _isa_matches_sub does: strip
     # hyphens so "AVX-512F" matches a pushed-down "AVX512F" pattern. REPLACE
@@ -359,7 +391,7 @@ def _fts_search(
                 subtitle=subtitle,
                 score=100,
             )
-            candidates.append((_name_match_score(row["name"], terms), result))
+            candidates.append((_name_match_score(row["name"], terms) + intrinsic_bias, result))
 
         irows = _query_instruction_rows(expr)
         for row in irows:
@@ -373,10 +405,17 @@ def _fts_search(
                 subtitle=row["summary"] or "",
                 score=90,
             )
-            candidates.append((_name_match_score(row["key"], terms), result))
+            candidates.append((_name_match_score(row["key"], terms) + instruction_bias, result))
 
-    # Sort by match score descending, then by kind (intrinsics first)
-    candidates.sort(key=lambda c: (-c[0], 0 if c[1].kind == "intrinsic" else 1))
+    # Sort by (biased) match score descending. The kind tiebreaker follows the
+    # query classification so a mnemonic-like query ("add") doesn't get its
+    # instructions buried under intrinsics with identical text scores.
+    candidates.sort(
+        key=lambda c: (
+            -c[0],
+            0 if c[1].kind == default_kind else 1,
+        )
+    )
     results = [r for _, r in candidates[offset : offset + limit]]
     if _PROFILE:
         _profile_log(

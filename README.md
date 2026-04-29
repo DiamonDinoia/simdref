@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml)
 [![TestPyPI](https://img.shields.io/pypi/v/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org&label=TestPyPI)](https://test.pypi.org/project/simdref/)
-[![Python](https://img.shields.io/pypi/pyversions/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org)](https://test.pypi.org/project/simdref/)
+[![Python](https://img.shields.io/pypi/pyversions/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org)](https://pypi.org/project/simdref/)
 
 A single searchable reference for SIMD intrinsics and instructions across
 **x86 (Intel + uops.info)**, **Arm (ACLE / AARCHMRS)**, and **RISC-V
