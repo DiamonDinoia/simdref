@@ -93,10 +93,12 @@ from simdref.storage import (
     load_instructions_by_mnemonic_from_db,
     load_instructions_by_mnemonic_prefix_from_db,
     open_db,
+    read_installed_version_stamp,
     save_catalog,
     search_instruction_candidates_from_db,
     search_intrinsic_candidates_from_db,
     sqlite_schema_is_current,
+    write_installed_version_stamp,
 )
 from simdref.web import export_web
 
@@ -288,6 +290,18 @@ def _download_from_release() -> None:
                     f"failed to download {asset}: {exc.response.status_code}", style="red"
                 )
                 raise typer.Exit(code=1) from exc
+            except (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.NetworkError,
+            ) as exc:
+                err_console.print(
+                    "[bold yellow]warning:[/bold yellow] no internet connectivity — "
+                    f"could not reach the release server ({exc.__class__.__name__}). "
+                    "Some features may not work correctly until the catalog is refreshed.",
+                )
+                raise typer.Exit(code=1) from exc
         return False
 
     for asset in ("catalog.msgpack", "catalog.db"):
@@ -445,6 +459,7 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
+    write_installed_version_stamp(__version__)
 
 
 def _refresh_runtime_from_existing_catalog(*, man_dir: Path) -> None:
@@ -464,6 +479,7 @@ def _refresh_runtime_from_existing_catalog(*, man_dir: Path) -> None:
         f"refreshed runtime from existing catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
+    write_installed_version_stamp(__version__)
 
 
 def _finalize_runtime_from_download(*, man_dir: Path) -> None:
@@ -477,6 +493,7 @@ def _finalize_runtime_from_download(*, man_dir: Path) -> None:
         f"refreshed local web/man assets from downloaded catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
+    write_installed_version_stamp(__version__)
 
 
 def _download_release_or_fallback(*, man_dir: Path) -> None:
@@ -560,9 +577,16 @@ def ensure_catalog():
 
 
 def ensure_runtime() -> None:
-    """Ensure catalog + SQLite are present and current."""
+    """Ensure catalog + SQLite are present and current.
+
+    If the package version recorded in the data dir does not match the
+    currently installed version, transparently re-run the release-download
+    flow so users don't need to invoke ``simdref update`` manually after
+    a ``pip``/``uv`` install or upgrade. Honors ``SIMDREF_SKIP_AUTOUPDATE``.
+    """
     if not CATALOG_PATH.exists():
         _bootstrap_interactive()
+        _maybe_auto_update_for_version_change()
         return
     if not sqlite_schema_is_current():
         err_console.print(
@@ -570,6 +594,37 @@ def ensure_runtime() -> None:
             style="yellow",
         )
         _refresh_runtime_from_existing_catalog(man_dir=DEFAULT_MAN_DIR)
+    _maybe_auto_update_for_version_change()
+
+
+def _maybe_auto_update_for_version_change() -> None:
+    """Refresh data when the package version differs from the stamped one."""
+    if os.environ.get("SIMDREF_SKIP_AUTOUPDATE"):
+        return
+    stamped = read_installed_version_stamp()
+    if stamped == __version__:
+        return
+    if stamped is None:
+        # First run after install: stamp without re-downloading. The catalog
+        # we just bootstrapped (or that already exists locally) is what the
+        # user expects to see.
+        write_installed_version_stamp(__version__)
+        return
+    err_console.print(
+        f"simdref upgraded from {stamped} to {__version__}; refreshing catalog "
+        "(set SIMDREF_SKIP_AUTOUPDATE=1 to disable)",
+        style="yellow",
+    )
+    try:
+        _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
+    except typer.Exit:
+        err_console.print(
+            "[bold yellow]warning:[/bold yellow] auto-update failed; continuing with the existing catalog. "
+            "Some features may not work correctly until `simdref update` succeeds.",
+        )
+        # Stamp anyway so we don't retry on every invocation; the user has
+        # been warned and can re-run `simdref update` once back online.
+        write_installed_version_stamp(__version__)
 
 
 def _catalog_meta(catalog) -> dict:
@@ -701,10 +756,11 @@ def _llm_result_payload(
                 intrinsic_map[result.key] = item
         if item is not None:
             lat, cpi = intrinsic_perf_summary_runtime(conn, item, instruction_map)
-            return {
+            payload: dict = {
                 "query": item.name,
                 "intrinsic": item.name,
                 "signature": item.signature,
+                "url": getattr(item, "url", "") or "",
                 "instructions": item.instructions,
                 "instruction_refs": item.instruction_refs,
                 "summary": item.description,
@@ -712,6 +768,10 @@ def _llm_result_payload(
                 "lat": lat,
                 "cpi": cpi,
             }
+            operation = _intrinsic_operation_text(item)
+            if operation:
+                payload["operation"] = operation
+            return payload
     item = instruction_map.get(result.key)
     if item is None:
         item = load_instruction_from_db(conn, result.key)
@@ -740,7 +800,7 @@ def _llm_result_payload(
 def _llm_intrinsic_payload(conn, intrinsic) -> dict:
     instruction_map: dict[str, object] = {}
     lat, cpi = intrinsic_perf_summary_runtime(conn, intrinsic, instruction_map)
-    return {
+    payload: dict = {
         "query": intrinsic.name,
         "intrinsic": intrinsic.name,
         "signature": intrinsic.signature,
@@ -752,6 +812,23 @@ def _llm_intrinsic_payload(conn, intrinsic) -> dict:
         "cpi": cpi,
         "summary": intrinsic.description,
     }
+    operation = _intrinsic_operation_text(intrinsic)
+    if operation:
+        # Encodes algorithmic quirks (e.g. the bit-1 selector in
+        # ``_mm_permutevar_pd``) that the one-line summary cannot convey.
+        payload["operation"] = operation
+    return payload
+
+
+def _intrinsic_operation_text(intrinsic) -> str:
+    """Return the SDM-style ``Operation`` pseudocode for *intrinsic*, or ``""``.
+
+    Intel ingest stores it under ``doc_sections["Operation"]``; ARM ACLE under
+    ``doc_sections["ACLE Operation"]``. Both are pseudocode the LLM payload
+    needs to surface so callers can reason about behavior beyond the summary.
+    """
+    sections = getattr(intrinsic, "doc_sections", None) or {}
+    return (sections.get("Operation") or sections.get("ACLE Operation") or "").strip()
 
 
 def _llm_instruction_payload(item) -> dict:
@@ -1342,6 +1419,14 @@ def _llm_schema_payload() -> dict:
                     "lat": {"type": "string"},
                     "cpi": {"type": "string"},
                     "summary": {"type": "string"},
+                    "url": {
+                        "type": "string",
+                        "description": "Vendor documentation URL (Intel Intrinsics Guide / ARM ACLE).",
+                    },
+                    "operation": {
+                        "type": "string",
+                        "description": "SDM-style pseudocode describing the intrinsic's behavior, when available.",
+                    },
                 },
             },
             "results": {"type": "array", "items": {"$ref": "#/properties/result"}},

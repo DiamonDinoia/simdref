@@ -275,6 +275,13 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
             name = node.attrib.get("name", "").strip()
             if not name:
                 continue
+            operation_text = ""
+            op_node = node.find("./operation")
+            if op_node is not None:
+                # ``<operation>`` carries SDM-style pseudocode; preserve internal
+                # whitespace (it encodes the algorithm) but trim outer padding.
+                raw = "".join(op_node.itertext())
+                operation_text = raw.strip("\n").rstrip() if raw else ""
             return_node = node.find("./return")
             ret = (
                 node.attrib.get("rettype", "").strip()
@@ -321,6 +328,7 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     header=(
                         (node.findtext("./header") or "").strip() or node.attrib.get("header", "")
                     ),
+                    url=_intel_intrinsic_url(name),
                     architecture="x86",
                     isa=_normalize_isa(
                         cpuid or node.attrib.get("isa", "") or node.attrib.get("tech", "")
@@ -332,6 +340,7 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     subcategory=node.attrib.get("tech", "").strip(),
                     instructions=instructions,
                     instruction_refs=[ref | {"architecture": "x86"} for ref in instruction_refs],
+                    doc_sections=({"Operation": operation_text} if operation_text else {}),
                     notes=notes,
                     aliases=[],
                 )
@@ -384,12 +393,16 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
         description = str(
             item.get("description") or item.get("summary") or item.get("technology", "")
         ).strip()
+        operation_text = (
+            str(item.get("operation") or item.get("Operation") or "").strip("\n").rstrip()
+        )
         records.append(
             IntrinsicRecord(
                 name=name,
                 signature=signature,
                 description=description,
                 header=str(item.get("header") or item.get("include") or "").strip(),
+                url=str(item.get("url") or "").strip() or _intel_intrinsic_url(name),
                 architecture="x86",
                 isa=_normalize_isa(
                     item.get("isa") or item.get("tech") or item.get("instructionSet") or []
@@ -402,6 +415,7 @@ def parse_intel_payload(text: str) -> list[IntrinsicRecord]:
                     for value in instructions
                     if str(value).strip()
                 ],
+                doc_sections=({"Operation": operation_text} if operation_text else {}),
                 notes=[str(value).strip() for value in notes if str(value).strip()],
                 aliases=[str(value).strip() for value in aliases if str(value).strip()],
             )
@@ -474,6 +488,16 @@ def parse_arm_intrinsics_payload(text: str) -> list[IntrinsicRecord]:
 
 def _arm_intrinsic_url(name: str) -> str:
     return urljoin(_ARM_ACLE_INTRINSIC_BASE_URL, quote(name))
+
+
+_INTEL_INTRINSIC_BASE_URL = (
+    "https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html"
+)
+
+
+def _intel_intrinsic_url(name: str) -> str:
+    """Stable Intel Intrinsics Guide deep link for *name* (uses ``#text=`` fragment)."""
+    return f"{_INTEL_INTRINSIC_BASE_URL}#text={quote(name)}"
 
 
 def _arm_slug(text: str) -> str:

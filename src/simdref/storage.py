@@ -82,7 +82,27 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-SQLITE_SCHEMA_VERSION = "11"
+INSTALLED_VERSION_STAMP = DATA_DIR / "installed_version"
+SQLITE_SCHEMA_VERSION = "12"
+
+
+def read_installed_version_stamp() -> str | None:
+    """Return the package version that last refreshed the data dir, or None."""
+    try:
+        return INSTALLED_VERSION_STAMP.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def write_installed_version_stamp(version: str) -> None:
+    """Record the package version that just refreshed the data dir."""
+    try:
+        INSTALLED_VERSION_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        INSTALLED_VERSION_STAMP.write_text(version.strip() + "\n", encoding="utf-8")
+    except OSError:
+        pass  # best-effort — stamp persistence must not break commands
+
+
 FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 SQLITE_INSERT_BATCH_SIZE = 512
 
