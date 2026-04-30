@@ -68,8 +68,6 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
         return AsmLine(LineKind.COMMENT, stripped)
     if bare.startswith("."):
         return AsmLine(LineKind.DIRECTIVE, stripped)
-    if _LABEL_RE.match(stripped):
-        return AsmLine(LineKind.LABEL, stripped)
 
     address: int | None = None
     if track_positions:
@@ -96,6 +94,9 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
         # an AT&T instruction. Bailing out here avoids classifying C++
         # source keywords ("return", "if", "for", ...) as mnemonics.
         return AsmLine(LineKind.COMMENT, stripped)
+
+    if _LABEL_RE.match(stripped):
+        return AsmLine(LineKind.LABEL, stripped)
 
     m = _INSTR_RE.match(stripped)
     if not m:

@@ -47,6 +47,27 @@ class PerfTests(unittest.TestCase):
     def test_latency_cycle_values_empty(self):
         self.assertEqual(latency_cycle_values([]), [])
 
+    def test_latency_cycle_values_drops_upper_bound_zero_mem(self):
+        # uops.info convention: cycles_mem="0" with the upper-bound flag
+        # is a not-measured marker for memory operands like MOV r32,m32.
+        latencies = [
+            {
+                "start_op": "2",
+                "target_op": "1",
+                "cycles_addr": "5",
+                "cycles_addr_index": "5",
+                "cycles_mem": "0",
+                "cycles_mem_is_upper_bound": "1",
+            }
+        ]
+        values = latency_cycle_values(latencies)
+        self.assertEqual(values, ["5"])
+        self.assertEqual(best_numeric(values), "5")
+
+    def test_latency_cycle_values_keeps_real_zero_when_not_upper_bound(self):
+        latencies = [{"cycles_mem": "0"}]
+        self.assertEqual(latency_cycle_values(latencies), ["0"])
+
     def test_best_numeric_picks_smallest(self):
         self.assertEqual(best_numeric(["5", "3", "7"]), "3")
         self.assertEqual(best_numeric(["1.5", "2.0"]), "1.5")

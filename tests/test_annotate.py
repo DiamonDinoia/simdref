@@ -70,6 +70,22 @@ def test_parse_asm_line_objdump_mode_rejects_source_interleave():
     assert ins.address == 0x13917
 
 
+def test_parse_asm_line_objdump_address_with_hex_letter_prefix():
+    # Regression: addresses whose first hex digit is a letter (a-f) used to
+    # match _LABEL_RE before the objdump regex, dropping the entire
+    # [0xa000, 0xffff] range from annotated output.
+    line = "    a000:\tvandpd -0x7b08(%rip),%xmm13,%xmm14\t# 2500 <.LC53>"
+    parsed = parse_asm_line(line, track_positions=True)
+    assert parsed.kind == LineKind.INSTRUCTION
+    assert parsed.mnemonic == "vandpd"
+    assert parsed.address == 0xA000
+
+
+def test_parse_asm_line_objdump_symbol_header_not_instruction():
+    parsed = parse_asm_line("0000000000003d80 <main>:", track_positions=True)
+    assert parsed.kind != LineKind.INSTRUCTION
+
+
 def test_aggregate_perf_modes():
     rec = _make_record(
         arch_details={

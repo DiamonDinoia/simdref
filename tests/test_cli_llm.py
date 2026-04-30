@@ -245,6 +245,25 @@ class LlmSourceKindFilterTests(unittest.TestCase):
         kept = _llm_filter_records(records, isa=None, category=None, source_kind="any")
         self.assertEqual(kept, records)
 
+    def test_record_has_source_kind_via_slim_field(self):
+        # Bug C regression: instruction payloads from `_llm_instruction_payload`
+        # don't carry `arch_details` — they expose a slim `source_kinds` list.
+        rec = {"query": "xor", "source_kinds": ["measured"]}
+        self.assertTrue(_record_has_source_kind(rec, "measured"))
+        self.assertFalse(_record_has_source_kind(rec, "modeled"))
+
+    def test_llm_batch_measured_filter_keeps_bare_mnemonic_matches(self):
+        # End-to-end: a bare mnemonic dispatched through `_find_instructions_fast`
+        # must survive `--source-kind measured` filtering — previously every
+        # variant was dropped because the slim payload had no arch_details.
+        stdin = "xor\n"
+        result = runner.invoke(app, ["llm", "batch", "--source-kind", "measured"], input=stdin)
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = [l for l in result.output.strip().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        rec = json.loads(lines[0])
+        self.assertEqual(rec["status"], "match", rec)
+
 
 if __name__ == "__main__":
     unittest.main()

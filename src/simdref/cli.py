@@ -70,6 +70,7 @@ from simdref.ingest_sources import (
     refresh_local_arm_intrinsics_bundle,
 )
 from simdref.manpages import open_manpage, write_manpages
+from simdref import perf
 from simdref.perf import variant_perf_summary
 from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
 from simdref.search import (
@@ -762,7 +763,22 @@ def _llm_instruction_payload(item) -> dict:
         "lat": lat,
         "cpi": cpi,
         "summary": item.summary,
+        "source_kinds": _payload_source_kinds(item.arch_details),
     }
+
+
+def _payload_source_kinds(arch_details) -> list[str]:
+    """Return the distinct provenance kinds present in an instruction's arch_details."""
+    if not isinstance(arch_details, dict):
+        return []
+    kinds: list[str] = []
+    for details in arch_details.values():
+        if not isinstance(details, dict):
+            continue
+        kind = perf._source_kind(details)
+        if kind not in kinds:
+            kinds.append(kind)
+    return kinds
 
 
 # ---------------------------------------------------------------------------
@@ -1184,6 +1200,9 @@ def _llm_filter_records(
 
 def _record_has_source_kind(rec: dict, wanted: str) -> bool:
     """Check whether an llm payload dict carries at least one entry with *wanted* provenance."""
+    slim = rec.get("source_kinds")
+    if isinstance(slim, list) and any(k == wanted for k in slim):
+        return True
     arch_details = rec.get("arch_details") or {}
     if isinstance(arch_details, dict):
         for details in arch_details.values():

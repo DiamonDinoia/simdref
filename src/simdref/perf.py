@@ -70,9 +70,16 @@ def latency_cycle_values(latencies: list[dict[str, Any]]) -> list[str]:
     """
     values: list[str] = []
     for latency in latencies:
+        mem_is_upper = latency.get("cycles_mem_is_upper_bound") == "1"
         for key in ("cycles", "cycles_mem", "cycles_addr", "cycles_addr_index"):
             value = latency.get(key)
-            if value and value not in values:
+            if not value:
+                continue
+            if key == "cycles_mem" and mem_is_upper and _is_numeric(value) and float(value) == 0:
+                # uops.info convention: cycles_mem=0 with the upper-bound flag
+                # is a "not measured" marker, not a real zero-cycle latency.
+                continue
+            if value not in values:
                 values.append(value)
     return values
 
