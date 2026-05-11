@@ -197,9 +197,14 @@ jobs:
           assert intrinsics > int(os.environ["EXPECTED_INTRINSICS_MIN"]), intrinsics
           assert instructions > int(os.environ["EXPECTED_INSTRUCTIONS_MIN"]), instructions
 
-          search_index = WEB_DIR / "search-index.json"
+          meta_path = WEB_DIR / "search-index-meta.json"
+          instructions_path = WEB_DIR / "search-index-instructions.json"
+          intrinsics_path = WEB_DIR / "search-index-intrinsics.json"
           intrinsic_chunks = WEB_DIR / "intrinsic-chunks"
-          assert search_index.exists(), f"missing {search_index}"
+          for required in (meta_path, instructions_path, intrinsics_path):
+              assert required.exists(), f"missing {required}"
+          assert not (WEB_DIR / "search-index.json").exists(), \
+              "legacy monolithic search-index.json must not be emitted"
           assert intrinsic_chunks.is_dir(), f"missing {intrinsic_chunks}"
           chunk_files = sorted(intrinsic_chunks.glob("*.json"))
           assert chunk_files, f"no chunk files under {intrinsic_chunks}"
@@ -209,10 +214,13 @@ jobs:
           assert chunked_names, "intrinsic chunks contained no names"
           assert len(chunked_names) <= intrinsics
 
-          payload = json.loads(search_index.read_text())
-          assert len(payload.get("intrinsics", [])) == intrinsics
-          assert len(payload.get("instructions", [])) == instructions
-          assert "isa_config" in payload
+          meta = json.loads(meta_path.read_text())
+          assert "isa_config" in meta
+          assert meta.get("available_isas"), "meta.available_isas is empty"
+          intr_payload = json.loads(intrinsics_path.read_text())
+          inst_payload = json.loads(instructions_path.read_text())
+          assert len(intr_payload) == intrinsics
+          assert len(inst_payload) == instructions
           PY
 
   package:

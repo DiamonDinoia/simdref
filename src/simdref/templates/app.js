@@ -21,7 +21,7 @@ const themeIconDark  = $("theme-icon-dark");
 const shortcutsOverlay = $("shortcuts-overlay");
 
 /* ── State ────────────────────────────────────────────────────────── */
-let catalog = null;            // search-index.json payload
+let catalog = null;            // merged search-index-* shard payload
 let searchEntries = [];
 let searchTokenIndex = new Map();
 let searchPrefixIndex = new Map();
