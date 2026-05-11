@@ -102,7 +102,9 @@ class LspWebTests(unittest.TestCase):
             # HTML shell
             html = (Path(tmpdir) / "index.html").read_text()
             self.assertIn("simdref", html)
-            self.assertIn("search-index.json", html)
+            self.assertIn("search-index-meta.json", html)
+            self.assertIn("search-index-instructions.json", html)
+            self.assertIn("search-index-intrinsics.json", html)
             # The initial empty-state copy in the results panel should cue the
             # visitor rather than say "0 results" (which reads like a real
             # empty catalog on first paint).
@@ -131,19 +133,21 @@ class LspWebTests(unittest.TestCase):
             self.assertNotEqual(parser.text.strip(), "0 results")
             self.assertIn("Loading", parser.text)
 
-            # Search index
-            search = json.loads((Path(tmpdir) / "search-index.json").read_text())
-            self.assertIn("isa_config", search)
-            self.assertIn("intrinsics", search)
-            self.assertIn("instructions", search)
-            self.assertTrue(len(search["intrinsics"]) > 0)
-            self.assertTrue(len(search["instructions"]) > 0)
+            # Search index shards: meta carries the ISA config + available
+            # ISAs union; the two pool shards are bare arrays.
+            meta = json.loads((Path(tmpdir) / "search-index-meta.json").read_text())
+            self.assertIn("isa_config", meta)
+            self.assertIn("available_isas", meta)
+            self.assertTrue(meta["available_isas"], "meta.available_isas is empty")
+            intrinsics = json.loads((Path(tmpdir) / "search-index-intrinsics.json").read_text())
+            instructions = json.loads((Path(tmpdir) / "search-index-instructions.json").read_text())
+            self.assertTrue(len(intrinsics) > 0)
+            self.assertTrue(len(instructions) > 0)
 
-            # Sanity: the exported index decodes to a non-empty records array
-            # and carries a known probe intrinsic so we can catch silent
-            # hydration failures that would otherwise surface as "Loading…"
-            # on the live web page.
-            intrinsic_names = {item["name"] for item in search["intrinsics"]}
+            # Sanity: the exported intrinsic shard carries a known probe so
+            # we can catch silent hydration failures that would otherwise
+            # surface as "Loading…" on the live web page.
+            intrinsic_names = {item["name"] for item in intrinsics}
             self.assertIn("_mm256_add_ps", intrinsic_names)
 
             # Intrinsic details are sharded into per-prefix chunks to avoid
@@ -167,16 +171,16 @@ class LspWebTests(unittest.TestCase):
             )
             self.assertIn("argument_preparation", arm_detail["metadata"])
             riscv_intr = next(
-                item for item in search["intrinsics"] if item["name"] == "__riscv_vadd_vv_i32m1"
+                item for item in intrinsics if item["name"] == "__riscv_vadd_vv_i32m1"
             )
             self.assertEqual(riscv_intr["display_architecture"], "RISC-V")
             riscv_detail = _load_intrinsic_detail("__riscv_vadd_vv_i32m1")
             self.assertEqual(
                 riscv_detail["url"], "https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc"
             )
-            self.assertIn("riscv:vsub.vv", [item["key"] for item in search["instructions"]])
+            self.assertIn("riscv:vsub.vv", [item["key"] for item in instructions])
             # Search index instructions have key but no measurements
-            instr = search["instructions"][0]
+            instr = instructions[0]
             self.assertIn("key", instr)
             self.assertIn("display_key", instr)
             self.assertIn("architecture", instr)

@@ -97,8 +97,18 @@ def test_write_manpages_covers_every_intrinsic(catalog: Catalog, tmp_path: Path)
 
 def test_web_export_emits_expected_artifacts(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
-    for name in ("index.html", "search-index.json", "filter_spec.json", "build_stamp.json"):
+    for name in (
+        "index.html",
+        "search-index-meta.json",
+        "search-index-instructions.json",
+        "search-index-intrinsics.json",
+        "filter_spec.json",
+        "build_stamp.json",
+    ):
         assert (tmp_path / name).is_file(), f"web export missing {name}"
+    assert not (tmp_path / "search-index.json").exists(), (
+        "legacy monolithic search-index.json must not be emitted"
+    )
 
 
 def test_web_export_includes_category_and_kind_panels(catalog: Catalog, tmp_path: Path):
@@ -136,9 +146,8 @@ def test_filter_spec_json_exposes_presets(catalog: Catalog, tmp_path: Path):
 
 def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
-    payload = json.loads((tmp_path / "search-index.json").read_text())
-    intrinsics = payload.get("intrinsics") or []
-    assert intrinsics, "search-index.json exposes no intrinsics"
+    intrinsics = json.loads((tmp_path / "search-index-intrinsics.json").read_text())
+    assert intrinsics, "search-index-intrinsics.json exposes no intrinsics"
     # Slim shape: only what the client needs for search + result-card render.
     required = {"name", "subtitle", "isa", "display_isa", "isa_families", "search_fields"}
     forbidden = {
@@ -161,7 +170,12 @@ def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path
 def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
     # Pre-compressed sidecars must be emitted for gzip-aware static serve.
-    for name in ("search-index.json", "filter_spec.json"):
+    for name in (
+        "search-index-meta.json",
+        "search-index-instructions.json",
+        "search-index-intrinsics.json",
+        "filter_spec.json",
+    ):
         assert (tmp_path / f"{name}.gz").is_file(), f"missing {name}.gz sidecar"
     # Intrinsic details are sharded — every emitted chunk carries a .gz.
     intr_chunks = list((tmp_path / "intrinsic-chunks").glob("*.json"))
@@ -172,9 +186,8 @@ def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
 
 def test_search_index_instructions_have_required_fields(catalog: Catalog, tmp_path: Path):
     export_web(catalog, tmp_path)
-    payload = json.loads((tmp_path / "search-index.json").read_text())
-    instructions = payload.get("instructions") or []
-    assert instructions, "search-index.json exposes no instructions"
+    instructions = json.loads((tmp_path / "search-index-instructions.json").read_text())
+    assert instructions, "search-index-instructions.json exposes no instructions"
     required = {"key", "mnemonic", "summary", "isa"}
     for item in instructions:
         missing = required - item.keys()

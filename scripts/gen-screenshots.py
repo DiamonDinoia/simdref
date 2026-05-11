@@ -105,7 +105,13 @@ def render_web() -> Path | None:
             # Warm cache fetches — Firefox screenshots too eagerly.
             import urllib.request
 
-            for path in ("/", "/search-index.json.gz", "/filter_spec.json.gz"):
+            for path in (
+                "/",
+                "/search-index-meta.json.gz",
+                "/search-index-instructions.json.gz",
+                "/search-index-intrinsics.json.gz",
+                "/filter_spec.json.gz",
+            ):
                 try:
                     urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5).read()
                 except Exception:

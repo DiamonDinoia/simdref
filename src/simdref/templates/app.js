@@ -468,18 +468,27 @@ function rankEntry(query, entry) {
 function buildSearchIndexes(entries) {
   searchTokenIndex = new Map();
   searchPrefixIndex = new Map();
-  entries.forEach((entry, i) => {
+  extendSearchIndexes(entries, 0);
+}
+
+/* Append ``entries`` to the existing token/prefix maps, treating their
+ * absolute position in ``searchEntries`` as ``baseIndex + offset``. Used
+ * by the Phase-2 batched intrinsic ingest to avoid the full-rebuild stall. */
+function extendSearchIndexes(entries, baseIndex) {
+  for (let k = 0; k < entries.length; k++) {
+    const entry = entries[k];
+    const idx = baseIndex + k;
     entry.searchTokens = [...new Set(entry.fields.flatMap(f => tokens(f)))];
     for (const t of entry.searchTokens) {
       if (!searchTokenIndex.has(t)) searchTokenIndex.set(t, []);
-      searchTokenIndex.get(t).push(i);
+      searchTokenIndex.get(t).push(idx);
       for (let sz = 1; sz <= Math.min(t.length, 6); sz++) {
         const pfx = t.slice(0, sz);
         if (!searchPrefixIndex.has(pfx)) searchPrefixIndex.set(pfx, []);
-        searchPrefixIndex.get(pfx).push(i);
+        searchPrefixIndex.get(pfx).push(idx);
       }
     }
-  });
+  }
 }
 
 function candidateIndexes(query) {
@@ -1508,22 +1517,54 @@ queryInput.addEventListener("keydown", (e) => {
 });
 
 /* ── Hash navigation ──────────────────────────────────────────────── */
+let intrinsicsReady = null;  // resolved by Phase-2 bootstrap
+
+function _hashEntry(key) {
+  if (!catalog || !key) return null;
+  return resultPool.find(e => e.key === key)
+    || (catalog.intrByName && catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].subtitle || "", item: catalog.intrByName[key], fields: catalog.intrByName[key].search_fields || []} : null)
+    || (catalog.instrByKey && catalog.instrByKey[key] ? {kind: "instruction", key, title: catalog.instrByKey[key].display_key || key, subtitle: catalog.instrByKey[key].summary || "", item: catalog.instrByKey[key], fields: catalog.instrByKey[key].search_fields || []} : null);
+}
+
 window.addEventListener("hashchange", () => {
   const key = decodeURIComponent(location.hash.replace(/^#/, ""));
   if (!catalog || !key) return;
-  const entry = resultPool.find(e => e.key === key)
-    || (catalog.intrByName[key] ? {kind: "intrinsic", key, title: key, subtitle: catalog.intrByName[key].subtitle || "", item: catalog.intrByName[key], fields: catalog.intrByName[key].search_fields || []} : null)
-    || (catalog.instrByKey[key] ? {kind: "instruction", key, title: catalog.instrByKey[key].display_key || key, subtitle: catalog.instrByKey[key].summary || "", item: catalog.instrByKey[key], fields: catalog.instrByKey[key].search_fields || []} : null);
-  if (entry) renderDetail(entry);
+  let entry = _hashEntry(key);
+  if (entry) { renderDetail(entry); return; }
+  // Hash may name an intrinsic that Phase 2 hasn't ingested yet.
+  if (intrinsicsReady) {
+    intrinsicsReady.then(() => {
+      const retry = _hashEntry(key);
+      if (retry) renderDetail(retry);
+    });
+  }
 });
 
-/* ── Bootstrap ────────────────────────────────────────────────────── */
+/* ── Bootstrap ──────────────────────────────────────────────────────
+ *
+ * Two-phase load:
+ *   Phase 1  — meta + filter_spec + build_stamp + instructions. These
+ *              are small (~1 MB gz total) and let us paint the UI with
+ *              the instruction pool searchable immediately.
+ *   Phase 2  — intrinsics (~1.7 MB gz). Fetched in parallel from boot,
+ *              joined into the search index in idle-time batches so the
+ *              page stays responsive while ~93 k entries hydrate.
+ */
+const _intrinsicsFetch = fetchJson("search-index-intrinsics.json").catch((err) => {
+  console.error("simdref: failed to load intrinsic search shard", err);
+  return null;
+});
+
 Promise.all([
-  fetchJson("search-index.json"),
+  fetchJson("search-index-meta.json"),
+  fetchJson("search-index-instructions.json"),
   fetchJson("filter_spec.json").catch(() => null),
   fetchJson("build_stamp.json").catch(() => null),
 ])
-  .then(([data, spec, stamp]) => {
+  .then(([meta, instructions, spec, stamp]) => {
+    const data = meta || {};
+    data.instructions = instructions || [];
+    data.intrinsics = [];  // populated in Phase 2
     catalog = data;
     // Prefer filter_spec.json (single source of truth) over embedded isa_config.
     const config = spec || data.isa_config || {};
@@ -1541,25 +1582,24 @@ Promise.all([
       metaNode.dataset.stamp = label;
       if (stale) metaNode.classList.add("stale");
     }
-    catalog.intrByName = Object.fromEntries(data.intrinsics.map(i => [i.name, i]));
+    catalog.intrByName = Object.create(null);
     catalog.instrByKey = Object.fromEntries(data.instructions.map(i => [i.key, i]));
     catalog.instrByDisplayKey = Object.fromEntries(data.instructions.map(i => [i.display_key || i.key, i]));
     catalog.instrByMnem = Object.fromEntries(data.instructions.map(i => [i.mnemonic, i]));
 
-    searchEntries = [
-      ...data.intrinsics.map(i => ({
-        kind: "intrinsic", key: i.name, title: i.name, subtitle: i.subtitle || i.description || "", item: i,
-        fields: i.search_fields || [i.name, i.description || "", i.display_isa || displayIsa(i.isa), (i.instructions || []).join(" ")],
-      })),
-      ...data.instructions.map(i => ({
-        kind: "instruction", key: i.key, title: i.display_key || i.key, subtitle: i.summary || "", item: i,
-        fields: i.search_fields || [i.display_mnemonic || i.mnemonic || "", i.display_form || i.form || "", i.summary || "", i.display_isa || displayIsa(i.isa)],
-      })),
-    ];
+    searchEntries = data.instructions.map(i => ({
+      kind: "instruction", key: i.key, title: i.display_key || i.key, subtitle: i.summary || "", item: i,
+      fields: i.search_fields || [i.display_mnemonic || i.mnemonic || "", i.display_form || i.form || "", i.summary || "", i.display_isa || displayIsa(i.isa)],
+    }));
 
     buildSearchIndexes(searchEntries);
 
-    availableIsas = [...new Set(searchEntries.flatMap(e => e.item.isa_families || []))]
+    // Seed the filter chips from the meta shard so the union of ISA
+    // families is correct from first paint, not just instruction families.
+    const seededIsas = Array.isArray(data.available_isas) && data.available_isas.length
+      ? data.available_isas
+      : [...new Set(searchEntries.flatMap(e => e.item.isa_families || []))];
+    availableIsas = [...new Set(seededIsas)]
       .sort((a, b) => (isaFamilyOrder[a] ?? 99) - (isaFamilyOrder[b] ?? 99) || a.localeCompare(b));
     enabledIsas = new Set([...defaultEnabledIsas].filter(v => availableIsas.includes(v)));
     initEnabledSubIsas();
@@ -1588,12 +1628,16 @@ Promise.all([
     // Build-stamp badge text is set above if a stamp is present; only fall
     // back to the catalog-size summary when no stamp was emitted.
     if (!metaNode.dataset.stamp) {
-      metaNode.textContent = `${data.intrinsics.length} intrinsics \u00b7 ${data.instructions.length} instructions`;
+      // Intrinsic count is filled in by Phase 2 once the shard arrives.
+      metaNode.textContent = `${data.instructions.length} instructions`;
     }
 
     const fromHash = decodeURIComponent(location.hash.replace(/^#/, ""));
     if (fromHash) queryInput.value = fromHash;
     renderResults();
+
+    // Phase 2: fold intrinsics into the search index without blocking.
+    intrinsicsReady = _ingestIntrinsics(metaNode);
   })
   .catch((err) => {
     // Fetch failure (CORS, 404, gzip misconfig) should not leave "Loading..." up forever.
@@ -1605,6 +1649,79 @@ Promise.all([
       detailEmpty.style.display = "";
     }
   });
+
+/* Phase 2 — fold the intrinsic shard into searchEntries / search index in
+ * idle-time batches so the main thread keeps responding to scrolls and
+ * keystrokes. Resolves once every intrinsic is searchable. */
+function _ingestIntrinsics(metaNode) {
+  const BATCH = 5000;
+  const schedule = window.requestIdleCallback
+    ? (cb) => window.requestIdleCallback(cb, {timeout: 250})
+    : (cb) => setTimeout(cb, 0);
+
+  // Badge: surface to the user that intrinsics are still streaming in.
+  let badge = null;
+  const savedStamp = metaNode ? metaNode.dataset.stamp || "" : "";
+  if (metaNode) {
+    badge = document.createElement("span");
+    badge.className = "meta-loading";
+    badge.style.marginLeft = "0.5rem";
+    badge.style.color = "var(--text-muted, #888)";
+    badge.textContent = "loading intrinsics…";
+    metaNode.appendChild(badge);
+  }
+
+  return _intrinsicsFetch.then(intrinsics => new Promise(resolve => {
+    if (!Array.isArray(intrinsics) || !intrinsics.length) {
+      if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+      resolve();
+      return;
+    }
+    catalog.intrinsics = intrinsics;
+    for (const item of intrinsics) catalog.intrByName[item.name] = item;
+
+    let cursor = 0;
+    const total = intrinsics.length;
+    const pump = () => {
+      const stop = Math.min(cursor + BATCH, total);
+      const batch = [];
+      for (let i = cursor; i < stop; i++) {
+        const item = intrinsics[i];
+        batch.push({
+          kind: "intrinsic",
+          key: item.name,
+          title: item.name,
+          subtitle: item.subtitle || item.description || "",
+          item,
+          fields: item.search_fields || [item.name, item.description || "", item.display_isa || displayIsa(item.isa), (item.instructions || []).join(" ")],
+        });
+      }
+      const base = searchEntries.length;
+      for (const e of batch) searchEntries.push(e);
+      extendSearchIndexes(batch, base);
+      cursor = stop;
+
+      // Re-render if the user is already typing or the visible list is
+      // short enough that new hits would actually show up.
+      visibleSet = null;
+      if ((queryInput && queryInput.value) || resultPool.length < 100) {
+        renderResults();
+      }
+
+      if (cursor < total) {
+        schedule(pump);
+      } else {
+        if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+        if (metaNode && !metaNode.dataset.stamp) {
+          metaNode.textContent = `${total} intrinsics · ${(catalog.instructions || []).length} instructions`;
+        }
+        renderResults();
+        resolve();
+      }
+    };
+    schedule(pump);
+  }));
+}
 
 /* ── Annotate tab ────────────────────────────────────────────────────
  * Client-side port of src/simdref/annotate.py. Reuses the existing

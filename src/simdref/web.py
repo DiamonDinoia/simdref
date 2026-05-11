@@ -3,7 +3,13 @@
 Generates a self-contained single-page application (``index.html``) plus a
 two-tier data split:
 
-* **search-index.json** -- compact search data loaded at startup (~400 KB gzipped).
+* **search-index-meta.json** -- small bootstrap (catalog stamp, ISA config,
+  precomputed ``available_isas``). Fetched first.
+* **search-index-instructions.json** -- the ``instructions`` array
+  (~600 KB gzipped). Drives first paint.
+* **search-index-intrinsics.json** -- the ``intrinsics`` array
+  (~1.7 MB gzipped). Loaded in parallel and folded into the search
+  index after first paint.
 * **detail-chunks/{PREFIX}.json** -- full instruction details (operands,
   measurements) loaded on demand when the user selects a result.
 
@@ -175,19 +181,22 @@ def _filter_spec_for_catalog(catalog: Catalog) -> FilterSpec:
 
 
 def _isa_config() -> dict:
-    """Legacy isa_config block embedded in ``search-index.json``."""
+    """Legacy isa_config block embedded in the search-index meta shard."""
     payload = FilterSpec().to_json()
     payload.pop("categories", None)
     return payload
 
 
-def _search_payload(catalog: Catalog) -> dict:
-    """Compact search-only payload for fast initial load."""
-    # Pre-compute perf summaries for instructions (keyed by instruction key).
-    instr_perf: dict[str, tuple[str, str]] = {}
+def _instr_perf_map(catalog: Catalog) -> dict[str, tuple[str, str]]:
+    perf: dict[str, tuple[str, str]] = {}
     for item in catalog.instructions:
         lat, cpi = variant_perf_summary(item.arch_details)
-        instr_perf[item.db_key] = (lat, cpi)
+        perf[item.db_key] = (lat, cpi)
+    return perf
+
+
+def _search_intrinsics(catalog: Catalog, instr_perf: dict[str, tuple[str, str]]) -> list[dict]:
+    """Slim intrinsic entries for the client-side search index."""
 
     def _intrinsic_perf(item) -> tuple[str, str]:
         """Best lat/cpi from the primary linked instruction."""
@@ -204,7 +213,7 @@ def _search_payload(catalog: Catalog) -> dict:
                 return key
         return (item.instructions or [""])[0]
 
-    intrinsics_out = []
+    out = []
     for item in catalog.intrinsics:
         lat, cpi = _intrinsic_perf(item)
         fields = _intrinsic_search_fields(item)
@@ -236,13 +245,17 @@ def _search_payload(catalog: Catalog) -> dict:
         )
         if category:
             entry["category"] = category
-        intrinsics_out.append(entry)
+        out.append(entry)
+    return out
 
-    instructions_out = []
+
+def _search_instructions(catalog: Catalog, instr_perf: dict[str, tuple[str, str]]) -> list[dict]:
+    """Slim instruction entries for the client-side search index."""
+    out = []
     for item in catalog.instructions:
         lat, cpi = instr_perf[item.db_key]
         fields = _instruction_search_fields(item)
-        instructions_out.append(
+        out.append(
             {
                 "key": item.db_key,
                 "mnemonic": item.mnemonic,
@@ -265,13 +278,30 @@ def _search_payload(catalog: Catalog) -> dict:
                 "search_fields": fields,
             }
         )
+    return out
 
+
+def _search_meta(
+    catalog: Catalog,
+    intrinsics_out: list[dict],
+    instructions_out: list[dict],
+) -> dict:
+    """Bootstrap shard: catalog stamp + ISA config + precomputed isa list.
+
+    The ``available_isas`` field is the sorted union of ``isa_families``
+    across both pools so the client can populate filter chips before the
+    intrinsic shard arrives.
+    """
+    isas: set[str] = set()
+    for entry in intrinsics_out:
+        isas.update(entry.get("isa_families") or [])
+    for entry in instructions_out:
+        isas.update(entry.get("isa_families") or [])
     return {
         "generated_at": catalog.generated_at,
         "sources": [asdict(source) for source in catalog.sources],
         "isa_config": _isa_config(),
-        "intrinsics": intrinsics_out,
-        "instructions": instructions_out,
+        "available_isas": sorted(isas),
     }
 
 
@@ -391,7 +421,9 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
 
     Outputs:
     * ``index.html`` -- assembled SPA
-    * ``search-index.json`` -- compact search data
+    * ``search-index-meta.json`` -- bootstrap stamp + ISA config + available_isas
+    * ``search-index-instructions.json`` -- instruction search entries
+    * ``search-index-intrinsics.json`` -- intrinsic search entries
     * ``filter_spec.json`` -- shared ISA/category facets (web + CLI)
     * ``build_stamp.json`` -- version/freshness metadata
     * ``detail-chunks/{PREFIX}.json`` -- instruction detail chunks
@@ -407,7 +439,20 @@ def export_web(catalog: Catalog, web_dir: Path) -> None:
 
     (web_dir / "index.html").write_text(_load_template())
 
-    _write_json(web_dir / "search-index.json", _search_payload(catalog))
+    instr_perf = _instr_perf_map(catalog)
+    instructions_out = _search_instructions(catalog, instr_perf)
+    intrinsics_out = _search_intrinsics(catalog, instr_perf)
+    _write_json(
+        web_dir / "search-index-meta.json",
+        _search_meta(catalog, intrinsics_out, instructions_out),
+    )
+    _write_json(web_dir / "search-index-instructions.json", instructions_out)
+    _write_json(web_dir / "search-index-intrinsics.json", intrinsics_out)
+    # Remove the legacy monolithic shard if a previous build emitted it.
+    for stale in ("search-index.json", "search-index.json.gz"):
+        legacy = web_dir / stale
+        if legacy.exists():
+            legacy.unlink()
 
     filter_spec = _filter_spec_for_catalog(catalog)
     _write_json(web_dir / "filter_spec.json", filter_spec.to_json())
