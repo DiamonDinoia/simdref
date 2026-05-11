@@ -152,7 +152,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install package and test dependencies
-        run: uv pip install -e . pytest
+        run: uv pip install -e . pytest playwright
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
 
       # actions/upload-artifact preserves path structure when multiple
       # paths are listed, so catalog.msgpack / catalog.db land back at
@@ -365,7 +368,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install package and test dependencies
-        run: uv pip install -e . pytest
+        run: uv pip install -e . pytest playwright
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
 
       - name: Pull freshly-published data-latest
         run: simdref update --from-release --man-dir "$RUNNER_TEMP/man"
