@@ -207,8 +207,18 @@ function _pushBucket(map, key, i) {
 
 function buildBuckets() {
   byKind.clear(); byFamily.clear(); byCategory.clear(); byArmArch.clear();
-  for (let i = 0; i < searchEntries.length; i++) {
-    const e = searchEntries[i];
+  extendBuckets(searchEntries, 0);
+  bucketsBuilt = true;
+}
+
+/* Append ``entries`` to the kind/family/category/arm-arch buckets at
+ * absolute positions ``baseIndex + offset``. Used by Phase-2 intrinsic
+ * ingest so newly-arrived entries are reachable via the kind filter
+ * without rebuilding from scratch. */
+function extendBuckets(entries, baseIndex) {
+  for (let k = 0; k < entries.length; k++) {
+    const e = entries[k];
+    const i = baseIndex + k;
     _pushBucket(byKind, e.kind, i);
     const fams = e.item.isa_families || [];
     if (fams.length === 0) _pushBucket(byFamily, "__none", i);
@@ -218,7 +228,6 @@ function buildBuckets() {
     const arch = e.item.arm_arch || "__none";
     _pushBucket(byArmArch, arch, i);
   }
-  bucketsBuilt = true;
 }
 
 function _unionKeys(map, keys) {
@@ -1699,6 +1708,7 @@ function _ingestIntrinsics(metaNode) {
       const base = searchEntries.length;
       for (const e of batch) searchEntries.push(e);
       extendSearchIndexes(batch, base);
+      if (bucketsBuilt) extendBuckets(batch, base);
       cursor = stop;
 
       // Re-render if the user is already typing or the visible list is
