@@ -68,15 +68,27 @@ jobs:
       - name: Re-run coverage audit
         run: python tools/audit_coverage.py fetch
 
-      - name: Detect drift
+      - name: Detect material drift
         id: drift
+        # Only treat drift as PR-worthy when a source actually crosses its
+        # threshold (pass <-> fail) versus the committed snapshot. Cosmetic
+        # upstream count jitter that moves no source across its floor is
+        # ignored, so we stop opening a PR after almost every main run.
         run: |
-          if ! git diff --quiet docs/coverage/; then
+          if git diff --quiet docs/coverage/; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "no coverage drift"
+            exit 0
+          fi
+          material=$(git show HEAD:docs/coverage/summary.json \
+            | python tools/audit_coverage.py gate --base -)
+          if [ "$material" = "true" ]; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
-            echo "=== coverage drift detected ==="
+            echo "=== material coverage drift (threshold crossing) ==="
             git --no-pager diff docs/coverage/ | head -200
           else
             echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "cosmetic coverage jitter only (no threshold crossing) — skipping PR"
           fi
 
       - name: Open PR on drift

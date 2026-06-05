@@ -466,6 +466,54 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def _threshold_status(
+    summary: dict, thresholds: dict[str, float], default: float
+) -> dict[str, bool]:
+    """Map each source -> whether it meets its threshold.
+
+    Sources whose coverage is unknown (``None`` — e.g. a transient fetch
+    failure) are omitted, so they never count as a threshold crossing.
+    """
+    status: dict[str, bool] = {}
+    for sid, data in summary.get("sources", {}).items():
+        cov = data.get("coverage")
+        if isinstance(cov, float):
+            status[sid] = cov >= thresholds.get(sid, default)
+    return status
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Decide whether coverage drift is *material* (a threshold crossing).
+
+    Prints ``true`` if any source's pass/fail status against its threshold
+    flipped relative to the committed baseline, else ``false``. Used by the
+    coverage-audit workflow to avoid opening a PR for cosmetic count jitter
+    that does not move any source across its floor.
+    """
+    if not SUMMARY_PATH.exists():
+        print("false")
+        print(f"no summary at {SUMMARY_PATH}", file=sys.stderr)
+        return 0
+    current = json.loads(SUMMARY_PATH.read_text())
+    base_text = sys.stdin.read() if args.base == "-" else Path(args.base).read_text()
+    base = json.loads(base_text) if base_text.strip() else {"sources": {}}
+
+    default_th = args.threshold if args.threshold is not None else _default_threshold()
+    thresholds = _load_thresholds()
+    cur_status = _threshold_status(current, thresholds, default_th)
+    base_status = _threshold_status(base, thresholds, default_th)
+
+    crossings = [
+        f"{sid}: {base_status.get(sid)} -> {cur_status[sid]}"
+        for sid in cur_status
+        if sid in base_status and base_status[sid] != cur_status[sid]
+    ]
+    print("true" if crossings else "false")
+    for line in crossings:
+        print(f"threshold crossing {line}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="simdref upstream coverage audit")
     parser.add_argument("--threshold", type=float, default=None, help="Coverage floor (0–1).")
@@ -479,6 +527,17 @@ def main(argv: list[str] | None = None) -> int:
 
     sub_diff = sub.add_parser("diff", help="Exit non-zero if any source is below threshold.")
     sub_diff.set_defaults(func=cmd_diff)
+
+    sub_gate = sub.add_parser(
+        "gate",
+        help="Print 'true' if drift crosses a threshold vs a baseline summary, else 'false'.",
+    )
+    sub_gate.add_argument(
+        "--base",
+        required=True,
+        help="Baseline summary.json to compare against ('-' reads from stdin).",
+    )
+    sub_gate.set_defaults(func=cmd_gate)
 
     args = parser.parse_args(argv)
     return args.func(args)
