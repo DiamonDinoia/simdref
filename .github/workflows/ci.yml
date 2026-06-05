@@ -318,8 +318,13 @@ jobs:
 
   deploy-pages:
     needs: publish-data
+    # The github-pages environment only permits deploys from main, so skip this
+    # job on tag-ref runs (e.g. the per-release data build that release.yml
+    # dispatches on v<version>) — it would be rejected at the environment gate
+    # and redden the run. Pages still deploys on every push to main.
     if: >-
       github.workflow == 'CI'
+      && !startsWith(github.ref, 'refs/tags/')
       && (
         github.event_name == 'release'
         || (github.event_name == 'push' && github.ref == 'refs/heads/main')
