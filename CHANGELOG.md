@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.0.3] — 2026-04-29
+
 - **`simdref annotate`** — annotate a `.s` assembly file with per-instruction
   summaries and latency/CPI figures, emitting a `.sa` file that still
   assembles. `--performance` and `--docs` are on by default; `--arch` pins
@@ -15,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ci:** fix runtime-validation step that still checked for the removed
   monolithic `web/intrinsic-details.json`; it now validates the per-prefix
   chunks under `web/intrinsic-chunks/`.
+- **TUI:** respect kind toggles inside `_fts_search`; show no-sub-family
+  instructions and bias ranking by query kind.
+
+## [0.0.1] — 2026-04-28
+
+- **`simdref profile`** documented alongside the bare-query CLI form in the
+  README.
+- **Codex plugin** marketplace and `asm-analysis` skill added, single-sourced
+  from the canonical `skill/` tree via `scripts/build_skill_bundles.py`.
+- **TUI:** ISA presets (`intel`/`arm32`/`arm64`/`riscv`) now include
+  instructions, not just intrinsics.
+- **CLI:** report progress during first-run catalog bootstrap; bare-query
+  dispatch resolves `--arch` and skips the TUI on an exact match.
+- **packaging:** drop the stray `simdref-build-skills` console script.
 
 ## [0.0.0] — 2026-04-22 — initial public release
 
@@ -46,3 +62,5 @@ support is in place:
   is tagged `measured` or `modeled` so the two never mix.
 
 [0.0.0]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.0
+[0.0.1]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.1
+[0.0.3]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.3

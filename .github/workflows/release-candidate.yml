@@ -234,10 +234,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v${{ inputs.version }}"
+          # Slice out only this version's section from CHANGELOG.md so the
+          # release page shows the relevant notes, not the whole file.
+          notes=""
           if [ -f CHANGELOG.md ]; then
+            notes=$(python - "${{ inputs.version }}" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          # Match the "## [<version>]" heading through to the next "## " heading
+          # (or the reference-links block / end of file).
+          pat = re.compile(
+              r"^##\s*\[" + re.escape(version) + r"\].*?(?=^##\s|\n\[[^\]]+\]:|\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          m = pat.search(text)
+          sys.stdout.write(m.group(0).strip() if m else "")
+          PY
+          )
+          fi
+          if [ -n "$notes" ]; then
+            printf '%s\n' "$notes" > release-notes.md
             gh release create "$tag" \
               --title "simdref $tag" \
-              --notes-file CHANGELOG.md \
+              --notes-file release-notes.md \
               dist/*
           else
             gh release create "$tag" \

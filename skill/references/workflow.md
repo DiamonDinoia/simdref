@@ -321,6 +321,34 @@ to `profile ingest` (the `profile run` wrapper does this for you).
 
 When hot loops are known, skip §3 and annotate just the loop bodies in §4.
 
+### 2b.1. Per-IP region binning (when you need cycle share by source region)
+
+`simdref profile run` ranks loops, but for higher-level regions (named
+phases of a multi-stage hot path: scatter / dispatch / unpermute, etc.)
+you usually want a flat per-IP histogram resolved through `addr2line`.
+Use this when the hot path spans multiple inlined helpers and you need
+to report "phase X = N% cycles":
+
+```bash
+perf script -i report/perf.data \
+  | awk '/cycles:u/{print $4,$5,$6}' \
+  | sort | uniq -c | sort -rn | head -200 \
+  | awk '{print $3}' \
+  | xargs -n1 addr2line -i -f -C -e <binary>
+```
+
+Group the resolved IPs into named regions (HIST_FAST, INPUT_SCATTER,
+PER_LEAF_DISPATCH, …) and report a cycle share per region. Re-run after
+each shipped optimisation and use the post-optimisation shares to pick
+the next candidate (EV = share × plausible shave; discard < 5 % EV on
+every scenario).
+
+**Caveat for hybrid CPUs:** the perf adapter normalises Intel hybrid
+PMU names but `perf script` still mixes core/atom samples. If you
+benched pinned to a single P-core (`taskset -c 2`), filter samples by
+`cpu` column or re-record with `--cpu 2`, otherwise atom-core
+mispredicts pollute the histogram.
+
 ______________________________________________________________________
 
 ## 3. Region selection (MANDATORY above ~500 lines)
@@ -389,6 +417,149 @@ If simdref and llvm-mca disagree on CPI by >2×, flag the disagreement to the us
 
 ______________________________________________________________________
 
+## 6a. Codegen audit (MANDATORY before benching any candidate)
+
+Annotation tells you what *should* happen; the binary tells you what
+*does*. Always inspect the changed symbol after rebuilding:
+
+```bash
+objdump -d --no-show-raw-insn --demangle \
+        --start-address=<begin> --stop-address=<end> \
+        <binary> > /tmp/codegen.s
+```
+
+Confirm the intended instruction is present (e.g. `prefetchw` for an
+RFO-hiding `__builtin_prefetch(p, 1, 0)`, `vfmadd*` for FMA fusion,
+`vpgatherdd` for a gather, NT-store `vmovntpd` for streaming writes).
+If the intrinsic the proposal called for did not survive the optimiser
+(common with `__builtin_expect`, `[[likely]]`/`[[unlikely]]`, or
+small-loop unrolling that hides the intrinsic), say so and discard the
+candidate before benching.
+
+### 6a.1. Inlining-size delta gate
+
+Inlining heuristics react to small source changes; a 5 %+ symbol-size
+swing flags a possible icache or hot-path inlining artefact that will
+contaminate the benchmark. Always pair-compare the changed symbols:
+
+```bash
+nm --print-size --demangle <binary> | sort -k1 > /tmp/syms.layer.txt
+nm --print-size --demangle <baseline> | sort -k1 > /tmp/syms.base.txt
+diff /tmp/syms.base.txt /tmp/syms.layer.txt | grep -E '^[<>]'
+```
+
+> **5 % rule.** If any operator()/inner-loop symbol grows or shrinks
+> by more than 5 %, treat any benchmark delta as suspect until you
+> understand the codegen change. Often the fix is to nudge inlining
+> back (e.g. `__attribute__((flatten))`, splitting a helper) before
+> ascribing gains to the algorithmic change.
+
+______________________________________________________________________
+
+## 6b. Memory-traffic gate (mandatory for memory-bound proposals)
+
+Whenever the proposal is justified by cache / RFO / prefetch behaviour,
+confirm with hardware counters before declaring victory. Don't trust
+"it should reduce RFO" — measure it.
+
+```bash
+perf stat -x, -e \
+  cycles:u,instructions:u,\
+l2_rqsts.rfo_miss:u,l1d.replacement:u,\
+mem_load_retired.l3_miss:u \
+  -- taskset -c 2 <binary> <args>
+```
+
+Run on both baseline and candidate (paired, same ordering as §6c).
+A prefetch-for-write should show `l2_rqsts.rfo_miss` dropping; a layout
+change should show `l1d.replacement` falling. If the counter doesn't
+move in the predicted direction, the proposal's mechanism is wrong
+even when wallclock improves — investigate before committing.
+
+Event names vary by uarch: use `perf list` and prefer Intel
+`l2_rqsts.*` / `mem_load_retired.*`, AMD `l2_request_g1.*` /
+`l3_lookup_state.*`, Arm `L1D_CACHE_REFILL` / `L2D_CACHE_REFILL`. On
+hybrid Intel parts (Alder/Meteor/Arrow Lake) the event is
+`cpu_core/.../u`; pin with `--cpu 2` or `taskset -c 2` so the counter
+reads from the P-core only.
+
+______________________________________________________________________
+
+## 6c. Paired-interleaved benchmark protocol (MANDATORY for any ship/discard call)
+
+Three-run benches and "build A, bench A, build B, bench B" sequences
+are the two most common ways performance work goes wrong. Always:
+
+1. **Pair-build first.** Stash the candidate diff, build the baseline
+   binary into a side path, un-stash, build the candidate into a
+   different side path. Both binaries persist; the build environment
+   matches because they share the same `compile_commands.json`.
+
+   ```bash
+   git stash -u
+   cmake --build <build> --target <bin> -j
+   cp <build>/<bin> /tmp/perf_baseline
+   git stash pop
+   cmake --build <build> --target <bin> -j
+   cp <build>/<bin> /tmp/perf_candidate
+   ```
+
+1. **Interleave runs.** Alternate baseline and candidate inside a
+   single loop (≥ 7 paired runs of ≥ 10 s each, extend to 14 if any
+   per-scenario delta is within ±1 %):
+
+   ```bash
+   for run in $(seq 1 7); do
+     echo "=== run $run ===" >> base.txt
+     taskset -c 2 /tmp/perf_baseline <args>  >> base.txt
+     echo "=== run $run ===" >> cand.txt
+     taskset -c 2 /tmp/perf_candidate <args> >> cand.txt
+   done
+   ```
+
+1. **Pin to a single P-core.** `taskset -c 2` (any single P-core
+   index) avoids hybrid-scheduler migration noise and atom/P-core
+   mispredicts. Disable turbo or accept the wider variance honestly.
+
+   **`taskset` does not isolate memory bandwidth.** Concurrent
+   compiles, container builds, or any heavy memory-touching workload
+   on *other* cores will inflate L3/DRAM contention on a memory-bound
+   benchmark and skew the paired delta — sometimes by tens of
+   percent. Before benching, audit the system:
+
+   ```bash
+   ps -eLo pid,tid,psr,comm,pcpu --sort=-pcpu | awk 'NR==1 || $5+0>10' | head
+   ```
+
+   If anything heavy is running (cc1plus, cicc, ld.lld, linkers,
+   container runtimes, browsers in fullscreen video), pause the
+   bench and wait. `cgroups` / `systemd-run --slice` isolation works
+   for CPU but not for shared LLC / memory controller bandwidth.
+
+1. **Paired-delta statistics.** Compute paired-delta median and
+   trimmed mean (drop the slowest 1–2 paired pairs only with explicit
+   per-run paired evidence of thermal throttling — never reject by
+   eyeballing the candidate column alone). Rank by paired delta, not
+   absolute throughput.
+
+1. **Ship rule (suggested default).** Δ ≥ +1 % paired-median on at
+   least one scenario; no regression > 1 % on any other. Below that
+   threshold, the change is in the noise.
+
+### Why not 3 runs
+
+A 3-run delta has ≥ 50 % chance of a wrong sign on a 1 % effect under
+normal P-core variance. ≥ 7 runs lets paired-delta see through it; 14
+when ambiguous.
+
+### Why not non-paired builds
+
+Different inlining heuristics fire across runs (PGO state, build
+fingerprinting, even ASLR-influenced layout decisions). Pair-build
+once and reuse the binaries; don't `make clean && make` between runs.
+
+______________________________________________________________________
+
 ## 7. Propose
 
 Structured, no raw NDJSON:
@@ -417,3 +588,83 @@ ______________________________________________________________________
 ## 10. Simdref limitations and bug reporting
 
 - always verify that simdref is correct and if you spot a bug, discrepancy, missing feature, missing annotation, or anything else that looks wrong, report it to the simdref team with a minimal repro and steps to verify. Do not silently work around or hand-wave simdref's output.
+
+______________________________________________________________________
+
+## 11. Vectorisation choice — xsimd-first
+
+When the proposal in §7 is "vectorise this loop", reach for portable
+primitives in this order:
+
+1. **xsimd / std::experimental::simd** — battle-tested, dispatches to
+   the right ISA at compile time, and writes the same intent on Arm
+   NEON/SVE, x86 AVX2/AVX-512, and Apple Silicon. Use this whenever
+   the operation has an xsimd primitive.
+1. **Compiler intrinsics directly** — only when the API is missing
+   from xsimd (e.g. masked gather/scatter, AVX-512 `compress`, NEON
+   `vqdmulhq_*`). Call the intrinsic in place; do not wrap it in a
+   one-shot helper that hides the intent.
+1. **Inline assembly** — last resort. Always justify with a perf
+   counter the intrinsic path can't reach (e.g. specific port
+   pressure, atomic ordering primitive missing in the intrinsic
+   surface).
+
+Never hand-roll a SIMD wrapper around xsimd that re-implements what
+xsimd already does — it bit-rots faster than the codebase ages.
+
+______________________________________________________________________
+
+## 12. Anti-patterns (saw these blow up real perf work)
+
+- **3-run benchmarks.** Variance ≥ effect size; sign-flips frequently.
+  Use ≥ 7 paired runs (§6c). 14 if anything ambiguous.
+- **Non-paired builds** (`make clean && make` between runs). Different
+  inlining heuristics across runs; the bench compares the inliner to
+  itself, not the patch.
+- **`[[likely]]` / `[[unlikely]]` without a codegen check.** GCC/Clang
+  treat these as soft hints and frequently emit identical code. Always
+  `objdump` the symbol before claiming the hint did anything (§6a).
+- **Descent prefetch in tree walks.** Prefetching the next node steals
+  load-port slots from the current node's compute and usually
+  *regresses* throughput. Only prefetch in clearly memory-bound loops
+  with idle ALU (the unpermute/scatter-store passes are textbook
+  cases; the descent itself rarely is).
+- **`alignas(N)` on `std::vector<T>` storage.** Does not propagate to
+  the heap allocation. Use a custom allocator (`xsimd::aligned_allocator`,
+  `boost::alignment::aligned_allocator`) or wrap with
+  `std::aligned_storage` + placement new.
+- **Hybrid-CPU `perf annotate` without an explicit event filter.**
+  `perf record` on Alder/Meteor/Arrow Lake records `cpu_core/cycles`
+  *and* `cpu_atom/cycles`; without `--event 'cycles:u'` (or pinning
+  with `taskset -c 2 perf record -C 2 …`), the IP histogram mixes
+  P-core and atom samples and the addr2line resolution is meaningless.
+- **Rebuilding the binary while `perf record` is running.** The IP→
+  symbol mapping is captured at record time but resolved lazily; a
+  new binary at the same path corrupts every later `perf script`,
+  `perf annotate`, and `addr2line` join. Either let `perf record`
+  finish first or use a side path for the candidate (§6c).
+- **`static_cast<unsigned>(double)`.** On Intel this lowers to a
+  ~5-uop sequence (compare-against-INT_MAX, branch, alternate path
+  for OOR safety). For inputs known to fit signed range, cast to
+  `int32_t` / `int64_t` first then to `unsigned`; the signed convert
+  is one `vcvttsd2si` and the unsigned reinterpret is free.
+- **Trusting wallclock without a memory-traffic counter check** (§6b)
+  on memory-bound proposals. A neutral `l2_rqsts.rfo_miss` delta with
+  a positive wallclock delta usually means you've moved the
+  bottleneck somewhere unexpected — investigate before shipping.
+
+______________________________________________________________________
+
+## 13. Worked examples
+
+- **baobzi `bench/results.md` iter-12 — Layer A** — fused OOD into the
+  L9 quantize loop, replacing a `static_cast<unsigned>(double)` chain
+  with signed-convert + unsigned-compare. ~7 cycles/axis saved on the
+  descent, +24-31 % wallclock on 1D/2D bench scenarios. Demonstrates
+  §6a (codegen check), §12's `static_cast<unsigned>(double)`
+  anti-pattern, and the §6c paired-interleaved bench protocol.
+- **baobzi `bench/results.md` iter-12 — Layer P** — UNPERMUTE
+  prefetch-for-write hides RFO on the random `res[perm[dst]]` store.
+  Demonstrates §6b (`l2_rqsts.rfo_miss` drop) and the rule that
+  prefetch belongs in memory-bound loops with idle ALU, not in the
+  ALU-bound descent.

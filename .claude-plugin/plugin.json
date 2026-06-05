@@ -8,5 +8,6 @@
   },
   "license": "GPL-3.0-or-later",
   "repository": "https://github.com/DiamonDinoia/simdref",
-  "homepage": "https://github.com/DiamonDinoia/simdref"
+  "homepage": "https://github.com/DiamonDinoia/simdref",
+  "skills": "./skills/"
 }

@@ -69,9 +69,11 @@ jobs:
           import os, pathlib, re
           stamp = os.environ["STAMP"]
           # Strip any existing dev-release marker (e.g. '-dev', '.dev0',
-          # '.devN') from the tracked version before appending our stamp.
-          # Master carries '0.0.0-dev' so without this the result would be
-          # '0.0.0-dev.dev<stamp>', which is not valid PEP 440.
+          # '.devN') from the tracked version before appending our stamp,
+          # so a tracked '0.0.3.dev0' would not become an invalid
+          # '0.0.3.dev0.dev<stamp>'. The in-package __version__ derives from
+          # the wheel metadata (see src/simdref/__init__.py), so stamping
+          # pyproject.toml alone fixes both the metadata and runtime version.
           DEV_SUFFIX_RE = re.compile(r'(?:[-.]dev\d*)+$')
           def stamp_version(v: str) -> str:
               return f"{DEV_SUFFIX_RE.sub('', v)}.dev{stamp}"
@@ -88,17 +90,6 @@ jobs:
           if n != 1:
               raise SystemExit("failed to stamp version in pyproject.toml")
           pyproject.write_text(new_text)
-
-          init = pathlib.Path("src/simdref/__init__.py")
-          init.write_text(
-              re.sub(
-                  r'^__version__ = "([^"]+)"',
-                  lambda m: f'__version__ = "{stamp_version(m.group(1))}"',
-                  init.read_text(),
-                  count=1,
-                  flags=re.M,
-              )
-          )
           PY
 
       - name: Build wheel and sdist

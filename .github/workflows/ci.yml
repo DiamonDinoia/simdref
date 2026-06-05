@@ -111,7 +111,10 @@ jobs:
       - name: Compute data tag
         id: meta
         run: |
-          VERSION=$(python -c "from simdref import __version__; print(__version__)")
+          # Read straight from pyproject.toml (the single source of truth) so
+          # the data tag never depends on the editable install's metadata being
+          # freshly rebuilt after a version bump.
+          VERSION=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
           echo "data_tag=data-v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Package perf cache
@@ -171,6 +174,9 @@ jobs:
 
       - name: Verify plugin metadata version sync
         run: python scripts/check-version-sync.py
+
+      - name: Verify skill bundles match canonical skill/
+        run: python scripts/build_skill_bundles.py --check
 
       - name: Run Python test suite
         run: python -m pytest tests

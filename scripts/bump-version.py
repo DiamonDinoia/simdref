@@ -9,9 +9,10 @@ Edits:
 - ``pyproject.toml``       [project].version
 - ``.claude-plugin/marketplace.json``  plugins[0].version
 - ``.claude-plugin/plugin.json``       .version
+- ``codex-skills/asm-analysis/.codex-plugin/plugin.json``  .version
 
 Commit the result yourself. The release-candidate workflow refuses to
-cut a tag unless all three agree.
+cut a tag unless they all agree.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
+CODEX_PLUGIN = ROOT / "codex-skills" / "asm-analysis" / ".codex-plugin" / "plugin.json"
 
 
 def _rewrite_pyproject(version: str) -> None:
@@ -59,8 +61,9 @@ def main() -> int:
     _rewrite_pyproject(version)
     _rewrite_json(MARKETPLACE, lambda d: d["plugins"][0].__setitem__("version", version))
     _rewrite_json(PLUGIN, lambda d: d.__setitem__("version", version))
+    _rewrite_json(CODEX_PLUGIN, lambda d: d.__setitem__("version", version))
 
-    print(f"bumped pyproject + .claude-plugin metadata to {version}")
+    print(f"bumped pyproject + .claude-plugin + .codex-plugin metadata to {version}")
     print(f"next: git commit -am 'chore(release): bump version to {version}'")
     return 0
 
