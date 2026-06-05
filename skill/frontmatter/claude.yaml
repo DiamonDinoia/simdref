@@ -1,29 +1,17 @@
 name: asm-analysis
 description: |-
-  Use when the user asks you to look at, analyse, profile, or optimise
-  ASSEMBLY — whether the starting point is a C/C++ source file, a CMake
-  target, a Makefile target, a compiled object file, a binary, or a raw
-  .s listing. Drives a compile → objdump/-S → simdref annotate → simdref
-  llm batch pipeline and proposes intrinsic-level replacements with cited
-  latency/CPI.
+  Use when the user asks to look at, analyse, profile, or optimise
+  ASSEMBLY or the runtime performance of compiled C/C++ — from a source
+  file, CMake/Makefile target, object file, binary, or raw .s listing.
 
-  TRIGGER when the user says things like: "look at the asm", "inspect
-  codegen", "why is this loop slow", "can this be vectorised", "what
-  intrinsic would replace this", "annotate this .s file", "profile this
-  hot path at the instruction level".
+  TRIGGER on: "look at the asm", "inspect codegen", "why is this loop
+  slow", "can this be vectorised", "what intrinsic replaces this",
+  "annotate this .s", and on any "make this faster / vectorise / tune /
+  maximise throughput" request for C/C++, including hardware-specific
+  ones ("faster on Zen4", "tune for Skylake-X", "use AVX-512", "avoid
+  the port-5 bottleneck"). Default here whenever the goal is runtime
+  performance of compiled C/C++, unless scoped to source-only
+  (readability, algorithmic complexity, API ergonomics).
 
-  TRIGGER also when the user asks to optimise, vectorise, or maximise
-  performance of C/C++ — including generic prompts like "vectorise
-  this", "make this faster", "maximise throughput", "tune this loop",
-  as well as explicitly hardware-aware ones like "make this faster on
-  Zen4", "tune for Skylake-X", "use AVX-512 here", "why is this slow on
-  Apple M2", "avoid the port-5 bottleneck", "pick the right vector
-  width". Rationale: any serious "make this faster" answer requires
-  looking at generated code and instruction costs, not just
-  source-level reasoning. Default to this pipeline whenever the user's
-  goal is runtime performance of compiled C/C++, unless they
-  explicitly scope the request to source-only (readability,
-  algorithmic complexity, API ergonomics).
-
-  DO NOT TRIGGER for pure source-level refactoring, style changes, or
-  questions about C++ semantics that don't require reading generated code.
+  DO NOT TRIGGER for pure source refactoring, style, or C++ semantics
+  questions that don't require reading generated code.
