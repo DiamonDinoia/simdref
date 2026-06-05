@@ -265,3 +265,26 @@ jobs:
               --generate-notes \
               dist/*
           fi
+
+  # The `release: published` event above is created with GITHUB_TOKEN, which
+  # by GitHub's anti-recursion rule does NOT trigger a new workflow run — so
+  # ci.yml's `publish-data` job never fires for a release and the versioned
+  # `data-v<version>` build is never cut. workflow_dispatch is one of the two
+  # events that DO cascade from GITHUB_TOKEN, so we dispatch ci.yml explicitly
+  # on the freshly-pushed tag with publish_versioned=true to produce exactly
+  # one data-v<version> build per release.
+  trigger-data-build:
+    needs: [github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch versioned data build on the release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run ci.yml \
+            --repo "${{ github.repository }}" \
+            --ref "v${{ inputs.version }}" \
+            -f publish_versioned=true
