@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.0.4] — 2026-06-05
+
+- **deps:** declare `click` as a direct dependency so a clean install can run
+  the CLI without relying on it being pulled in transitively.
+- **packaging:** derive `__version__` from installed package metadata, ending
+  the drift between the module version and `pyproject.toml`.
+- **release:** every release now publishes a versioned `data-v<version>` build
+  automatically — the release workflow dispatches the data build on the freshly
+  pushed tag, since release events created with `GITHUB_TOKEN` don't cascade.
+- **asm-analysis skill:** added paired-interleaved benchmark, codegen-audit, and
+  memory-traffic gates to the workflow; trimmed the skill description under the
+  1024-char frontmatter cap without changing what triggers it.
+- **web:** split the search index into three shards and load intrinsics lazily;
+  extend kind/family buckets when intrinsics arrive in Phase 2.
+- **catalog:** auto-update on version change; capture Intel Operation pseudocode
+  and source URL.
+
 ## [0.0.3] — 2026-04-29
 
 - **`simdref annotate`** — annotate a `.s` assembly file with per-instruction
