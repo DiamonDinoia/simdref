@@ -768,9 +768,10 @@ wheels = [
 
 [[package]]
 name = "simdref"
-version = "0.0.0.dev0"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "httpx" },
     { name = "msgpack" },
     { name = "pdfplumber" },
@@ -784,6 +785,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1,<10" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "msgpack", specifier = ">=1.0,<2" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },
