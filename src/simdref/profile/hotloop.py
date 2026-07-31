@@ -33,7 +33,9 @@ _INSTR_LINE_RE = re.compile(
     r"^\s*(?P<addr>[0-9a-fA-F]+):\s+"
     r"(?P<body>.*?)\s*$"
 )
-_MNEM_RE = re.compile(r"^\s*(?:(?:[0-9a-fA-F]{2}\s+){1,10})?(?P<mnem>[a-zA-Z][a-zA-Z0-9.]*)")
+# Byte tokens are 2-8 hex digits: x86 = one token per byte, ARM/RISC-V = the
+# whole encoding as one token (``a9bf7bfd``, ``00050513``).
+_MNEM_RE = re.compile(r"^\s*(?:(?:[0-9a-fA-F]{2,8}\s+){1,10})?(?P<mnem>[a-zA-Z][a-zA-Z0-9.]*)")
 _BRANCH_TARGET_RE = re.compile(r"\b(?P<addr>[0-9a-fA-F]+)\s+<")
 _SRC_LINE_RE = re.compile(
     r"^\s*(?P<file>[^ \t][^:]*):(?P<line>\d+)\s*(?:\(discriminator \d+\))?\s*$"
@@ -112,10 +114,43 @@ def parse_objdump(text: str) -> list[Instr]:
     pending_line: int | None = None
 
     for raw in text.splitlines():
-        sym_m = _SYMBOL_HEADER_RE.match(raw)
-        if sym_m:
-            current_symbol = sym_m.group(2)
+        m = _INSTR_LINE_RE.match(raw)
+        if m:
+            body = m.group("body")
+            mn = _MNEM_RE.match(body)
+            if not mn:
+                continue
+            try:
+                addr = int(m.group("addr"), 16)
+            except ValueError:
+                continue
+            mnem = mn.group("mnem").lower()
+            target = None
+            if mnem in _BRANCH_MNEMONICS:
+                tgt_m = _BRANCH_TARGET_RE.search(body)
+                if tgt_m:
+                    try:
+                        target = int(tgt_m.group("addr"), 16)
+                    except ValueError:
+                        target = None
+            out.append(
+                Instr(
+                    address=addr,
+                    mnemonic=mnem,
+                    target=target,
+                    symbol=current_symbol,
+                    source_file=pending_file,
+                    source_line=pending_line,
+                )
+            )
             continue
+        if raw and raw[0] not in " \t":  # symbol headers start at column 0
+            sym_m = _SYMBOL_HEADER_RE.match(raw)
+            if sym_m:
+                current_symbol = sym_m.group(2)
+                pending_file = None
+                pending_line = None
+                continue
         src_m = _SRC_LINE_RE.match(raw)
         if src_m and not raw.lstrip().startswith(("//", "#")):
             # Heuristic: objdump -S injects a "file:line" line immediately
@@ -125,39 +160,45 @@ def parse_objdump(text: str) -> list[Instr]:
                 pending_line = int(src_m.group("line"))
             except ValueError:
                 pass
+    return out
+
+
+def filter_disasm(text: str, keep: set[int]) -> str:
+    """Keep only objdump lines whose instruction address is in ``keep``.
+
+    The symbol header and the nearest preceding ``file:line`` marker are
+    emitted before a kept block so that ``annotate --track-positions`` still
+    threads symbol/source context. Everything else (section banners, cold
+    code) is dropped — this is what makes annotation O(hot loops) instead of
+    O(whole binary).
+    """
+    out: list[str] = []
+    header: str | None = None
+    pending_src: str | None = None
+    for raw in text.splitlines():
+        if raw and raw[0] not in " \t":
+            if _SYMBOL_HEADER_RE.match(raw):
+                header = raw
+                pending_src = None
             continue
         m = _INSTR_LINE_RE.match(raw)
         if not m:
-            continue
-        body = m.group("body")
-        if ":" in raw[: raw.find(body) if body else len(raw)]:
-            pass
-        mn = _MNEM_RE.match(body)
-        if not mn:
+            if _SRC_LINE_RE.match(raw) and not raw.lstrip().startswith(("//", "#")):
+                pending_src = raw
             continue
         try:
             addr = int(m.group("addr"), 16)
         except ValueError:
             continue
-        mnem = mn.group("mnem").lower()
-        target = None
-        tgt_m = _BRANCH_TARGET_RE.search(body)
-        if tgt_m and mnem in _BRANCH_MNEMONICS:
-            try:
-                target = int(tgt_m.group("addr"), 16)
-            except ValueError:
-                target = None
-        out.append(
-            Instr(
-                address=addr,
-                mnemonic=mnem,
-                target=target,
-                symbol=current_symbol,
-                source_file=pending_file,
-                source_line=pending_line,
-            )
-        )
-    return out
+        if addr not in keep:
+            continue
+        if header is not None:
+            out.append(header)
+            header = None
+        if pending_src is not None:
+            out.append(pending_src)
+        out.append(raw)
+    return "\n".join(out) + ("\n" if out else "")
 
 
 # --------------------------------------------------------------------------

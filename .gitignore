@@ -1,6 +1,12 @@
 .venv/
 .uv-cache/
-vendor/
+# vendor/ is gitignored as it is locally regenerated — except the pinned
+# RISC-V docs snapshot, which is committed on purpose: CI validation must not
+# depend on the docs.riscv.org site being healthy mid-migration.
+vendor/*
+!vendor/riscv/
+vendor/riscv/*
+!vendor/riscv/docs_pages.json
 data/derived/
 web/
 share/man/
