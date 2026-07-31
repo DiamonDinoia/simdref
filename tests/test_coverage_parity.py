@@ -84,9 +84,9 @@ def test_catalog_carries_canonical_names():
     """Anti-regression: a handful of industry-standard intrinsics and
     instructions must always be in the catalog. If any of these disappear,
     ingestion has regressed regardless of summary.json freshness."""
-    from simdref.storage import load_catalog
+    from conftest import load_any_catalog
 
-    catalog = load_catalog()
+    catalog = load_any_catalog()
     intrinsic_names = {r.name for r in catalog.intrinsics}
     instruction_mnemonics = {
         (getattr(r, "mnemonic", "") or r.key.split()[0]).upper() for r in catalog.instructions

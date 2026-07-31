@@ -41,8 +41,9 @@ def test_live_parity_all_sources():
 
     sys.path.insert(0, str(REPO_ROOT / "tools"))
     import audit_coverage  # type: ignore
+    from conftest import load_any_catalog
 
-    catalog = load_catalog()
+    catalog = load_any_catalog()
     specs = audit_coverage._source_specs(catalog)
     thresholds = _load_thresholds()
     default_th = float(os.environ.get("SIMDREF_COVERAGE_THRESHOLD", DEFAULT_THRESHOLD))

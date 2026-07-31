@@ -57,10 +57,11 @@ def web_dir(tmp_path_factory) -> Path:
     out = tmp_path_factory.mktemp("web")
     sys.path.insert(0, str(REPO_ROOT / "src"))
     try:
-        from simdref.storage import load_catalog
         from simdref.web import export_web
 
-        export_web(load_catalog(), out)
+        from conftest import load_any_catalog
+
+        export_web(load_any_catalog(), out)
     finally:
         sys.path.pop(0)
     return out

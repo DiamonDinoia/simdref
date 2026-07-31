@@ -98,7 +98,18 @@ def build_fixture_catalog(*, status: Callable[[str], None] | None = None) -> Cat
     )
 
 
-__all__ = ["FIXTURES_DIR", "build_fixture_catalog"]
+def load_any_catalog() -> Catalog:
+    """Load the repo catalog from the msgpack snapshot, or rebuild it from
+    the SQLite runtime when the snapshot has been pruned (post-v13
+    install/update footprint policy)."""
+    from simdref.storage import CATALOG_PATH, load_catalog, load_catalog_from_db
+
+    if CATALOG_PATH.exists():
+        return load_catalog()
+    return load_catalog_from_db()
+
+
+__all__ = ["FIXTURES_DIR", "build_fixture_catalog", "load_any_catalog"]
 
 # Keep dataclass 'replace' importable by tests that want to tweak catalogs.
 _ = replace
