@@ -57,11 +57,15 @@ def _canon_event(name: str) -> str:
 
 
 # Line: "<period> <event>: <ip> <sym>+0x<off> (<dso>)"
+# ``sym`` may contain spaces when the input was captured with demangling on
+# (``perf script`` demangles C++ by default), e.g.::
+#     (anonymous namespace)::make_kernel<1, true>()::{lambda...}::__invoke(...) [clone .llvm.1]+0x70
+# so it must span whitespace; greedy ``.+`` pins the *last* ``+0x<hex>``.
 _SAMPLE_RE = re.compile(
     r"^\s*(?P<period>\d+)\s+"
     r"(?P<event>\S+?):\s+"
     r"(?P<ip>[0-9a-fA-F]+)\s+"
-    r"(?P<sym>\S+?)\+0x(?P<symoff>[0-9a-fA-F]+)"
+    r"(?P<sym>.+)\+0x(?P<symoff>[0-9a-fA-F]+)"
     r"(?:\s+\((?P<dso>[^)]+)\))?\s*$"
 )
 
@@ -79,6 +83,9 @@ def _run_perf_script(perf_data: Path) -> str:
     perf = shutil.which("perf")
     if perf is None:
         raise RuntimeError("perf binary not found in PATH; cannot decode perf.data")
+    # --no-demangle: the default demangled form of C++ symbols contains
+    # spaces ("...make_kernel<1, true>()::{lambda...}"), which is ambiguous
+    # to parse and cannot be matched against nm's mangled symbol table.
     cmd = [
         perf,
         "script",
@@ -86,6 +93,7 @@ def _run_perf_script(perf_data: Path) -> str:
         str(perf_data),
         "-F",
         "period,event,ip,sym,symoff,dso",
+        "--no-demangle",
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode != 0:
@@ -119,20 +127,25 @@ def _parse_script_lines(
         )
 
 
-def _load_symbol_table(binary: Path) -> dict[str, int]:
-    """Map symbol name → file-relative VA via ``nm``."""
+def _load_symbol_table(binary: Path) -> dict[str, list[tuple[int, int | None]]]:
+    """Map symbol name → sorted ``[(file-relative VA, size|None), ...]`` via ``nm``.
+
+    Thin-LTO/PIE binaries routinely contain *duplicate* local symbols with
+    identical mangled names at different addresses (per-TU copies, e.g.
+    lambdas in anonymous namespaces), so a name may map to several VAs.
+    """
     nm = shutil.which("nm")
     if nm is None:
         return {}
     res = subprocess.run(
-        [nm, "--defined-only", str(binary)],
+        [nm, "-S", "--defined-only", str(binary)],
         capture_output=True,
         text=True,
         check=False,
     )
     if res.returncode != 0:
         return {}
-    out: dict[str, int] = {}
+    out: dict[str, list[tuple[int, int | None]]] = {}
     for line in res.stdout.splitlines():
         parts = line.split()
         if len(parts) < 3:
@@ -141,9 +154,35 @@ def _load_symbol_table(binary: Path) -> dict[str, int]:
             va = int(parts[0], 16)
         except ValueError:
             continue
+        size: int | None = None
+        if len(parts) >= 4:
+            try:
+                size = int(parts[1], 16)
+            except ValueError:
+                size = None
         sym = parts[-1]
-        out[sym] = va
+        out.setdefault(sym, []).append((va, size))
+    for cands in out.values():
+        cands.sort()
     return out
+
+
+def _resolve_va(cands: list[tuple[int, int | None]], symoff: int) -> int | None:
+    """Pick a VA for ``sym+symoff`` among same-named candidates.
+
+    A sample at ``sym+off`` must land inside its symbol, so prefer copies
+    whose size plausibly contains ``off``; identical thin-LTO clones share
+    size/code, so the lowest such VA is deterministic and equivalent.
+    """
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0][0]
+    by_va = sorted(cands)
+    sized = [va for va, size in by_va if size is not None and symoff < size]
+    if sized:
+        return sized[0]
+    return by_va[0][0]
 
 
 class _PerfAdapter:
@@ -181,7 +220,7 @@ class _PerfAdapter:
                 if os.path.basename(dso) != binary_basename and dso != binary_abs:
                     continue
                 # Prefer sym_va + symoff; fall back to raw ip if we can't resolve.
-                base = sym_va.get(sym)
+                base = _resolve_va(sym_va[sym], symoff) if sym in sym_va else None
                 addr = (base + symoff) if base is not None else ip
             else:
                 addr = ip

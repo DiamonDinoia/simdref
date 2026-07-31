@@ -48,3 +48,21 @@ def test_rank_loops_uses_cycles_weight():
     ranked = rank_loops(loops, samples, event="cycles")
     assert ranked[0].total_weight == 0.7 + 0.2
     assert ranked[0].loop_id == loops[0].loop_id
+
+
+def test_filter_disasm_keeps_only_hot_blocks():
+    from simdref.profile.hotloop import filter_disasm
+
+    text = (FIXTURES / "saxpy.objdump").read_text()
+    keep = {0x4011A4, 0x4011B2}
+    out = filter_disasm(text, keep)
+    kept_lines = [l for l in out.splitlines() if l.strip()]
+
+    # Both kept instructions survive with their addresses.
+    assert any("4011a4" in l for l in kept_lines)
+    assert any("4011b2" in l for l in kept_lines)
+    # Cold instructions are gone (match on the line prefix, not substrings:
+    # the kept `jl` target text legitimately mentions 4011a0).
+    assert not any(l.startswith("  4011a0:") for l in kept_lines)
+    # Symbol header is preserved so annotate threads the symbol name.
+    assert any("<saxpy>" in l for l in kept_lines)

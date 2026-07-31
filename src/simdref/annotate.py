@@ -42,21 +42,57 @@ class AsmLine:
     source_line: int | None = None
 
 
+# Instruction head without trailing comment: the '#' comment (and GAS-style
+# annotations) is split off with str.partition — per the regex HOWTO, string
+# methods beat a lazy re group for a fixed single-character cut.
 _INSTR_RE = re.compile(
     r"^(?P<indent>[ \t]*)"
     r"(?P<mnemonic>[A-Za-z][A-Za-z0-9_.]*)"
-    r"(?:[ \t]+(?P<operands>[^#\n]*?))?"
-    r"(?:[ \t]*(?P<comment>#.*))?$"
+    r"(?:[ \t]+(?P<operands>.*))?$"
 )
 _LABEL_RE = re.compile(r"^[ \t]*[A-Za-z_.$][\w.$]*:")
 # objdump -d line shape: optional whitespace, hex VA, ':', hex bytes, mnemonic ops.
+# Byte tokens are 2-8 hex digits: x86 emits one whitespace-separated token per
+# byte ("48 8b 45 f8"), ARM/RISC-V emit the whole encoding as one token
+# ("a9bf7bfd" / "00050513").
 _OBJDUMP_INSTR_RE = re.compile(
     r"^\s*(?P<addr>[0-9a-fA-F]+):\s+"
-    r"(?:(?:[0-9a-fA-F]{2}\s+){1,10})?"
+    r"(?:(?:[0-9a-fA-F]{2,8}\s+){1,10})?"
     r"(?P<rest>\S.*?)\s*$"
 )
 # objdump -S injects "file:line" comment lines before the instruction block.
 _OBJDUMP_SRC_RE = re.compile(r"^\s*(?P<file>[^ \t/][^:]*):(?P<line>\d+)\s*$")
+
+
+def _parse_objdump_instr(line: str) -> tuple[int, str] | None:
+    """Match an ``objdump -d`` instruction line: ``<hexaddr>: [bytes] mnemonic ...``.
+
+    Returns ``(address, rest)`` where ``rest`` starts at the mnemonic, or None
+    when the line is not objdump-shaped (e.g. a column-0 numeric local label
+    ``1:`` does not match).
+    """
+    # Cheap str gates before the regex (HOWTO: "use string methods"): objdump
+    # never starts an instruction line at column 0 (GAS local labels ``1:``
+    # do), addresses start with a hex char, and the mandatory ':' sits within
+    # the first 24 columns.
+    if not line or line[0] not in " \t":
+        return None
+    bare = line.lstrip(" \t")
+    if not bare or bare[0] not in "0123456789abcdefABCDEF" or ":" not in bare[:24]:
+        return None
+    obj_m = _OBJDUMP_INSTR_RE.match(line)
+    if not obj_m:
+        return None
+    try:
+        return int(obj_m.group("addr"), 16), obj_m.group("rest")
+    except ValueError:
+        return None
+
+
+def _split_comment(text: str) -> tuple[str, str]:
+    """Split AT&T ``#`` trailing comment off; returns (head, comment)."""
+    head, sep, comment = text.partition("#")
+    return head, (sep + comment if sep else "")
 
 
 def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
@@ -68,17 +104,16 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
         return AsmLine(LineKind.COMMENT, stripped)
     if bare.startswith("."):
         return AsmLine(LineKind.DIRECTIVE, stripped)
+    if bare.startswith("Disassembly of "):
+        # objdump section banner: "Disassembly of section .text:"
+        return AsmLine(LineKind.COMMENT, stripped)
 
-    address: int | None = None
     if track_positions:
-        obj_m = _OBJDUMP_INSTR_RE.match(stripped)
-        if obj_m:
-            try:
-                address = int(obj_m.group("addr"), 16)
-            except ValueError:
-                address = None
-            rest = obj_m.group("rest")
-            m = _INSTR_RE.match(rest)
+        obj = _parse_objdump_instr(stripped)
+        if obj is not None:
+            address, rest = obj
+            head, comment = _split_comment(rest)
+            m = _INSTR_RE.match(head)
             if m:
                 return AsmLine(
                     kind=LineKind.INSTRUCTION,
@@ -86,7 +121,7 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
                     indent=(stripped[: stripped.find(rest)] if rest in stripped else ""),
                     mnemonic=m.group("mnemonic") or "",
                     operands=(m.group("operands") or "").strip(),
-                    trailing_comment=(m.group("comment") or "").strip(),
+                    trailing_comment=comment.strip(),
                     address=address,
                 )
         # In objdump mode, any non-matching line is an objdump header,
@@ -98,7 +133,27 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
     if _LABEL_RE.match(stripped):
         return AsmLine(LineKind.LABEL, stripped)
 
-    m = _INSTR_RE.match(stripped)
+    # objdump-style input (workflow §1d: `objdump -d ... > file.s`) is a
+    # first-class input even without --track-positions: strip the leading
+    # "  <hexaddr>:\t" (and any raw bytes column) so the mnemonic parses.
+    obj = _parse_objdump_instr(stripped)
+    if obj is not None:
+        address, rest = obj
+        head, comment = _split_comment(rest)
+        m = _INSTR_RE.match(head)
+        if m:
+            return AsmLine(
+                kind=LineKind.INSTRUCTION,
+                raw=stripped,
+                indent=(stripped[: stripped.find(rest)] if rest in stripped else ""),
+                mnemonic=m.group("mnemonic") or "",
+                operands=(m.group("operands") or "").strip(),
+                trailing_comment=comment.strip(),
+                address=address,
+            )
+
+    head, comment = _split_comment(stripped)
+    m = _INSTR_RE.match(head)
     if not m:
         return AsmLine(LineKind.COMMENT, stripped)
     return AsmLine(
@@ -107,8 +162,8 @@ def parse_asm_line(line: str, *, track_positions: bool = False) -> AsmLine:
         indent=m.group("indent") or "",
         mnemonic=m.group("mnemonic") or "",
         operands=(m.group("operands") or "").strip(),
-        trailing_comment=(m.group("comment") or "").strip(),
-        address=address,
+        trailing_comment=comment.strip(),
+        address=None,
     )
 
 
@@ -614,9 +669,23 @@ def _annotate_instruction(
     parsed: AsmLine,
     opts: AnnotateOptions,
     conn: sqlite3.Connection,
+    lookup_cache: dict[str, list[InstructionRecord]] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Return the rendered output line and an optional JSON record."""
-    records = lookup(parsed.mnemonic, conn)
+    if lookup_cache is not None:
+        records = lookup_cache.get(parsed.mnemonic)
+        if records is None:
+            # Module-level call (not a captured reference) so tests can
+            # keep monkeypatching ``annotate.lookup`` with a 2-arg fake.
+            records = lookup(parsed.mnemonic, conn)
+            lookup_cache[parsed.mnemonic] = records
+    else:
+        records = lookup(parsed.mnemonic, conn)
+    if stats is not None:
+        stats["parsed"] = stats.get("parsed", 0) + 1
+        if records:
+            stats["recognized"] = stats.get("recognized", 0) + 1
     record = pick_record(records, arch=opts.arch, operands=parsed.operands)
 
     if record is None:
@@ -693,34 +762,52 @@ def annotate_stream(
     *,
     opts: AnnotateOptions,
     conn: sqlite3.Connection,
+    stats: dict[str, int] | None = None,
 ) -> Iterator[str]:
-    """Yield annotated lines for each input line (newline-terminated)."""
+    """Yield annotated lines for each input line (newline-terminated).
+
+    ``stats`` (optional) accumulates parse/recognition counters — keys
+    ``parsed``, ``recognized``, ``content`` — so callers can warn when the
+    input format was not understood (e.g. 0 of N instruction lines found).
+    """
     json_records: list[dict[str, Any]] = []
     collecting_json = opts.fmt == "json"
     pending_src_file: str | None = None
     pending_src_line: int | None = None
+    lookup_cache: dict[str, list[InstructionRecord]] = {}
 
     for line in lines:
-        if opts.track_positions:
-            src_m = _OBJDUMP_SRC_RE.match(line.rstrip("\n"))
-            if src_m:
-                pending_src_file = src_m.group("file").strip()
-                try:
-                    pending_src_line = int(src_m.group("line"))
-                except ValueError:
-                    pending_src_line = None
-                if not collecting_json:
-                    yield line if line.endswith("\n") else line + "\n"
-                continue
         parsed = parse_asm_line(line, track_positions=opts.track_positions)
-        if opts.track_positions and parsed.kind == LineKind.INSTRUCTION:
-            parsed.source_file = pending_src_file
-            parsed.source_line = pending_src_line
+        if opts.track_positions:
+            if parsed.kind == LineKind.INSTRUCTION:
+                parsed.source_file = pending_src_file
+                parsed.source_line = pending_src_line
+            else:
+                # `-S` source interleave: objdump injects "file:line" marker
+                # lines immediately before the block they describe. Only
+                # non-instruction lines reach the (pricier) marker regex.
+                src_m = _OBJDUMP_SRC_RE.match(parsed.raw)
+                if src_m:
+                    pending_src_file = src_m.group("file").strip()
+                    try:
+                        pending_src_line = int(src_m.group("line"))
+                    except ValueError:
+                        pending_src_line = None
+                    if not collecting_json:
+                        yield parsed.raw + "\n"
+                    continue
+        if stats is not None and parsed.kind != LineKind.BLANK:
+            # "content" = anything that is not blank, an assembler directive,
+            # or a real comment — i.e. instructions, labels, and unrecognised
+            # lines the parser rejected (so "recognised 0/N" can warn).
+            s = parsed.raw.lstrip()
+            if s and not s.startswith((".", "#", "//")):
+                stats["content"] = stats.get("content", 0) + 1
         if parsed.kind != LineKind.INSTRUCTION:
             if not collecting_json:
                 yield parsed.raw + "\n"
             continue
-        out_line, record = _annotate_instruction(parsed, opts, conn)
+        out_line, record = _annotate_instruction(parsed, opts, conn, lookup_cache, stats)
         if collecting_json:
             if record is not None:
                 json_records.append(record)

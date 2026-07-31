@@ -105,6 +105,9 @@ def run_pipeline(
         else:
             perf = _require("perf")
             target_abs = str(target.resolve())
+            # perf renames a pre-existing output to perf.data.old; drop that
+            # stale copy so re-runs don't accumulate full-size duplicates.
+            (perf_data.parent / (perf_data.name + ".old")).unlink(missing_ok=True)
             cmd = [perf, "record", "-e", events, "-o", str(perf_data)]
             if duration is not None:
                 cmd += ["--", "timeout", f"{duration}", target_abs, *args]
@@ -130,20 +133,7 @@ def run_pipeline(
         _mark_stage(marker, key)
         results.append(StageResult("disasm", False, disasm))
 
-    # --- Stage C: annotate (with position tracking) -------------------------
-    key = _hash_inputs([disasm], (arch or "",))
-    marker = outdir / ".annotate.stamp"
-    if _stage_cached(marker, key) and annotated.exists():
-        results.append(StageResult("annotate", True, annotated))
-    else:
-        _run_simdref(
-            ["annotate", "--track-positions", "--format", "json", str(disasm), "-o", str(annotated)]
-            + (["--arch", arch] if arch else [])
-        )
-        _mark_stage(marker, key)
-        results.append(StageResult("annotate", False, annotated))
-
-    # --- Stage D: ingest samples --------------------------------------------
+    # --- Stage C: ingest samples --------------------------------------------
     if adapter == "perf":
         key = _hash_inputs([perf_data, target])
         marker = outdir / ".ingest.stamp"
@@ -173,7 +163,7 @@ def run_pipeline(
             samples_json.write_text('{"schema":"simdref.samples.v1","samples":[]}\n')
         results.append(StageResult("ingest", True, samples_json))
 
-    # --- Stage E: hot loops -------------------------------------------------
+    # --- Stage D: hot loops -------------------------------------------------
     key = _hash_inputs([disasm, samples_json], (rank_event, str(top_loops)))
     marker = outdir / ".hotloops.stamp"
     if _stage_cached(marker, key) and loops_json.exists():
@@ -196,7 +186,39 @@ def run_pipeline(
         _mark_stage(marker, key)
         results.append(StageResult("hotloops", False, loops_json))
 
-    # --- Stage F: merge ------------------------------------------------------
+    # --- Stage E: annotate (hot loops only, with position tracking) ---------
+    # Restrict the expensive annotation to the ranked hot loops, not the
+    # whole binary: on large LTO binaries whole-binary annotation produced
+    # 100MB+ artifacts and multi-minute runtimes (issue #22).
+    from simdref.profile.hotloop import filter_disasm
+    from simdref.profile.model import read_loops
+
+    key = _hash_inputs([disasm, loops_json], (arch or "",))
+    marker = outdir / ".annotate.stamp"
+    if _stage_cached(marker, key) and annotated.exists():
+        results.append(StageResult("annotate", True, annotated))
+    else:
+        hot_disasm = outdir / "hot.disasm.s"
+        keep: set[int] = set()
+        for loop in read_loops(loops_json):
+            keep.update(loop.addresses)
+        hot_disasm.write_text(filter_disasm(disasm.read_text(), keep))
+        _run_simdref(
+            [
+                "annotate",
+                "--track-positions",
+                "--format",
+                "json",
+                str(hot_disasm),
+                "-o",
+                str(annotated),
+            ]
+            + (["--arch", arch] if arch else [])
+        )
+        _mark_stage(marker, key)
+        results.append(StageResult("annotate", False, annotated))
+
+    # --- Stage F: merge -----------------------------------------------------
     key = _hash_inputs([annotated, samples_json, loops_json])
     marker = outdir / ".merge.stamp"
     if _stage_cached(marker, key) and merged_sa.exists() and merged_json.exists():
@@ -233,7 +255,7 @@ def run_pipeline(
         _mark_stage(marker, key)
         results.append(StageResult("merge", False, merged_sa))
 
-    # --- Stage G: summary ----------------------------------------------------
+    # --- Stage G: summary ---------------------------------------------------
     summary_md.write_text(_render_summary(loops_json, merged_json))
     results.append(StageResult("summary", False, summary_md))
 
