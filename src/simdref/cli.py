@@ -19,6 +19,8 @@ from contextlib import nullcontext as _nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
+from msgpack.exceptions import UnpackException as _MsgpackUnpackException
+
 import fnmatch
 
 import click
@@ -69,7 +71,7 @@ from simdref.ingest_sources import (
     refresh_local_arm_a64_archive,
     refresh_local_arm_intrinsics_bundle,
 )
-from simdref.manpages import open_manpage, write_manpages
+from simdref.manpages import write_manpages
 from simdref import perf
 from simdref.perf import variant_perf_summary
 from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
@@ -88,6 +90,7 @@ from simdref.storage import (
     WEB_DIR,
     build_sqlite,
     load_catalog,
+    load_catalog_from_db,
     load_instruction_from_db,
     load_intrinsic_from_db,
     load_instructions_by_mnemonic_from_db,
@@ -462,41 +465,57 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
     write_installed_version_stamp(__version__)
 
 
-def _refresh_runtime_from_existing_catalog(*, man_dir: Path) -> None:
-    """Rebuild derived runtime artifacts from the local msgpack snapshot.
+def _refresh_runtime_from_existing_catalog() -> None:
+    """Rebuild the SQLite runtime from the local catalog snapshot.
 
-    This is substantially cheaper than a full local source rebuild and is
-    sufficient when the catalog is already present but the SQLite schema,
-    manpages, or web export need to be refreshed.
+    Falls back to rebuilding from the existing database itself when the
+    msgpack snapshot was pruned. Manpages and the static web bundle are no
+    longer materialized here — they are ~150k small files; ``simdref man``
+    renders pages on demand and ``simdref install-manpages`` / ``simdref
+    web`` remain explicit opt-ins.
     """
-    if not CATALOG_PATH.exists():
+    if CATALOG_PATH.exists():
+        catalog = load_catalog()
+    elif SQLITE_PATH.exists():
+        catalog = load_catalog_from_db()
+    else:
+        err_console.print(
+            "no local catalog to rebuild from — run `simdref update` with network access",
+            style="red",
+        )
         raise typer.Exit(code=1)
-    catalog = load_catalog()
     build_sqlite(catalog)
-    write_manpages(catalog, man_dir)
-    export_web(catalog, WEB_DIR)
     err_console.print(
         f"refreshed runtime from existing catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
         style="green",
     )
+    # The snapshot is fully derivable now; drop the redundant 300MB+ copy.
+    CATALOG_PATH.unlink(missing_ok=True)
     write_installed_version_stamp(__version__)
 
 
-def _finalize_runtime_from_download(*, man_dir: Path) -> None:
-    """Refresh local derived artifacts after downloading release assets."""
-    if not CATALOG_PATH.exists():
+def _finalize_runtime_from_download() -> None:
+    """Finish a release-download refresh.
+
+    The runtime needs only ``catalog.db``; drop the legacy ``catalog.json``
+    asset (no longer shipped or read) and the ``catalog.msgpack`` snapshot
+    (rebuildable from the DB via ``load_catalog_from_db``) if present.
+    """
+    if not SQLITE_PATH.exists():
         raise typer.Exit(code=1)
-    catalog = load_catalog()
-    write_manpages(catalog, man_dir)
-    export_web(catalog, WEB_DIR)
+    (DATA_DIR / "catalog.json").unlink(missing_ok=True)
+    CATALOG_PATH.unlink(missing_ok=True)
+    with open_db(SQLITE_PATH) as conn:
+        n_intrinsics = conn.execute("SELECT COUNT(*) FROM intrinsics_data").fetchone()[0]
+        n_instructions = conn.execute("SELECT COUNT(*) FROM instructions_data").fetchone()[0]
     err_console.print(
-        f"refreshed local web/man assets from downloaded catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
+        f"refreshed runtime from downloaded catalog with {n_intrinsics} intrinsics and {n_instructions} instructions",
         style="green",
     )
     write_installed_version_stamp(__version__)
 
 
-def _download_release_or_fallback(*, man_dir: Path) -> None:
+def _download_release_or_fallback() -> None:
     """Prefer pre-built assets. Fall back to the existing on-disk catalog.
 
     When the download fails and no catalog is cached, the caller must
@@ -506,14 +525,14 @@ def _download_release_or_fallback(*, man_dir: Path) -> None:
     try:
         _download_from_release()
         if sqlite_schema_is_current():
-            _finalize_runtime_from_download(man_dir=man_dir)
+            _finalize_runtime_from_download()
             return
         if CATALOG_PATH.exists():
             err_console.print(
                 "downloaded catalog is usable but SQLite is stale; rebuilding runtime locally from the downloaded catalog",
                 style="yellow",
             )
-            _refresh_runtime_from_existing_catalog(man_dir=man_dir)
+            _refresh_runtime_from_existing_catalog()
             return
         err_console.print(
             "[bold red]downloaded runtime schema is not current[/bold red] and no local catalog exists",
@@ -529,7 +548,7 @@ def _download_release_or_fallback(*, man_dir: Path) -> None:
                 "download failed; refreshing runtime from the existing local catalog",
                 style="yellow",
             )
-            _refresh_runtime_from_existing_catalog(man_dir=man_dir)
+            _refresh_runtime_from_existing_catalog()
             return
         err_console.print(
             "[bold red]no pre-built catalog available and no local cache[/bold red]", style="yellow"
@@ -564,16 +583,22 @@ def _bootstrap_interactive() -> None:
     non_tty_stdout = not sys.stdout.isatty()
     if non_tty_stdout:
         typer.echo(f"simdref: bootstrapping catalog (downloading release assets to {DATA_DIR}) ...")
-    _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
+    _download_release_or_fallback()
     if non_tty_stdout:
         typer.echo("simdref: catalog bootstrap complete")
 
 
 def ensure_catalog():
-    """Load (or bootstrap) the in-memory catalog."""
-    if not CATALOG_PATH.exists():
+    """Load (or bootstrap) the in-memory catalog.
+
+    The msgpack snapshot is pruned after install/update; fall back to the
+    SQLite runtime when only the database is left.
+    """
+    if not CATALOG_PATH.exists() and not SQLITE_PATH.exists():
         _bootstrap_interactive()
-    return load_catalog()
+    if CATALOG_PATH.exists():
+        return load_catalog()
+    return load_catalog_from_db()
 
 
 def ensure_runtime() -> None:
@@ -584,7 +609,7 @@ def ensure_runtime() -> None:
     flow so users don't need to invoke ``simdref update`` manually after
     a ``pip``/``uv`` install or upgrade. Honors ``SIMDREF_SKIP_AUTOUPDATE``.
     """
-    if not CATALOG_PATH.exists():
+    if not CATALOG_PATH.exists() and not SQLITE_PATH.exists():
         _bootstrap_interactive()
         _maybe_auto_update_for_version_change()
         return
@@ -593,7 +618,7 @@ def ensure_runtime() -> None:
             "runtime schema is missing or out of date; rebuilding derived runtime artifacts from the local catalog",
             style="yellow",
         )
-        _refresh_runtime_from_existing_catalog(man_dir=DEFAULT_MAN_DIR)
+        _refresh_runtime_from_existing_catalog()
     _maybe_auto_update_for_version_change()
 
 
@@ -616,7 +641,7 @@ def _maybe_auto_update_for_version_change() -> None:
         style="yellow",
     )
     try:
-        _download_release_or_fallback(man_dir=DEFAULT_MAN_DIR)
+        _download_release_or_fallback()
     except typer.Exit:
         err_console.print(
             "[bold yellow]warning:[/bold yellow] auto-update failed; continuing with the existing catalog. "
@@ -1162,8 +1187,26 @@ def annotate(
         track_positions=track_positions,
     )
 
+    stats: dict[str, int] = {}
     with open_db(SQLITE_PATH) as conn:
-        rendered = "".join(annotate_stream(source_lines, opts=opts, conn=conn))
+        rendered = "".join(annotate_stream(source_lines, opts=opts, conn=conn, stats=stats))
+
+    parsed = stats.get("parsed", 0)
+    recognized = stats.get("recognized", 0)
+    content = stats.get("content", 0)
+    if parsed == 0 and content > 0:
+        err_console.print(
+            f"[bold yellow]warning:[/bold yellow] no instruction lines were recognized "
+            f"(0 of {content} content lines) — the input does not look like AT&T "
+            f"assembly or `objdump -d` output; nothing was annotated.",
+            style="yellow",
+        )
+    elif parsed > 0 and recognized == 0:
+        err_console.print(
+            f"[bold yellow]warning:[/bold yellow] 0 of {parsed} instruction lines matched "
+            f"the catalog — annotations are missing (check --arch / mnemonic coverage).",
+            style="yellow",
+        )
 
     if str(out_path) == "-":
         sys.stdout.write(rendered)
@@ -1177,15 +1220,19 @@ def update(
     from_release: bool = typer.Option(
         False, "--from-release", help="Download pre-built data from GitHub Release."
     ),
-    man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
 ) -> None:
-    """Download the pre-built release catalog (no llvm-mca required)."""
+    """Download the pre-built release catalog (no llvm-mca required).
+
+    Installs just the catalog snapshot and SQLite database (~2 files).
+    Manpages are opt-in via ``simdref install-manpages``; the static web
+    bundle via ``simdref web``.
+    """
     if from_release:
         _download_from_release()
-        _finalize_runtime_from_download(man_dir=man_dir)
+        _finalize_runtime_from_download()
         return
 
-    _download_release_or_fallback(man_dir=man_dir)
+    _download_release_or_fallback()
 
 
 @app.command(rich_help_panel="Dev commands")
@@ -1195,6 +1242,113 @@ def build(
     """Full local rebuild from upstream sources, including Intel SDM parsing (requires llvm-mca on PATH)."""
     _require_llvm_mca_or_hint()
     _build_runtime_locally(man_dir=man_dir, include_sdm=True)
+
+
+def _render_manpage(conn, name: str) -> str | None:
+    """Render a single manpage from the SQLite catalog (no files on disk)."""
+    from simdref.manpages import instruction_page, intrinsic_page
+
+    intrinsic = load_intrinsic_from_db(conn, name)
+    if intrinsic is not None:
+        linked = []
+        for key in intrinsic.instructions:
+            record = load_instruction_from_db(conn, key)
+            if record is not None:
+                linked.append(record)
+        return intrinsic_page(intrinsic, linked_instructions=linked)
+    rows = load_instructions_by_mnemonic_from_db(conn, name)
+    if not rows and name != name.lower():
+        rows = load_instructions_by_mnemonic_from_db(conn, name.lower())
+    if not rows:
+        return None
+    x86 = next((r for r in rows if r.architecture == "x86"), None)
+    return instruction_page(x86 or rows[0])
+
+
+@app.command(rich_help_panel="Commands")
+def man(
+    name: str = typer.Argument(..., help="Intrinsic (e.g. _mm256_add_epi32) or mnemonic (vaddps)."),
+) -> None:
+    """Show the manpage for an intrinsic/instruction, rendered on demand.
+
+    Pipes through ``man -l`` when available; otherwise prints the roff
+    source so it can be piped manually. No pre-generated pages needed.
+    """
+    ensure_runtime()
+    with open_db(SQLITE_PATH) as conn:
+        page = _render_manpage(conn, name)
+    if page is None:
+        err_console.print(f"no manpage for: {name}", style="red")
+        raise typer.Exit(code=1)
+    man_bin = shutil.which("man")
+    if man_bin is None:
+        sys.stdout.write(page)
+        return
+    import signal
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(suffix=".7", prefix="simdref-man-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(page)
+        prev = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            # NB: ``man <path>`` (renders a local file) works on both man-db
+            # and BSD/macOS man, unlike the man-db-only ``man -l``.
+            raise_code = subprocess.call([man_bin, tmp], stdin=subprocess.DEVNULL)
+        finally:
+            signal.signal(signal.SIGINT, prev)
+        if raise_code != 0:
+            raise typer.Exit(code=raise_code)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+@app.command(rich_help_panel="Commands")
+def install_manpages(
+    man_dir: Path = typer.Option(DEFAULT_MAN_DIR, help="Target man root directory."),
+) -> None:
+    """Pre-generate man7 pages for every intrinsic/instruction (~150k files).
+
+    The default target is the XDG data-root man dir (``~/.local/share/man``),
+    which man-db auto-discovers on Linux — so plain ``man vpaddd`` works with
+    no MANPATH edits. Use on-demand ``simdref man`` to avoid the files
+    entirely.
+    """
+    catalog = ensure_catalog()
+    write_manpages(catalog, man_dir)
+    err_console.print(f"wrote manpages to {man_dir}/man7", style="green")
+    _integrate_manpath(man_dir)
+
+
+def _integrate_manpath(man_dir: Path) -> None:
+    """Best-effort post-install: rebuild the mandb index and confirm that
+    plain ``man`` can discover the directory."""
+    mandb = shutil.which("mandb")
+    if mandb is not None:
+        subprocess.run(
+            [mandb, "-q", str(man_dir)],
+            capture_output=True,
+            check=False,
+        )
+    manpath = shutil.which("manpath")
+    try:
+        out = (
+            subprocess.run([manpath, "-q"], capture_output=True, text=True, check=False).stdout
+            if manpath
+            else ""
+        )
+    except OSError:
+        out = ""
+    if str(man_dir) in out.split(":"):
+        err_console.print("plain `man <name>` now works (dir is on your manpath)", style="green")
+    else:
+        probe = "could not probe manpath" if not out else "dir is not on your manpath"
+        err_console.print(
+            f"note: {probe} — if `man <name>` fails, set MANPATH={man_dir}:$MANPATH "
+            "or keep using `simdref man <name>`",
+            style="yellow",
+        )
 
 
 def _require_llvm_mca_or_hint() -> None:
@@ -2020,41 +2174,49 @@ def doctor() -> None:
     table.add_column("status")
     table.add_column("detail", style="dim")
 
-    # Catalog file
-    if CATALOG_PATH.exists():
-        try:
-            catalog = load_catalog()
-        except Exception as exc:
-            table.add_row(fail_icon, "catalog", "[red]unreadable[/]", f"{CATALOG_PATH}: {exc}")
-            failures += 1
-            console.print(table)
-            console.print(
-                f"\n[red]{failures} check failed — run[/] [cyan]simdref ingest[/] [red]to rebuild.[/]"
-            )
-            raise typer.Exit(1)
-        table.add_row(ok_icon, "catalog", "[green]present[/]", str(CATALOG_PATH))
-    else:
+    # SQLite runtime (the required artifact)
+    if not SQLITE_PATH.exists():
         table.add_row(
-            fail_icon, "catalog", "[red]missing[/]", f"{CATALOG_PATH} — run `simdref ingest`"
+            fail_icon, "sqlite index", "[red]missing[/]", f"{SQLITE_PATH} — run `simdref update`"
         )
         failures += 1
         console.print(table)
         console.print(f"\n[red]{failures} check failed.[/]")
         raise typer.Exit(1)
-
-    # SQLite index
-    if not SQLITE_PATH.exists():
+    if not sqlite_schema_is_current():
         table.add_row(
-            fail_icon, "sqlite index", "[red]missing[/]", f"{SQLITE_PATH} — run `simdref ingest`"
-        )
-        failures += 1
-    elif not sqlite_schema_is_current():
-        table.add_row(
-            warn_icon, "sqlite index", "[yellow]outdated schema[/]", "rebuild with `simdref ingest`"
+            warn_icon,
+            "sqlite index",
+            "[yellow]outdated schema[/]",
+            "rebuild with `simdref update --build`",
         )
         warnings += 1
     else:
         table.add_row(ok_icon, "sqlite index", "[green]current[/]", str(SQLITE_PATH))
+
+    # Catalog snapshot (optional cache; pruned after install/update)
+    if CATALOG_PATH.exists():
+        try:
+            catalog = load_catalog()
+        except (OSError, ValueError, _MsgpackUnpackException) as exc:
+            table.add_row(
+                warn_icon,
+                "catalog snapshot",
+                "[yellow]unreadable — using database[/]",
+                f"{CATALOG_PATH}: {exc}",
+            )
+            warnings += 1
+            catalog = load_catalog_from_db()
+        else:
+            table.add_row(ok_icon, "catalog snapshot", "[green]present[/]", str(CATALOG_PATH))
+    else:
+        catalog = load_catalog_from_db()
+        table.add_row(
+            ok_icon,
+            "catalog snapshot",
+            "[dim]pruned[/]",
+            f"{CATALOG_PATH.name} removed to save space — rebuildable from database",
+        )
 
     # Catalog counts
     n_intr = len(catalog.intrinsics)

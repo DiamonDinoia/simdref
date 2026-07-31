@@ -1,11 +1,12 @@
 """Roff manpage generation for intrinsics and instructions.
 
-Generates man7 pages that can be viewed with ``man -M share/man <name>``.
+``simdref man <name>`` renders a single page on demand; ``simdref
+install-manpages`` pre-generates man7 pages into a manpath-visible dir so
+plain ``man <name>`` works.
 """
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -51,15 +52,19 @@ def _instruction_perf_lines(linked: list[InstructionRecord]) -> list[str]:
 
 def intrinsic_page(
     record: IntrinsicRecord,
-    catalog: Catalog,
+    catalog: Catalog | None = None,
     linked_instructions: list[InstructionRecord] | None = None,
 ) -> str:
     if linked_instructions is None:
-        linked_instructions = [
-            instruction
-            for instruction in catalog.instructions
-            if record.name in instruction.linked_intrinsics
-        ]
+        linked_instructions = (
+            [
+                instruction
+                for instruction in catalog.instructions
+                if record.name in instruction.linked_intrinsics
+            ]
+            if catalog is not None
+            else []
+        )
     parts = [f'.TH "{record.name}" "7" "simdref" "simdref" "SIMD Intrinsic Reference"\n']
     parts.append(
         _section(
@@ -174,10 +179,3 @@ def write_manpages(
 
 def record_slug(value: str) -> str:
     return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
-
-
-def open_manpage(name: str, man_dir: Path) -> int:
-    target = man_dir / "man7" / f"{name}.7"
-    if not target.exists():
-        return 1
-    return subprocess.call(["man", "-M", str(man_dir), name])

@@ -1,12 +1,11 @@
 import json
-import msgpack
 import tempfile
 import unittest
 from pathlib import Path
 
 from simdref.ingest import build_catalog
 from simdref.lsp import _completion_candidates, _hover_markdown
-from simdref.storage import build_sqlite, save_catalog, open_db
+from simdref.storage import _unpack_payload, build_sqlite, save_catalog, open_db
 from simdref.web import export_web
 from conftest import build_fixture_catalog
 
@@ -48,12 +47,11 @@ class LspWebTests(unittest.TestCase):
         self.assertEqual(intrinsic_count, 20)
         self.assertEqual(instruction_count, 20)
 
-        instruction_payload = msgpack.unpackb(
+        instruction_payload = _unpack_payload(
             self._conn.execute(
                 "SELECT payload FROM instructions_data WHERE key = ?",
                 ("vsub.vv [masked]",),
             ).fetchone()[0],
-            raw=False,
         )
         self.assertIn("Description", instruction_payload["description"])
         self.assertIn("Operation", instruction_payload["description"])
@@ -62,12 +60,11 @@ class LspWebTests(unittest.TestCase):
         self.assertEqual(instruction_payload["metadata"]["tail_policy"], "agnostic")
         self.assertEqual(instruction_payload["metadata"]["mask_policy"], "agnostic")
 
-        intrinsic_payload = msgpack.unpackb(
+        intrinsic_payload = _unpack_payload(
             self._conn.execute(
                 "SELECT payload FROM intrinsics_data WHERE name = ?",
                 ("__riscv_vsub_vv_i32m1_m",),
             ).fetchone()[0],
-            raw=False,
         )
         self.assertEqual(intrinsic_payload["instructions"], ["vsub.vv [masked]"])
         self.assertEqual(intrinsic_payload["metadata"]["policy"], "agnostic")

@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import sys
+import zlib
 from itertools import islice
 from pathlib import Path
 
@@ -78,12 +79,34 @@ if _is_dev_install:
     DEFAULT_MAN_DIR = REPO_ROOT / "share" / "man"
 else:
     WEB_DIR = DATA_DIR / "web"
-    DEFAULT_MAN_DIR = DATA_DIR / "man"
+    # Target the XDG data-root man dir: man-db auto-discovers
+    # ~/.local/share/man (or $XDG_DATA_HOME/man) with no MANPATH edits,
+    # so plain `man vpaddd` works after `simdref install-manpages`.
+    DEFAULT_MAN_DIR = DATA_DIR.parent / "man"
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
 INSTALLED_VERSION_STAMP = DATA_DIR / "installed_version"
-SQLITE_SCHEMA_VERSION = "12"
+SQLITE_SCHEMA_VERSION = "13"
+
+
+def _pack_payload(obj: dict) -> bytes:
+    """Msgpack + zlib-9. Payloads compress to ~20-40% of their raw size."""
+    return zlib.compress(msgpack.packb(obj, use_bin_type=True), 9)
+
+
+def _unpack_payload(data: bytes):
+    """Inverse of :func:`_pack_payload`; also reads raw-msgpack rows from
+    pre-v13 databases. The 0x78 gate is exact: zlib streams start with 0x78,
+    while a raw msgpack payload can never do so — our payloads are dicts
+    (fixmap 0x80-0x8f, map16 0xde, map32 0xdf) and 0x78 would decode as the
+    fixint 120. The try/except is belt-and-braces for anything unforeseen."""
+    if data[:1] == b"\x78":
+        try:
+            data = zlib.decompress(data)
+        except zlib.error:
+            pass  # raw msgpack row from an older database
+    return msgpack.unpackb(data, raw=False)
 
 
 def read_installed_version_stamp() -> str | None:
@@ -114,6 +137,32 @@ def ensure_dir(path: Path) -> None:
 def load_catalog(path: Path = CATALOG_PATH) -> Catalog:
     payload = msgpack.unpackb(path.read_bytes(), raw=False)
     return Catalog.from_dict(payload)
+
+
+def load_catalog_from_db(path: Path = SQLITE_PATH) -> Catalog:
+    """Rebuild the in-memory catalog from the SQLite runtime alone.
+
+    The msgpack snapshot is optional (pruned after install/update); this is
+    the fallback used by ``simdref web``/``install-manpages`` and by offline
+    schema rebuilds when the snapshot is absent.
+    """
+    with open_db(path) as conn:
+        intrinsics = [
+            IntrinsicRecord(**_unpack_payload(row["payload"]))
+            for row in conn.execute("SELECT payload FROM intrinsics_data ORDER BY name")
+        ]
+        instructions = [
+            InstructionRecord(**_unpack_payload(row["payload"]))
+            for row in conn.execute("SELECT payload FROM instructions_data ORDER BY db_key")
+        ]
+        sources = load_sources_from_db(conn)
+        generated_at = generated_at_from_db(conn)
+    return Catalog(
+        intrinsics=intrinsics,
+        instructions=instructions,
+        sources=sources,
+        generated_at=generated_at,
+    )
 
 
 def save_catalog(catalog: Catalog, path: Path = CATALOG_PATH) -> None:
@@ -228,9 +277,9 @@ def _batched(items, size: int = SQLITE_INSERT_BATCH_SIZE):
 
 def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     ensure_dir(path.parent)
-    if path.exists():
-        path.unlink()
-    conn = sqlite3.connect(path)
+    _db_tmp = path.with_name(path.name + ".tmp")
+    _db_tmp.unlink(missing_ok=True)
+    conn = sqlite3.connect(_db_tmp)
     cur = conn.cursor()
     cur.executescript(
         """
@@ -280,10 +329,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     cur.execute("INSERT INTO meta VALUES (?, ?)", ("generated_at", catalog.generated_at))
 
     # Sources
-    source_rows = (
-        (source.source, msgpack.packb(source.to_dict(), use_bin_type=True))
-        for source in catalog.sources
-    )
+    source_rows = ((source.source, _pack_payload(source.to_dict())) for source in catalog.sources)
     for batch in _batched(source_rows):
         cur.executemany("INSERT INTO sources VALUES (?, ?)", batch)
 
@@ -297,7 +343,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     intrinsics_data_batch = []
     intrinsics_fts_batch = []
     for record in catalog.intrinsics:
-        payload = msgpack.packb(record.to_dict(), use_bin_type=True)
+        payload = _pack_payload(record.to_dict())
         intrinsics_data_batch.append(
             (
                 record.name,
@@ -358,7 +404,7 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
     instructions_data_batch = []
     instructions_fts_batch = []
     for record in catalog.instructions:
-        payload = msgpack.packb(record.to_dict(), use_bin_type=True)
+        payload = _pack_payload(record.to_dict())
         instructions_data_batch.append(
             (
                 record.db_key,
@@ -407,11 +453,15 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
 
     conn.commit()
     conn.close()
+    # Atomic publish: build into a sibling .tmp so a crash mid-build never
+    # leaves the runtime without a database (matters when refreshing from a
+    # DB that was just read as the fallback source).
+    _db_tmp.replace(path)
 
 
 def load_sources_from_db(conn: sqlite3.Connection) -> list[SourceVersion]:
     rows = conn.execute("SELECT payload FROM sources ORDER BY source").fetchall()
-    return [SourceVersion(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
+    return [SourceVersion(**_unpack_payload(row["payload"])) for row in rows]
 
 
 def generated_at_from_db(conn: sqlite3.Connection) -> str:
@@ -426,7 +476,7 @@ def load_intrinsic_from_db(conn: sqlite3.Connection, name: str) -> IntrinsicReco
     ).fetchone()
     if not row:
         return None
-    return IntrinsicRecord(**msgpack.unpackb(row["payload"], raw=False))
+    return IntrinsicRecord(**_unpack_payload(row["payload"]))
 
 
 def load_instruction_from_db(conn: sqlite3.Connection, key: str) -> InstructionRecord | None:
@@ -442,7 +492,7 @@ def load_instruction_from_db(conn: sqlite3.Connection, key: str) -> InstructionR
     ).fetchone()
     if not row:
         return None
-    return InstructionRecord(**msgpack.unpackb(row["payload"], raw=False))
+    return InstructionRecord(**_unpack_payload(row["payload"]))
 
 
 def load_instructions_by_mnemonic_from_db(
@@ -452,7 +502,7 @@ def load_instructions_by_mnemonic_from_db(
         "SELECT payload FROM instructions_data WHERE mnemonic = ? ORDER BY architecture, key",
         (mnemonic,),
     ).fetchall()
-    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
+    return [InstructionRecord(**_unpack_payload(row["payload"])) for row in rows]
 
 
 def load_instructions_by_mnemonic_prefix_from_db(
@@ -468,7 +518,7 @@ def load_instructions_by_mnemonic_prefix_from_db(
         """,
         (prefix, limit),
     ).fetchall()
-    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
+    return [InstructionRecord(**_unpack_payload(row["payload"])) for row in rows]
 
 
 def _fts_match_query(query: str) -> str:
@@ -543,7 +593,7 @@ def search_intrinsic_candidates_from_db(
     )
     binds.append(limit)
     rows = conn.execute(sql, binds).fetchall()
-    return [IntrinsicRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
+    return [IntrinsicRecord(**_unpack_payload(row["payload"])) for row in rows]
 
 
 def search_instruction_candidates_from_db(
@@ -578,4 +628,4 @@ def search_instruction_candidates_from_db(
     )
     binds.append(limit)
     rows = conn.execute(sql, binds).fetchall()
-    return [InstructionRecord(**msgpack.unpackb(row["payload"], raw=False)) for row in rows]
+    return [InstructionRecord(**_unpack_payload(row["payload"])) for row in rows]

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- **`simdref annotate`** now parses `objdump -d`-style lines (`addr: bytes mnemonic operands`) in its default pass-through mode instead of echoing
+  them verbatim with exit 0; a warning is emitted on stderr when no
+  instruction lines are recognized (issue #21).
+- **`simdref profile run`** (issue #22):
+  - Hot samples are no longer silently misattributed to `main` on C++
+    binaries: `perf script` now runs with `--no-demangle` (demangled names
+    contain spaces and could not match the sample regex) and duplicate
+    local symbols from thin-LTO are disambiguated using `nm -S` sizes.
+  - The pipeline annotates only the top-N hot loops (a `hot.disasm.s`
+    excerpt) instead of the whole-binary disassembly, so it no longer
+    appears to hang for tens of minutes on large binaries and no longer
+    produces 100MB+ artifacts; stale `perf.data.old` backups are removed
+    before recording.
+
+### Changed
+
+- **data footprint:** install/update now materializes only
+  `catalog.db`; the ~120k-file manpage tree, the static web export, and
+  the legacy `catalog.json` are no longer written by default (render on
+  demand via `simdref man` / `simdref web`). Manpages are opt-in via
+  `simdref install-manpages`, which targets the XDG data-root man dir
+  (`~/.local/share/man`) so plain `man vpaddd` works out of the box on
+  man-db systems.
+- **storage:** SQLite payloads are msgpack+zlib compressed
+  (schema v13; `catalog.db` ~487MB → ~233MB); `catalog.msgpack` is deleted
+  after a successful install/update and transparently rebuilt from the
+  database when needed.
+- **perf:** the profile pipeline's speedup is algorithmic — annotate now runs
+  on a hot-loops excerpt instead of the whole disassembly and caches mnemonic
+  lookups; the string-method fast paths in the parsers add a further ~1.3×
+  on a 935k-line objdump disassembly.
+
 ## [0.0.4] — 2026-06-05
 
 - **deps:** declare `click` as a direct dependency so a clean install can run

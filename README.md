@@ -7,8 +7,9 @@
 A single searchable reference for SIMD intrinsics and instructions across
 **x86 (Intel + uops.info)**, **Arm (ACLE / AARCHMRS)**, and **RISC-V
 (RVV + unified-db)**. Runs as a CLI, a Textual TUI, an LSP server,
-generated manpages, a static web app, and a structured JSON interface
-for LLM skills.
+on-demand manpages (`simdref man` — or run `simdref install-manpages`
+so plain `man vpaddd` works), a static web app, and a structured JSON
+interface for LLM skills.
 
 [Web App](https://diamondinoia.github.io/simdref/) ·
 [TestPyPI](https://test.pypi.org/project/simdref/) ·
