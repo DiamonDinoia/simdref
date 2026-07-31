@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (schema v13; `catalog.db` ~487MB → ~233MB); `catalog.msgpack` is deleted
   after a successful install/update and transparently rebuilt from the
   database when needed.
+- **ci:** `build-catalog` installs LLVM 22 (`llvm.sh 23` broke: trunk moved,
+  apt finds no `clang-23`); the weekly RISC-V source-validation gate is
+  deterministic again — upstream unified-db now ships `operation()` bodies
+  empty for 847/1326 instructions (post-sail() removal) and the unversioned
+  docs.riscv.org URLs serve 4xx-byte redirect stubs, so the fallback
+  semantics source `vendor/riscv/docs_pages.json` is now committed
+  (un-ignored) and guarded by a redirect-stub regression test.
 - **perf:** the profile pipeline's speedup is algorithmic — annotate now runs
   on a hot-loops excerpt instead of the whole disassembly and caches mnemonic
   lookups; the string-method fast paths in the parsers add a further ~1.3×
