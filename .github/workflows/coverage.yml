@@ -32,13 +32,13 @@ jobs:
           && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           activate-environment: true
@@ -94,7 +94,7 @@ jobs:
       - name: Open PR on drift
         id: cpr
         if: steps.drift.outputs.drift == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: coverage-drift
           commit-message: "chore: refresh docs/coverage/ snapshot"

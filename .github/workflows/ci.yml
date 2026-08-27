@@ -45,13 +45,13 @@ jobs:
     outputs:
       data_tag: ${{ steps.meta.outputs.data_tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           activate-environment: true
@@ -142,13 +142,13 @@ jobs:
     needs: build-catalog
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           activate-environment: true
@@ -164,7 +164,7 @@ jobs:
       # paths are listed, so catalog.msgpack / catalog.db land back at
       # data/derived/ automatically — no manual move needed.
       - name: Restore catalog artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: catalog
           path: .
@@ -235,13 +235,13 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           activate-environment: true
@@ -282,15 +282,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: catalog
           path: .
 
       - name: Publish data-latest
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: data-latest
           name: Latest Data Build
@@ -304,7 +304,7 @@ jobs:
 
       - name: Publish data-v<version>
         if: github.event_name == 'release' || inputs.publish_versioned == true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.build-catalog.outputs.data_tag }}
           name: Data Build ${{ needs.build-catalog.outputs.data_tag }}
@@ -340,7 +340,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: catalog
           path: .
@@ -366,13 +366,13 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           activate-environment: true

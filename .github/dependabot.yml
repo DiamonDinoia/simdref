@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # One grouped PR per week for every workflow action, so CI pins do not drift
-  # into deprecated runtimes (the Node 20 warning on download-artifact@v5).
+  # One grouped PR per week for every workflow action, so hand-pinned majors do
+  # not drift onto a deprecated Node runtime unnoticed.
   - package-ecosystem: github-actions
     directory: /
     schedule:
