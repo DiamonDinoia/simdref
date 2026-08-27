@@ -452,7 +452,14 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         )
 
     conn.commit()
+    # The rename below moves only the main file, so every WAL page must be in it
+    # first. Python 3.11 does not checkpoint on close while a cursor is alive, and
+    # published a bare 4096-byte header with the content orphaned in `<tmp>-wal`.
+    cur.close()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.close()
+    for sidecar in ("-wal", "-shm"):
+        _db_tmp.with_name(_db_tmp.name + sidecar).unlink(missing_ok=True)
     # Atomic publish: build into a sibling .tmp so a crash mid-build never
     # leaves the runtime without a database (matters when refreshing from a
     # DB that was just read as the fallback source).

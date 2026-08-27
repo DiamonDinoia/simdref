@@ -7,6 +7,7 @@ push category filtering down into SQL stay fast."""
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -186,3 +187,28 @@ def test_arm_arch_populated_from_supported_architectures(tmp_path: Path):
     assert rows["vaddq_u8"] == "BOTH"
     assert rows["svadd_s32_z"] == "A64"
     assert rows["_mm_add_ps"] is None
+
+
+def test_build_sqlite_publishes_a_self_contained_file(tmp_path: Path):
+    # `build_sqlite` renames only the main file, so an uncheckpointed WAL page is
+    # lost at publish. Python 3.11 exhibits this: without the explicit
+    # `wal_checkpoint(TRUNCATE)` it wrote a 4096-byte header and left the content
+    # in `catalog.db.tmp-wal`, so every table was missing from the published db.
+    db = tmp_path / "catalog.db"
+    build_sqlite(_mini_catalog(), db)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["catalog.db"]
+
+    # Copy the published file alone: any table still living in a sidecar is gone.
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    shutil.copy(db, isolated / "catalog.db")
+    conn = sqlite3.connect(isolated / "catalog.db")
+    try:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    finally:
+        conn.close()
+    assert {"meta", "sources", "intrinsics_data", "instructions_data"} <= tables
+    assert sqlite_schema_is_current(isolated / "catalog.db")
