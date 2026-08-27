@@ -7,7 +7,7 @@ name = "simdref"
 version = "0.0.5"
 description = "Searchable SIMD intrinsic and instruction reference with CLI, manpages, TUI, LSP, and static web export."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
 authors = [
   {name = "Marco"}
@@ -19,23 +19,30 @@ classifiers = [
   "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Documentation",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+# `requires-python` tracks the non-EOL CPython range; 3.10 goes EOL 2026-10-31.
+# Lower dependency bound is the version CI resolves and tests; anything older is
+# an untested compatibility claim. Upper bound is the next major (next minor for
+# 0.x, where that is the compatibility unit). msgpack floors above its own
+# advisory: 1.2.0 and earlier carry GHSA-6v7p-g79w-8964.
 dependencies = [
-  "click>=8.1,<10",
+  "click>=8.5,<9",
   "httpx>=0.28,<1",
-  "msgpack>=1.0,<2",
-  "pdfplumber>=0.11,<1",
-  "PyMuPDF>=1.24,<2",
-  "PyYAML>=6,<7",
-  "rapidfuzz>=3.9,<4",
-  "rich>=13,<15",
-  "textual>=1.0,<2",
-  "typer>=0.19,<1",
+  "msgpack>=1.2.1,<2",
+  "pdfplumber>=0.11.10,<1",
+  "PyMuPDF>=1.28,<2",
+  "PyYAML>=6.0.3,<7",
+  "rapidfuzz>=3.14,<4",
+  "rich>=15,<16",
+  "textual>=8.2,<9",
+  "typer>=0.27,<1",
 ]
 
 [project.scripts]
@@ -55,4 +62,4 @@ simdref = ["templates/*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"

@@ -8,7 +8,7 @@ import re
 import tarfile
 import zipfile
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -111,7 +111,7 @@ LOCAL_RISCV_DOCS_JSONS = [
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _fetch_text(url: str) -> str:

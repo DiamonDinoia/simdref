@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import json
 import os
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 predates tomllib
+    import tomli as tomllib
 from pathlib import Path
 
 import pytest

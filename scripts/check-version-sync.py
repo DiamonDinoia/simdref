@@ -20,7 +20,11 @@ import argparse
 import json
 import pathlib
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 predates tomllib
+    import tomli as tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"

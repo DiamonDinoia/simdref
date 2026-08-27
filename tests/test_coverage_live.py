@@ -17,7 +17,10 @@ import pytest
 if os.environ.get("SIMDREF_LIVE") != "1":
     pytest.skip("SIMDREF_LIVE=1 not set; skipping live-fetch parity", allow_module_level=True)
 
-import tomllib  # noqa: E402
+try:
+    import tomllib  # noqa: E402
+except ModuleNotFoundError:  # Python 3.10 predates tomllib
+    import tomli as tomllib  # noqa: E402
 
 from simdref.storage import load_catalog  # noqa: E402
 

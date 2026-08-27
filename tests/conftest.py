@@ -9,7 +9,7 @@ production code never needs to know fixtures exist.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -30,7 +30,7 @@ FIXTURES_DIR: Path = Path(__file__).resolve().parent / "fixtures"
 
 
 def _iso_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _fixture_text(name: str) -> str:

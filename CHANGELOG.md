@@ -30,6 +30,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`install.sh`** no longer passes `--no-build-isolation` to `uv pip install`. A fresh `uv venv` carries no setuptools, so the wheel build
   failed with `ModuleNotFoundError: No module named 'setuptools'` (issue
   #25).
+- **`build_sqlite`** now checkpoints the WAL before the atomic publish rename.
+  The rename moves only the main file, so on CPython 3.11 (which does not
+  checkpoint on close while a cursor is alive) `catalog.db` was published as a
+  bare 4096-byte header with all 16 tables orphaned in `catalog.db.tmp-wal`.
+  Found by widening the CI matrix; 3.10, 3.12, 3.13 and 3.14 were unaffected.
+
+### Changed
+
+- **python support** now spans the whole non-EOL CPython range:
+  `requires-python = ">=3.10"` (3.10 goes EOL 2026-10-31). CI runs the full
+  test suite on every one of 3.10 through 3.14 instead of 3.12 alone.
+  `datetime.UTC` is replaced by `timezone.utc`, and `tomllib` is imported with
+  a `tomli` fallback in the five dev-only call sites that read a TOML file.
+- **dependencies** upgraded to their latest releases and given explicit
+  bounds: `click>=8.5`, `httpx>=0.28`, `msgpack>=1.2.1`, `pdfplumber>=0.11.10`,
+  `PyMuPDF>=1.28`, `PyYAML>=6.0.3`, `rapidfuzz>=3.14`, `rich>=15`,
+  `textual>=8.2`, `typer>=0.27`, each capped at the next major (next minor for
+  0.x). The lower bound is the version CI resolves and tests; the `msgpack`
+  floor sits above GHSA-6v7p-g79w-8964. This clears the 19 Dependabot
+  advisories that were open against the lockfile.
+- **ci:** Dependabot now opens one grouped weekly PR per ecosystem
+  (`github-actions` and `uv`), and every workflow action is on its current
+  major, so no job runs on the deprecated Node 20 runtime.
 
 ## [0.0.5] — 2026-07-31
 
