@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # One grouped PR per week for every workflow action, so CI pins do not drift
+  # into deprecated runtimes (the Node 20 warning on download-artifact@v5).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
