@@ -33,8 +33,8 @@ dependencies = [
   "PyMuPDF>=1.24,<2",
   "PyYAML>=6,<7",
   "rapidfuzz>=3.9,<4",
-  "rich>=13,<15",
-  "textual>=1.0,<2",
+  "rich>=13,<16",
+  "textual>=1.0,<9",
   "typer>=0.19,<1",
 ]
 
