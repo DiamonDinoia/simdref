@@ -13,3 +13,18 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # Version updates for the Python side. Dependabot resolves this project as the
+  # `uv` ecosystem, matching its `uv.lock`. Security updates run without this
+  # entry; ordinary version drift does not.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+    groups:
+      python:
+        patterns:
+          - "*"
