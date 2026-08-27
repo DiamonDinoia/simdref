@@ -45,11 +45,13 @@ def linked_instruction_records(
     catalog: Catalog | None,
     intrinsic: IntrinsicRecord,
     conn: sqlite3.Connection | None = None,
+    cache: dict[str, object] | None = None,
 ) -> list[InstructionRecord]:
     """Return instruction records linked to *intrinsic*.
 
     When *conn* is provided, performs fast DB lookups by instruction key.
-    Otherwise falls back to scanning ``catalog.instructions``.
+    Otherwise falls back to scanning ``catalog.instructions``. Pass *cache*
+    to share already-loaded records with the caller and skip repeat queries.
     """
     ref_keys = [
         ref.get("key", "").strip()
@@ -60,7 +62,11 @@ def linked_instruction_records(
         linked: list[InstructionRecord] = []
         keys = ref_keys or intrinsic.instructions
         for instruction_key in keys:
-            instruction = load_instruction_from_db(conn, instruction_key)
+            instruction = cache.get(instruction_key) if cache is not None else None
+            if instruction is None:
+                instruction = load_instruction_from_db(conn, instruction_key)
+                if instruction is not None and cache is not None:
+                    cache[instruction_key] = instruction
             if instruction is not None:
                 linked.append(instruction)
         return linked

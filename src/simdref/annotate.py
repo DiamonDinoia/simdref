@@ -556,6 +556,17 @@ def arch_perf(record: InstructionRecord, arch: str) -> tuple[float | None, float
     return lat, cpi, kind
 
 
+def arch_perf_tag(arch: str, lat: float | None, cpi: float | None, kind: str) -> str:
+    """Provenance label for a perf row pinned to *arch*.
+
+    ``[missing:<arch>]`` when the catalog holds no latency and no CPI for
+    *arch*, so an empty row never reads as "measured to cost nothing".
+    """
+    if lat is None and cpi is None:
+        return f"[missing:{arch}]"
+    return f"[{arch}, {kind}]"
+
+
 def _ports_for(details: dict[str, Any]) -> str | None:
     measurement = details.get("measurement") or {}
     ports = measurement.get("ports") or measurement.get("TP_ports")
@@ -629,10 +640,7 @@ def format_annotation(
     if performance:
         if arch is not None:
             lat, cpi, kind = arch_perf(record, arch)
-            if lat is None and cpi is None:
-                tag = f"[missing:{arch}]"
-            else:
-                tag = f"[{arch}, {kind}]"
+            tag = arch_perf_tag(arch, lat, cpi, kind)
         else:
             summary = aggregate_perf(record, mode=agg, include_modeled=include_modeled)
             lat, cpi = summary.latency, summary.cpi

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- **`simdref llm query` / `llm batch`** gained `--arch <core>`. It pins `lat`
+  and `cpi` to one microarchitecture and drops the instruction forms that
+  core cannot execute. Without it both scalars are the best value across
+  every part in the catalog (issue #24).
+- Every `llm` instruction and intrinsic record now carries `timing`, a map
+  from canonical core id to `lat`, `cpi`, the upstream `ports` string and
+  `uops`. Latency and throughput are properties of the part, not of the ISA,
+  so a single scalar could not represent them (issue #24).
+- `llm` payloads now carry `generated_at` and `source_versions`, so a
+  consumer can tell which catalog build produced a number (issue #24).
+
+### Fixed
+
+- **`simdref show <mn> --arch <core>`** no longer stamps `[measured]` on rows
+  that hold no measurement for that core; an empty row is tagged
+  `[missing:<core>]`, matching `annotate`. Variants the core cannot execute
+  are omitted with a count line instead of being listed with a blank perf
+  row (issue #23).
+- **`install.sh`** no longer passes `--no-build-isolation` to `uv pip install`. A fresh `uv venv` carries no setuptools, so the wheel build
+  failed with `ModuleNotFoundError: No module named 'setuptools'` (issue
+  #25).
+
 ## [0.0.5] — 2026-07-31
 
 ### Fixed

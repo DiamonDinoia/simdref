@@ -74,7 +74,11 @@ from simdref.ingest_sources import (
 from simdref.manpages import write_manpages
 from simdref import perf
 from simdref.perf import variant_perf_summary
-from simdref.queries import intrinsic_perf_summary_runtime, instruction_rows_for_intrinsic
+from simdref.queries import (
+    instruction_rows_for_intrinsic,
+    intrinsic_perf_summary_runtime,
+    linked_instruction_records,
+)
 from simdref.search import (
     SearchResult,
     find_intrinsic,
@@ -792,6 +796,7 @@ def _llm_result_payload(
                 "isa": item.isa,
                 "lat": lat,
                 "cpi": cpi,
+                "timing": _intrinsic_timing(conn, item, cache=instruction_map),
             }
             operation = _intrinsic_operation_text(item)
             if operation:
@@ -811,6 +816,8 @@ def _llm_result_payload(
             "isa": item.isa,
             "lat": lat,
             "cpi": cpi,
+            "source_kinds": _payload_source_kinds(item.arch_details),
+            "timing": _llm_timing(item.arch_details),
         }
     return {
         "query": result.title,
@@ -825,6 +832,7 @@ def _llm_result_payload(
 def _llm_intrinsic_payload(conn, intrinsic) -> dict:
     instruction_map: dict[str, object] = {}
     lat, cpi = intrinsic_perf_summary_runtime(conn, intrinsic, instruction_map)
+    timing = _intrinsic_timing(conn, intrinsic, cache=instruction_map)
     payload: dict = {
         "query": intrinsic.name,
         "intrinsic": intrinsic.name,
@@ -836,6 +844,7 @@ def _llm_intrinsic_payload(conn, intrinsic) -> dict:
         "lat": lat,
         "cpi": cpi,
         "summary": intrinsic.description,
+        "timing": timing,
     }
     operation = _intrinsic_operation_text(intrinsic)
     if operation:
@@ -843,6 +852,12 @@ def _llm_intrinsic_payload(conn, intrinsic) -> dict:
         # ``_mm_permutevar_pd``) that the one-line summary cannot convey.
         payload["operation"] = operation
     return payload
+
+
+def _intrinsic_timing(conn, intrinsic, cache: dict[str, object] | None = None) -> dict[str, dict]:
+    """Per-core timing for an intrinsic, merged over its linked instruction forms."""
+    linked = linked_instruction_records(None, intrinsic, conn, cache=cache)
+    return _merge_timing([_llm_timing(record.arch_details) for record in linked])
 
 
 def _intrinsic_operation_text(intrinsic) -> str:
@@ -866,7 +881,76 @@ def _llm_instruction_payload(item) -> dict:
         "cpi": cpi,
         "summary": item.summary,
         "source_kinds": _payload_source_kinds(item.arch_details),
+        "timing": _llm_timing(item.arch_details),
     }
+
+
+def _llm_timing(arch_details) -> dict[str, dict]:
+    """Return ``{core: {lat, cpi, ports, uops, source_kind}}`` for one instruction.
+
+    Latency and CPI are microarchitecture properties, so the payload keys
+    them by canonical core id instead of collapsing them to one scalar.
+    Cores with neither value are dropped. ``ports`` carries the upstream
+    port-pressure string verbatim (e.g. ``1*p01``: one uop issuable on
+    port 0 or port 1). No pipe count is derived from it: ``cpi`` already
+    measures issue throughput.
+    """
+    from simdref.annotate import _cpi_for, _latency_for, _per_arch_value, _ports_for
+
+    if not isinstance(arch_details, dict):
+        return {}
+    timing: dict[str, dict] = {}
+    for core in sorted(arch_details):
+        details = arch_details.get(core)
+        if not isinstance(details, dict):
+            continue
+        lat = _per_arch_value(details, _latency_for)
+        cpi = _per_arch_value(details, _cpi_for)
+        if lat is None and cpi is None:
+            continue
+        ports = _ports_for(details)
+        entry: dict = {
+            "lat": lat,
+            "cpi": cpi,
+            "source_kind": perf._source_kind(details),
+        }
+        if ports:
+            entry["ports"] = ports
+        uops = (details.get("measurement") or {}).get("uops")
+        if uops:
+            entry["uops"] = uops
+        timing[core] = entry
+    return timing
+
+
+def _merge_timing(per_instruction: list[dict[str, dict]]) -> dict[str, dict]:
+    """Merge per-instruction timing maps, keeping the lowest value per core.
+
+    Mirrors the reduction the scalar ``lat``/``cpi`` fields already apply
+    across an intrinsic's linked instruction forms.
+    """
+    merged: dict[str, dict] = {}
+    kinds: dict[str, set[str]] = {}
+    for timing in per_instruction:
+        for core, entry in timing.items():
+            kinds.setdefault(core, set()).add(entry.get("source_kind", "measured"))
+            current = merged.get(core)
+            if current is None:
+                merged[core] = dict(entry)
+                continue
+            for field in ("lat", "cpi"):
+                new_value, old_value = entry.get(field), current.get(field)
+                if new_value is not None and (old_value is None or new_value < old_value):
+                    current[field] = new_value
+            for field in ("ports", "uops"):
+                if field not in current and entry.get(field) is not None:
+                    current[field] = entry[field]
+    for core, current in merged.items():
+        # The winning lat and cpi may come from differently-sourced forms, so a
+        # single label would misattribute one of them. Same convention as `aggregate_perf`.
+        if len(kinds[core]) > 1:
+            current["source_kind"] = "mixed"
+    return {core: merged[core] for core in sorted(merged)}
 
 
 def _payload_source_kinds(arch_details) -> list[str]:
@@ -971,7 +1055,13 @@ def _print_non_interactive_summary(
     When ``arch`` is set, emits per-arch lat/cpi pinned to that arch;
     otherwise reports the average across all archs with measured data.
     """
-    from simdref.annotate import aggregate_perf, arch_perf, collect_ports, _fmt_num
+    from simdref.annotate import (
+        aggregate_perf,
+        arch_perf,
+        arch_perf_tag,
+        collect_ports,
+        _fmt_num,
+    )
     from simdref.perf_sources.cores import canonical_core_id, supported_core_ids
 
     canonical_arch: str | None = None
@@ -988,14 +1078,24 @@ def _print_non_interactive_summary(
         err_console.print(f"no instruction match for {query!r}", style="yellow")
         return 2
 
+    # uops.info records a core only for encodings it can execute, so an absent
+    # arch_details key means this form does not run on the pinned core.
+    skipped = 0
+    if canonical_arch is not None:
+        runnable = [rec for rec in records if canonical_arch in (rec.arch_details or {})]
+        skipped = len(records) - len(runnable)
+        records = runnable
+
     if as_json:
         import json as _json
 
-        payload = {
+        payload: dict = {
             "query": query,
             "arch": canonical_arch,
             "variants": [],
         }
+        if canonical_arch is not None:
+            payload["variants_not_runnable"] = skipped
         for rec in records:
             iter_archs = (
                 [canonical_arch] if canonical_arch else sorted((rec.arch_details or {}).keys())
@@ -1034,6 +1134,8 @@ def _print_non_interactive_summary(
         return 0
 
     typer.echo(f"# {query}  ({len(records)} variant{'s' if len(records) != 1 else ''})")
+    if canonical_arch is not None and skipped:
+        typer.echo(f"# {skipped} further variant(s) omitted: {canonical_arch} cannot execute them.")
     for rec in records:
         typer.echo("")
         typer.echo(f"[{rec.key}]")
@@ -1043,10 +1145,8 @@ def _print_non_interactive_summary(
             lat, cpi, kind = arch_perf(rec, canonical_arch)
             ports = collect_ports(rec, arch=canonical_arch, archs_used=[canonical_arch])
             ports_str = ",".join(ports) if ports else "-"
-            typer.echo(
-                f"  {canonical_arch} [{kind}]: "
-                f"lat={_fmt_num(lat)}c cpi={_fmt_num(cpi)} ports={ports_str}"
-            )
+            tag = arch_perf_tag(canonical_arch, lat, cpi, kind)
+            typer.echo(f"  {tag}: lat={_fmt_num(lat)}c cpi={_fmt_num(cpi)} ports={ports_str}")
         else:
             summary = aggregate_perf(rec, mode="avg", include_modeled=False)
             ports = collect_ports(rec, arch=None, archs_used=summary.archs_used)
@@ -1570,8 +1670,69 @@ def _llm_schema_payload() -> dict:
                         },
                     },
                     "isa": {"type": "array", "items": {"type": "string"}},
-                    "lat": {"type": "string"},
-                    "cpi": {"type": "string"},
+                    "lat": {
+                        "type": "string",
+                        "description": (
+                            "Best latency in cycles across every microarchitecture in the "
+                            "catalog, or the pinned one under --arch. Use `timing` when the "
+                            "target part matters."
+                        ),
+                    },
+                    "cpi": {
+                        "type": "string",
+                        "description": (
+                            "Best cycles-per-instruction across every microarchitecture in "
+                            "the catalog, or the pinned one under --arch."
+                        ),
+                    },
+                    "arch": {
+                        "type": "string",
+                        "description": "Canonical core id the record was pinned to by --arch.",
+                    },
+                    "timing": {
+                        "type": "object",
+                        "description": (
+                            "Per-microarchitecture timing keyed by canonical core id (SKX, "
+                            "ZEN4, neoverse-v2, ...). Latency and throughput are properties "
+                            "of the part, not of the ISA, so they are reported per core. A "
+                            "core absent from the map cannot execute the form, or carries no "
+                            "measurement. On an intrinsic record the values are reduced "
+                            "across the linked instruction forms, the same way `lat`/`cpi` are."
+                        ),
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "lat": {
+                                    "type": ["number", "null"],
+                                    "description": "Latency in cycles on this core.",
+                                },
+                                "cpi": {
+                                    "type": ["number", "null"],
+                                    "description": (
+                                        "Cycles per instruction on this core. "
+                                        "ceil(lat / cpi) independent chains saturate the unit."
+                                    ),
+                                },
+                                "ports": {
+                                    "type": "string",
+                                    "description": (
+                                        "Upstream port-pressure string, e.g. '1*p01': one uop "
+                                        "issuable on port 0 or port 1."
+                                    ),
+                                },
+                                "uops": {"type": "string"},
+                                "source_kind": {
+                                    "type": "string",
+                                    "enum": ["measured", "modeled"],
+                                },
+                            },
+                        },
+                    },
+                    "source_kinds": {
+                        "type": "array",
+                        "description": "Distinct provenance kinds present in this record.",
+                        "items": {"type": "string", "enum": ["measured", "modeled"]},
+                    },
                     "summary": {"type": "string"},
                     "url": {
                         "type": "string",
@@ -1595,6 +1756,58 @@ llm_app = typer.Typer(
 _LLM_HELP_PANEL = "Commands"
 
 
+def _llm_catalog_meta(conn) -> dict:
+    """Catalog provenance for an llm payload: build stamp and pinned sources."""
+    from simdref.storage import generated_at_from_db, load_sources_from_db
+
+    return {
+        "generated_at": generated_at_from_db(conn),
+        "source_versions": [asdict(source) for source in load_sources_from_db(conn)],
+    }
+
+
+def _pin_arch(records: list[dict], arch: str) -> list[dict]:
+    """Restrict every record's ``timing`` map to *arch* and re-key ``lat``/``cpi``.
+
+    Records whose ``timing`` map has no entry for *arch* are dropped: the
+    upstream perf sources list only the cores that can execute a form, so
+    an absent core means that core cannot run it.
+    """
+    pinned: list[dict] = []
+    for rec in records:
+        entry = (rec.get("timing") or {}).get(arch)
+        if entry is None:
+            continue
+        rec = dict(rec)
+        rec["timing"] = {arch: entry}
+        rec["arch"] = arch
+        rec["lat"] = "-" if entry.get("lat") is None else _fmt_perf_scalar(entry["lat"])
+        rec["cpi"] = "-" if entry.get("cpi") is None else f"{entry['cpi']:.2f}"
+        rec["source_kinds"] = [entry["source_kind"]]
+        pinned.append(rec)
+    return pinned
+
+
+def _fmt_perf_scalar(value: float) -> str:
+    """Format a cycle count the way the unpinned ``lat`` field already does."""
+    return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
+
+
+def _resolve_llm_arch_or_exit(arch: str | None) -> str | None:
+    """Map an ``--arch`` alias to its canonical core id, or exit with a usage error."""
+    if not arch:
+        return None
+    from simdref.perf_sources.cores import canonical_core_id, supported_core_ids
+
+    canonical = canonical_core_id(arch)
+    if canonical is None:
+        typer.echo(
+            f"error: unknown --arch '{arch}' (known: {', '.join(supported_core_ids())})", err=True
+        )
+        raise typer.Exit(code=LLM_EXIT_USAGE)
+    return canonical
+
+
 def _build_llm_payload(
     conn,
     query_str: str,
@@ -1602,40 +1815,49 @@ def _build_llm_payload(
     isa: list[str] | None,
     category: list[str] | None,
     source_kind: str | None,
+    arch: str | None = None,
 ) -> dict:
     """Build the llm payload for *query_str* against an open DB connection.
 
     Kept free of I/O and exit logic so that ``simdref llm batch`` can call it
     in a loop without re-opening the catalog per query.
     """
+    meta = _llm_catalog_meta(conn)
+    if arch:
+        meta["arch"] = arch
+
+    def finish(records: list[dict]) -> list[dict]:
+        records = _llm_filter_records(records, isa, category, source_kind=source_kind)
+        return _pin_arch(records, arch) if arch else records
+
     intrinsic = load_intrinsic_from_db(conn, query_str)
     if intrinsic is not None:
-        result = _llm_intrinsic_payload(conn, intrinsic)
-        kept = _llm_filter_records([result], isa, category, source_kind=source_kind)
+        kept = finish([_llm_intrinsic_payload(conn, intrinsic)])
         return {
             "query": query_str,
             "mode": "exact",
             "match_kind": "intrinsic" if kept else None,
             **({"result": kept[0]} if kept else {"results": []}),
+            **meta,
         }
     instructions = _find_instructions_fast(query_str)
     if instructions:
-        items = [_llm_instruction_payload(item) for item in instructions]
-        items = _llm_filter_records(items, isa, category, source_kind=source_kind)
         return {
             "query": query_str,
             "mode": "exact",
             "match_kind": "instruction",
-            "results": items,
+            "results": finish([_llm_instruction_payload(item) for item in instructions]),
+            **meta,
         }
     results, intrinsic_map, instruction_map = _search_runtime(conn, query_str, limit=limit)
-    items = [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
-    items = _llm_filter_records(items, isa, category, source_kind=source_kind)
     return {
         "query": query_str,
         "mode": "search",
         "match_kind": None,
-        "results": items,
+        "results": finish(
+            [_llm_result_payload(conn, r, intrinsic_map, instruction_map) for r in results]
+        ),
+        **meta,
     }
 
 
@@ -1673,9 +1895,11 @@ def _llm_query_impl(
     category: list[str] | None,
     preset: str | None = None,
     source_kind: str | None = None,
+    arch: str | None = None,
 ) -> None:
     fmt_lower = _normalize_fmt(fmt, {"json", "ndjson", "markdown"})
     isa = _resolve_preset_or_exit(preset, isa)
+    canonical_arch = _resolve_llm_arch_or_exit(arch)
     if not query_tokens:
         typer.echo(
             "error: query required (or use `simdref llm list` / `simdref llm schema`)", err=True
@@ -1685,7 +1909,9 @@ def _llm_query_impl(
     ensure_runtime()
     try:
         with open_db() as conn:
-            payload = _build_llm_payload(conn, query_str, limit, isa, category, source_kind)
+            payload = _build_llm_payload(
+                conn, query_str, limit, isa, category, source_kind, arch=canonical_arch
+            )
     except typer.Exit:
         raise
     except Exception as exc:  # pragma: no cover - internal error path
@@ -1711,12 +1937,20 @@ def llm_query(
     source_kind: str = typer.Option(
         "any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."
     ),
+    arch: str = typer.Option(
+        None,
+        "--arch",
+        help=(
+            "Pin lat/cpi/ports to one microarchitecture (e.g. znver4, skylake-x); "
+            "drops forms the core cannot execute."
+        ),
+    ),
 ) -> None:
     """Resolve a query and emit an LLM-friendly payload.
 
     Exit codes: 0 match, 2 no-match, 3 ambiguous, 1 usage error, 10 internal.
     """
-    _llm_query_impl(query, limit, fmt, isa, None, preset=preset, source_kind=source_kind)
+    _llm_query_impl(query, limit, fmt, isa, None, preset=preset, source_kind=source_kind, arch=arch)
 
 
 def _emit_filtered_names(
@@ -1853,6 +2087,14 @@ def llm_batch(
     source_kind: str = typer.Option(
         "any", "--source-kind", help="Filter perf rows by provenance: measured, modeled, or any."
     ),
+    arch: str = typer.Option(
+        None,
+        "--arch",
+        help=(
+            "Pin lat/cpi/ports to one microarchitecture (e.g. znver4, skylake-x); "
+            "drops forms the core cannot execute."
+        ),
+    ),
 ) -> None:
     """Resolve queries from stdin (one per line); emit NDJSON records.
 
@@ -1861,6 +2103,7 @@ def llm_batch(
     when a Claude skill resolves every mnemonic in a disassembly.
     """
     isa = _resolve_preset_or_exit(preset, isa)
+    canonical_arch = _resolve_llm_arch_or_exit(arch)
     ensure_runtime()
     with open_db() as conn:
         for raw_line in sys.stdin:
@@ -1868,7 +2111,15 @@ def llm_batch(
             if not query or query.startswith("#"):
                 continue
             try:
-                payload = _build_llm_payload(conn, query, limit, isa, None, source_kind)
+                payload = _build_llm_payload(
+                    conn,
+                    query,
+                    limit,
+                    isa,
+                    None,
+                    source_kind,
+                    arch=canonical_arch,
+                )
                 exit_code = _llm_exit_code(payload)
                 if exit_code == LLM_EXIT_MATCH:
                     status = "match"

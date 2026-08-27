@@ -390,6 +390,7 @@ ______________________________________________________________________
 `simdref annotate` can be wrong: mnemonics may be misclassified, the wrong uarch row may be joined, or measured/modeled rows may swap. Before quoting numbers in §7:
 
 - Spot-check 2–3 of the dominant mnemonics against their primary source (Intel Intrinsics Guide, uops.info page, Arm Exploration Tools, LLVM schedule model) via `simdref show <mnemonic> --arch <resolved>` and, where feasible, the original upstream URL.
+- Under `--arch`, `show` lists only the variants that core can execute, so a short list is expected. A variant tagged `[missing:<arch>]` carries no measurement for that core; that is not a zero cost. An empty list means the mnemonic has no data for that core at all — the §9 refuse condition.
 - If the annotation marks an instruction `unknown ??` that you recognise as standard, flag a catalog bug rather than silently skipping.
 - If any cross-checked number disagrees with simdref's payload by more than the measurement noise floor, surface the discrepancy in §7 instead of picking one.
 
@@ -400,10 +401,18 @@ ______________________________________________________________________
 Extract distinct `mnemonic` values from the JSON, then:
 
 ```bash
-printf '%s\n' "${mnemonics[@]}" | simdref llm batch --source-kind measured --preset intel
+printf '%s\n' "${mnemonics[@]}" | simdref llm batch --arch <resolved> --source-kind measured --preset intel
 ```
 
 Parse the NDJSON with `jq -c .`. Prefer `--source-kind measured`; fall back to `any` only for mnemonics that return `no_match` on measured.
+
+`--arch` pins `lat` and `cpi` to one core and drops the forms that core cannot execute. Without it, both scalars collapse to the best value across every part in the catalog, which is the wrong number for the target. Each record also carries `timing`, a per-core map of `lat`, `cpi` and the upstream `ports` string, so an unpinned payload still lets you read one part off it:
+
+```bash
+jq -c '.payload.results[] | {q: .query, t: .timing.ZEN4}'
+```
+
+For an unrolling proposal in §7, the number of independent chains that saturate the unit is `ceil(lat / cpi)` on the target core. A chain issues one instruction every `lat` cycles, and the unit retires `1/cpi` per cycle, so `lat/cpi` chains are needed to fill it. `vfmadd132pd (ymm, ymm, ymm)` on ZEN4 reads `lat=4.0 cpi=0.50`, giving 8 chains. Quote the core the numbers came from.
 
 ______________________________________________________________________
 
