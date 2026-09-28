@@ -10,6 +10,8 @@ the release artifact a separate web repo consumes (see ``simdref export``):
 * **search-index-intrinsics.json** -- the ``intrinsics`` array
   (~1.7 MB gzipped). Loaded in parallel and folded into the search
   index after first paint.
+* **latency-index.json** -- per-instruction lat/cpi keyed by ``db_key``,
+  the same values queryable straight from ``catalog.db``.
 * **detail-chunks/{PREFIX}.json** -- full instruction details (operands,
   measurements) loaded on demand when the user selects a result.
 
@@ -179,6 +181,15 @@ def _instr_perf_map(catalog: Catalog) -> dict[str, tuple[str, str]]:
         lat, cpi = variant_perf_summary(item.arch_details)
         perf[item.db_key] = (lat, cpi)
     return perf
+
+
+def latency_index_for_catalog(catalog: Catalog) -> dict[str, dict[str, str]]:
+    """Per-instruction lat/cpi keyed by ``db_key``, the same value ``catalog.db`` holds.
+
+    Reuses :func:`_instr_perf_map` (also used to fill the ``lat``/``cpi``
+    fields on search-index entries), so the two stay in lockstep.
+    """
+    return {key: {"lat": lat, "cpi": cpi} for key, (lat, cpi) in _instr_perf_map(catalog).items()}
 
 
 def _search_intrinsics(catalog: Catalog, instr_perf: dict[str, tuple[str, str]]) -> list[dict]:
@@ -417,6 +428,7 @@ def export_site_data(catalog: Catalog, out_dir: Path) -> None:
     * ``search-index-meta.json`` -- bootstrap stamp + ISA config + available_isas
     * ``search-index-instructions.json`` -- instruction search entries
     * ``search-index-intrinsics.json`` -- intrinsic search entries
+    * ``latency-index.json`` -- per-instruction lat/cpi, keyed by ``db_key``
     * ``filter_spec.json`` -- shared ISA/category facets (web + CLI)
     * ``build_stamp.json`` -- version/freshness metadata + ``schema_version``
     * ``detail-chunks/{PREFIX}.json`` -- instruction detail chunks
@@ -438,6 +450,8 @@ def export_site_data(catalog: Catalog, out_dir: Path) -> None:
         legacy = out_dir / stale
         if legacy.exists():
             legacy.unlink()
+
+    _write_json(out_dir / "latency-index.json", latency_index_for_catalog(catalog))
 
     filter_spec = _filter_spec_for_catalog(catalog)
     _write_json(out_dir / "filter_spec.json", filter_spec.to_json())
