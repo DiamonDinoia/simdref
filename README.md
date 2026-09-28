@@ -27,8 +27,8 @@ interface for LLM skills.
 ## Install the Claude Code skill
 
 `skills/asm-analysis/` ships a Claude Code skill that drives the
-compile → objdump → `simdref annotate` → `simdref profile` → LLM-batch
-pipeline automatically. This repo publishes it as a Claude Code plugin,
+compile → objdump → `simdref annotate` → LLM-batch pipeline
+automatically. This repo publishes it as a Claude Code plugin,
 so the one-liner install is:
 
 ```
@@ -100,15 +100,6 @@ pip install simdref
 isa update     # download the pre-built catalog
 isa doctor     # confirm everything is wired up
 isa            # open the TUI
-```
-
-For the bleeding-edge version with the `simdref profile` subcommand
-(runtime-profile → asm-annotation pipeline, Stage 2b of the skill),
-install from `main`:
-
-```bash
-pipx install git+https://github.com/DiamonDinoia/simdref.git@main
-# or editable: pip install -e git+https://github.com/DiamonDinoia/simdref.git@main#egg=simdref
 ```
 
 The package installs two equivalent executables, **`isa`** (short) and
@@ -226,10 +217,6 @@ and `ld` still consume it.
 | `isa doctor`            | Check the installation — pass/fail per component, non-zero exit on failure                                        |
 | `isa update`            | Download the pre-built release catalog (no `llvm-mca` required); `--from-release` for the GitHub Release artifact |
 | `isa annotate <file.s>` | Annotate a `.s` assembly file with per-instruction summaries and latency/CPI — writes `<file>.sa`                 |
-| `isa profile run`       | Compile→record→disassemble→annotate→merge in one shot (perf or llvm-mca)                                          |
-| `isa profile ingest`    | Convert profiler output (perf / VTune / uProf / xctrace / llvm-mca / exegesis) to normalized samples              |
-| `isa profile hotloops`  | Detect natural loops in a disassembly and rank them by sample weight                                              |
-| `isa profile merge`     | Attach hotness data to the annotated instruction stream                                                           |
 | `isa llm query <q>`     | Strict lookup → JSON/NDJSON/Markdown (see [docs/LLM.md](docs/LLM.md))                                             |
 | `isa llm batch`         | Resolve many queries from stdin in one invocation (NDJSON out)                                                    |
 | `isa llm list`          | Dump the `FilterSpec` or stream matching catalog entries                                                          |

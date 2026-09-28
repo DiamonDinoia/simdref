@@ -15,9 +15,7 @@ simdref --version   # or: simdref -V
 ### 0a. Not installed
 
 Ask the user which of these to use, then proceed. Prefer **installing
-from `main`** — the released PyPI build lags behind and omits the
-`simdref profile` subcommand the profile-driven workflow in §2b depends
-on.
+from `main`** — the released PyPI build lags behind upstream fixes.
 
 1. **From GitHub `main` via pipx (recommended):**
    ```bash
@@ -36,7 +34,7 @@ on.
    # or editable inside a venv:
    pip install -e /path/to/simdref
    ```
-1. **Released PyPI build (simplest, but missing `simdref profile`):**
+1. **Released PyPI build (simplest):**
    ```bash
    pipx install simdref
    ```
@@ -53,11 +51,6 @@ pipx install simdref --pip-args "--index-url https://test.pypi.org/simple/ --ext
 ```
 
 Never install without asking.
-
-**Feature check:** if the user's existing install doesn't respond to
-`simdref profile --help` but Stage 2b is needed, offer to upgrade to
-`main` via the first option above before falling back to the hand-picked
-region flow in §3.
 
 ### 0b. Already installed — freshness probe (run at most once per session)
 
@@ -109,8 +102,7 @@ that matches; do not nag a second time in the same session):
 | Condition                                                                                        | Ask the user                                                                                                                                                          |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `installed < pypi`                                                                               | Minor-release available — offer `pipx upgrade simdref`.                                                                                                               |
-| `unreleased >= 1` and skill does not need `simdref profile`                                      | Pre-release with N commits past `v$pypi`. Offer `pipx install --force git+https://github.com/DiamonDinoia/simdref.git@main`. Mention this is optional.                |
-| `simdref profile --help` fails and Stage 2b is likely needed                                     | **Required** upgrade to main to unlock the profile pipeline — install from `main`.                                                                                    |
+| `unreleased >= 1`                                                                                | Pre-release with N commits past `v$pypi`. Offer `pipx install --force git+https://github.com/DiamonDinoia/simdref.git@main`. Mention this is optional.                |
 | `skill_sha` differs from the last one stored in `~/.cache/simdref-asm-skill/last-seen-skill-sha` | Skill workflow has been updated upstream. Offer the product-specific update path from the skill entrypoint, or `(cd ~/src/simdref && git pull)` for symlink installs. |
 | None of the above                                                                                | Silent — record the state and continue.                                                                                                                               |
 
@@ -247,107 +239,6 @@ ______________________________________________________________________
    ```
    Cross-check against `/proc/cpuinfo` "model name".
 1. Still ambiguous → ask. Never silently guess.
-
-______________________________________________________________________
-
-## 2b. Profile-driven region selection (OPTIONAL; skips 3 when available)
-
-If the user can run the binary and you have access to a profiler, let the
-tooling pick the hot region instead of hand-selecting one. Build with
-`-g -fno-omit-frame-pointer` so addr2line and perf call-graphs work.
-
-```bash
-# All-in-one: record, disassemble, annotate, detect hot loops, merge.
-simdref profile run --target ./a.out --args "input.dat" \
-                    --adapter perf --event "cycles:u,instructions:u" \
-                    --duration 10 --arch <resolved> --top 5 -o report/
-```
-
-Artifacts in `report/`:
-
-- `perf.data`, `disasm.s`, `annotated.json`, `samples.json`
-- `loops.json` — top-N natural loops ranked by cumulative sample weight
-- `hot.sa` — side-annotated listing with per-line hotness bars
-- `merged.json` — per-instruction `{annotation, hotness:{event:{samples,weight,source_kind}, rank, in_hot_loop}}`
-- `summary.md` — top loops + hottest instructions rollup
-
-Read `summary.md` first, then `hot.sa` for the full inlined hot region.
-Do **not** hand-edit or regex `hot.sa`; reach for `merged.json` when you
-need structured data.
-
-### Reading the output
-
-- **Low FMA / high load-store share** (e.g. `vmovups` > `vfmadd213ps`) →
-  memory-bound inner loop; suggest tiling, prefetch, or layout changes
-  before touching ISA choice.
-- **High `mov`/`cmp` share, no SIMD mnemonics** → scalar branch-bound
-  loop; intrinsic vectorisation is on the table.
-- **AVX2 `vpack*`/`vpunpck*`/`vpshuf*` chains dominating** → compiler
-  auto-vectorised a scalar kernel with a costly pack/unpack shuffle
-  path; a hand-written intrinsic version may beat it.
-
-### Event names
-
-perf event names vary by hardware. The `perf` adapter normalises
-Intel hybrid-CPU PMU names (`cpu_core/cycles/u` → `cycles`,
-`cpu_atom/instructions/u` → `instructions`) and strips the `:u`
-/`:pp` modifier suffixes, so downstream tools can always rank with
-`--event cycles` or `--event instructions`.
-
-### Fallback paths (no perf, no root, CI containers)
-
-```bash
-simdref profile ingest --adapter mca     --input mca.json        -o samples.json
-simdref profile ingest --adapter vtune   --input r000hs.csv      -o samples.json
-simdref profile ingest --adapter uprof   --input uprof.csv       -o samples.json
-simdref profile ingest --adapter exegesis --input exegesis.json  -o samples.json
-simdref profile ingest --adapter xctrace --input trace.xml       -o samples.json  # macOS
-
-simdref profile hotloops disasm.s samples.json --event cycles --top 3 -o loops.json
-simdref profile merge    annotated.json samples.json --restrict-to loops.json \
-                         --format sa -o hot.sa
-```
-
-`--adapter mca` is the universal static-only fallback — it works wherever
-`llvm-mca` works and tags its output `source_kind=modeled`.
-
-### PIE binaries and address joining
-
-`simdref annotate` parses objdump output with `--track-positions`. The
-perf adapter resolves each sample's `(sym, symoff)` through the binary's
-own symbol table so address-level joins work on PIE/ASLR targets
-without any manual base-offset arithmetic. Just pass `--binary <path>`
-to `profile ingest` (the `profile run` wrapper does this for you).
-
-When hot loops are known, skip §3 and annotate just the loop bodies in §4.
-
-### 2b.1. Per-IP region binning (when you need cycle share by source region)
-
-`simdref profile run` ranks loops, but for higher-level regions (named
-phases of a multi-stage hot path: scatter / dispatch / unpermute, etc.)
-you usually want a flat per-IP histogram resolved through `addr2line`.
-Use this when the hot path spans multiple inlined helpers and you need
-to report "phase X = N% cycles":
-
-```bash
-perf script -i report/perf.data \
-  | awk '/cycles:u/{print $4,$5,$6}' \
-  | sort | uniq -c | sort -rn | head -200 \
-  | awk '{print $3}' \
-  | xargs -n1 addr2line -i -f -C -e <binary>
-```
-
-Group the resolved IPs into named regions (HIST_FAST, INPUT_SCATTER,
-PER_LEAF_DISPATCH, …) and report a cycle share per region. Re-run after
-each shipped optimisation and use the post-optimisation shares to pick
-the next candidate (EV = share × plausible shave; discard < 5 % EV on
-every scenario).
-
-**Caveat for hybrid CPUs:** the perf adapter normalises Intel hybrid
-PMU names but `perf script` still mixes core/atom samples. If you
-benched pinned to a single P-core (`taskset -c 2`), filter samples by
-`cpu` column or re-record with `--cpu 2`, otherwise atom-core
-mispredicts pollute the histogram.
 
 ______________________________________________________________________
 
