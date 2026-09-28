@@ -1,10 +1,11 @@
 """Auto-update when the installed package version changes.
 
 After a ``pip``/``uv`` install or upgrade the recorded version stamp in
-``DATA_DIR`` will not match ``simdref.__version__``. ``ensure_runtime``
-must transparently refresh the catalog so users don't have to remember
-to run ``simdref update`` themselves. These tests stub the network and
-the on-disk catalog to exercise the version-stamp logic in isolation.
+``catalog.db``'s ``meta`` table will not match ``simdref.__version__``.
+``ensure_runtime`` must transparently refresh the catalog so users don't
+have to remember to run ``simdref update`` themselves. These tests stub
+the network and the on-disk catalog to exercise the version-stamp logic
+in isolation.
 """
 
 from __future__ import annotations
@@ -20,14 +21,13 @@ from rich.console import Console
 
 
 class _StampFixture:
-    """Redirect the version-stamp file to a tmp path for the test body."""
+    """Redirect the version-stamp storage to a tmp path for the test body."""
 
     def __init__(self, tmp_dir: Path):
         self.path = tmp_dir / "installed_version"
 
     def __enter__(self):
         self._patches = [
-            mock.patch("simdref.storage.INSTALLED_VERSION_STAMP", self.path),
             mock.patch("simdref.cli.read_installed_version_stamp", self._read),
             mock.patch("simdref.cli.write_installed_version_stamp", self._write),
         ]

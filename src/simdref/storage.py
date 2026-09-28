@@ -86,7 +86,6 @@ else:
 
 CATALOG_PATH = DATA_DIR / "catalog.msgpack"
 SQLITE_PATH = DATA_DIR / "catalog.db"
-INSTALLED_VERSION_STAMP = DATA_DIR / "installed_version"
 SQLITE_SCHEMA_VERSION = "13"
 
 
@@ -110,19 +109,38 @@ def _unpack_payload(data: bytes):
 
 
 def read_installed_version_stamp() -> str | None:
-    """Return the package version that last refreshed the data dir, or None."""
-    try:
-        return INSTALLED_VERSION_STAMP.read_text(encoding="utf-8").strip() or None
-    except OSError:
+    """Return the package version that last refreshed catalog.db's meta table, or None."""
+    if not SQLITE_PATH.exists():
         return None
+    try:
+        conn = sqlite3.connect(SQLITE_PATH)
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'installed_version'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        return None
+    return (row[0].strip() or None) if row else None
 
 
 def write_installed_version_stamp(version: str) -> None:
-    """Record the package version that just refreshed the data dir."""
+    """Record the package version that just refreshed catalog.db's meta table."""
+    if not SQLITE_PATH.exists():
+        return  # best-effort — stamp persistence must not break commands
     try:
-        INSTALLED_VERSION_STAMP.parent.mkdir(parents=True, exist_ok=True)
-        INSTALLED_VERSION_STAMP.write_text(version.strip() + "\n", encoding="utf-8")
-    except OSError:
+        conn = sqlite3.connect(SQLITE_PATH)
+        try:
+            conn.execute(
+                "INSERT INTO meta VALUES ('installed_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (version.strip(),),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
         pass  # best-effort — stamp persistence must not break commands
 
 
@@ -452,18 +470,25 @@ def build_sqlite(catalog: Catalog, path: Path = SQLITE_PATH) -> None:
         )
 
     conn.commit()
-    # The rename below moves only the main file, so every WAL page must be in it
-    # first. Python 3.11 does not checkpoint on close while a cursor is alive, and
-    # published a bare 4096-byte header with the content orphaned in `<tmp>-wal`.
+    # Switch back to DELETE before publishing: a reader that only opens the
+    # published catalog.db must never create -wal/-shm sidecars next to it.
+    # Switching away from WAL forces SQLite to checkpoint every WAL page into
+    # the main file first, so the rename below never orphans content in
+    # `<tmp>-wal` the way a bare close under WAL used to (Python 3.11 does
+    # not checkpoint on close while a cursor is alive).
     cur.close()
-    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.close()
-    for sidecar in ("-wal", "-shm"):
-        _db_tmp.with_name(_db_tmp.name + sidecar).unlink(missing_ok=True)
     # Atomic publish: build into a sibling .tmp so a crash mid-build never
     # leaves the runtime without a database (matters when refreshing from a
     # DB that was just read as the fallback source).
     _db_tmp.replace(path)
+    # `replace()` only swaps the main file: a WAL-mode catalog.db published
+    # before this fix left `-wal`/`-shm` siblings at `path` that a plain
+    # rename does not touch. Drop them so a re-publish over an old WAL-mode
+    # catalog.db doesn't leave that debris next to the new DELETE-mode one.
+    for suffix in ("-wal", "-shm"):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
 
 
 def load_sources_from_db(conn: sqlite3.Connection) -> list[SourceVersion]:
