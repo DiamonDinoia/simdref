@@ -107,6 +107,7 @@ from simdref.storage import (
     sqlite_schema_is_current,
     write_installed_version_stamp,
 )
+from simdref.export import export_site_data
 from simdref.web import export_web
 
 
@@ -2396,6 +2397,18 @@ def _export_web_impl(web_dir: Path) -> None:
     catalog = ensure_catalog()
     export_web(catalog, web_dir)
     console.print(f"exported static web app to {web_dir}", style="green")
+
+
+@app.command("export", rich_help_panel="Dev commands")
+def export_command(
+    out_dir: Path = typer.Option(
+        WEB_DIR, help="Output directory for the site-data JSON export (no HTML)."
+    ),
+) -> None:
+    """Export site data (JSON only): the release contract for the web repo."""
+    catalog = ensure_catalog()
+    export_site_data(catalog, out_dir)
+    console.print(f"exported site data to {out_dir}", style="green")
 
 
 @app.command("web", rich_help_panel="Dev commands")

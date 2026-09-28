@@ -557,7 +557,7 @@ function chunkPrefix(mnemonic) {
   return c.length >= 3 ? c.slice(0, 3) : c;
 }
 
-/* Keep in sync with simdref.web._intrinsic_chunk_prefix. */
+/* Keep in sync with simdref.export._intrinsic_chunk_prefix. */
 function intrinsicChunkPrefix(name) {
   let s = String(name || "").replace(/^_+/, "");
   if (s.slice(0, 6).toLowerCase() === "riscv_") s = s.slice(6);

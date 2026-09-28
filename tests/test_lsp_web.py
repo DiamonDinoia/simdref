@@ -150,8 +150,8 @@ class LspWebTests(unittest.TestCase):
             # Intrinsic details are sharded into per-prefix chunks to avoid
             # shipping the 144 MB monolithic file to the client. The
             # client derives the bucket from the intrinsic name with the
-            # same rule as ``simdref.web._intrinsic_chunk_prefix``.
-            from simdref.web import _intrinsic_chunk_prefix
+            # same rule as ``simdref.export._intrinsic_chunk_prefix``.
+            from simdref.export import _intrinsic_chunk_prefix
 
             intrinsic_chunks_dir = Path(tmpdir) / "intrinsic-chunks"
             self.assertTrue(intrinsic_chunks_dir.is_dir())
@@ -235,7 +235,7 @@ class LspWebTests(unittest.TestCase):
 
             # Intrinsic details live in per-prefix chunks; hydrate the
             # bucket that carries ``vaddq_u8`` and spot-check.
-            from simdref.web import _intrinsic_chunk_prefix
+            from simdref.export import _intrinsic_chunk_prefix
 
             vaddq_bucket = _intrinsic_chunk_prefix("vaddq_u8")
             intr_chunk = json.loads(
