@@ -108,7 +108,6 @@ from simdref.storage import (
     write_installed_version_stamp,
 )
 from simdref.export import export_site_data
-from simdref.web import export_web
 
 
 def _tui_preset_pref_path() -> "Path":
@@ -214,7 +213,7 @@ def _pager_context():
         yield console.pager(styles=False)
 
 
-GITHUB_REPO = "DiamonDinoia/simdref"
+GITHUB_REPO = os.environ.get("SIMDREF_CORE_REPO", "DiamonDinoia/simdref")
 RELEASE_TAG = "data-latest"
 
 
@@ -359,8 +358,8 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         build_sqlite(catalog)
         _status("Writing manpages")
         write_manpages(catalog, man_dir)
-        _status("Exporting static web bundle")
-        export_web(catalog, WEB_DIR)
+        _status("Exporting site data")
+        export_site_data(catalog, WEB_DIR)
         err_console.print(
             f"updated catalog with {len(catalog.intrinsics)} intrinsics and {len(catalog.instructions)} instructions",
             style="green",
@@ -457,10 +456,10 @@ def _build_runtime_locally(*, man_dir: Path, include_sdm: bool = False) -> None:
         )
         count_progress.update(man_task, description="Writing manpages \u2713")
 
-        web_task = count_progress.add_task("Exporting static web bundle", total=1)
-        export_web(catalog, WEB_DIR)
+        web_task = count_progress.add_task("Exporting site data", total=1)
+        export_site_data(catalog, WEB_DIR)
         count_progress.update(
-            web_task, completed=1, description="Exporting static web bundle \u2713"
+            web_task, completed=1, description="Exporting site data \u2713"
         )
 
     err_console.print(
@@ -1325,8 +1324,8 @@ def update(
     """Download the pre-built release catalog (no llvm-mca required).
 
     Installs just the catalog snapshot and SQLite database (~2 files).
-    Manpages are opt-in via ``simdref install-manpages``; the static web
-    bundle via ``simdref web``.
+    Manpages are opt-in via ``simdref install-manpages``; site data for the
+    web repo via ``simdref export``.
     """
     if from_release:
         _download_from_release()
@@ -2393,12 +2392,6 @@ def doctor() -> None:
     console.print("\n[bold green]All checks passed.[/] simdref is ready.")
 
 
-def _export_web_impl(web_dir: Path) -> None:
-    catalog = ensure_catalog()
-    export_web(catalog, web_dir)
-    console.print(f"exported static web app to {web_dir}", style="green")
-
-
 @app.command("export", rich_help_panel="Dev commands")
 def export_command(
     out_dir: Path = typer.Option(
@@ -2409,91 +2402,6 @@ def export_command(
     catalog = ensure_catalog()
     export_site_data(catalog, out_dir)
     console.print(f"exported site data to {out_dir}", style="green")
-
-
-@app.command("web", rich_help_panel="Dev commands")
-def web_command(
-    web_dir: Path = typer.Option(WEB_DIR, help="Output directory for static assets."),
-) -> None:
-    """Export static web app."""
-    _export_web_impl(web_dir)
-
-
-@app.command("serve", rich_help_panel="Dev commands")
-def serve_command(
-    web_dir: Path = typer.Option(WEB_DIR, help="Directory to serve (usually the export dir)."),
-    host: str = typer.Option("127.0.0.1"),
-    port: int = typer.Option(8765),
-    preset: str = typer.Option(
-        None, "--preset", help="Open URL with ?preset=NAME so the web UI applies it on load."
-    ),
-) -> None:
-    """Serve the exported web app with gzip support.
-
-    Prefers pre-compressed ``*.json.gz`` sidecars written by ``simdref web``
-    when the client sends ``Accept-Encoding: gzip``; falls back to plain files.
-    """
-    import http.server
-    import os
-    import socketserver
-
-    web_dir = Path(web_dir).resolve()
-    if not web_dir.is_dir():
-        console.print(f"[red]directory not found: {web_dir}[/red]")
-        raise typer.Exit(1)
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(web_dir), **kwargs)
-
-        def do_GET(self) -> None:  # noqa: N802
-            accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "")
-            url_path = self.path.split("?", 1)[0].split("#", 1)[0]
-            rel = url_path.lstrip("/")
-            target = (web_dir / rel).resolve()
-            # Containment check.
-            try:
-                target.relative_to(web_dir)
-            except ValueError:
-                self.send_error(403)
-                return
-            if target.is_dir():
-                target = target / "index.html"
-            gz_candidate = Path(str(target) + ".gz")
-            if accepts_gzip and target.suffix == ".json" and gz_candidate.is_file():
-                try:
-                    data = gz_candidate.read_bytes()
-                except OSError:
-                    super().do_GET()
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Encoding", "gzip")
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "public, max-age=60")
-                self.end_headers()
-                self.wfile.write(data)
-                return
-            super().do_GET()
-
-    os.chdir(web_dir)
-
-    class _Server(socketserver.ThreadingTCPServer):
-        allow_reuse_address = True
-
-    with _Server((host, port), Handler) as srv:
-        query_suffix = ""
-        if preset:
-            from urllib.parse import quote
-
-            query_suffix = f"?preset={quote(preset)}"
-        console.print(
-            f"serving [cyan]{web_dir}[/cyan] at [cyan]http://{host}:{port}/{query_suffix}[/cyan] (gzip-aware)"
-        )
-        try:
-            srv.serve_forever()
-        except KeyboardInterrupt:
-            pass
 
 
 # ---------------------------------------------------------------------------

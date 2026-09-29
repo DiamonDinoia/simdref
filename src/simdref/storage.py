@@ -161,8 +161,8 @@ def load_catalog_from_db(path: Path = SQLITE_PATH) -> Catalog:
     """Rebuild the in-memory catalog from the SQLite runtime alone.
 
     The msgpack snapshot is optional (pruned after install/update); this is
-    the fallback used by ``simdref web``/``install-manpages`` and by offline
-    schema rebuilds when the snapshot is absent.
+    the fallback used by ``simdref export``/``install-manpages`` and by
+    offline schema rebuilds when the snapshot is absent.
     """
     with open_db(path) as conn:
         intrinsics = [

@@ -12,7 +12,9 @@ import pytest
 
 from simdref.manpages import intrinsic_page, instruction_page, write_manpages
 from simdref.models import Catalog, InstructionRecord, IntrinsicRecord, SourceVersion
-from simdref.web import export_web
+from simdref.export import export_site_data
+
+from test_export import _decode_instructions, _decode_intrinsics
 
 
 @pytest.fixture()
@@ -96,9 +98,8 @@ def test_write_manpages_covers_every_intrinsic(catalog: Catalog, tmp_path: Path)
 
 
 def test_web_export_emits_expected_artifacts(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
+    export_site_data(catalog, tmp_path)
     for name in (
-        "index.html",
         "search-index-meta.json",
         "search-index-instructions.json",
         "search-index-intrinsics.json",
@@ -111,22 +112,8 @@ def test_web_export_emits_expected_artifacts(catalog: Catalog, tmp_path: Path):
     )
 
 
-def test_web_export_includes_category_and_kind_panels(catalog: Catalog, tmp_path: Path):
-    # Phase E: UI must ship chip rows for categories and kind (intrinsic/asm).
-    export_web(catalog, tmp_path)
-    html = (tmp_path / "index.html").read_text()
-    assert 'id="category-chips"' in html
-    assert 'id="category-toggle"' in html
-    assert 'id="kind-bar"' in html
-    # Architecture presets next to Default/None/All.
-    assert 'id="isa-intel"' in html
-    assert 'id="isa-arm32"' in html
-    assert 'id="isa-arm64"' in html
-    assert 'id="isa-riscv"' in html
-
-
 def test_filter_spec_json_exposes_presets(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
+    export_site_data(catalog, tmp_path)
     spec = json.loads((tmp_path / "filter_spec.json").read_text())
     presets = spec.get("presets") or {}
     assert {"default", "intel", "arm32", "arm64", "riscv", "none", "all"} <= set(presets)
@@ -145,8 +132,9 @@ def test_filter_spec_json_exposes_presets(catalog: Catalog, tmp_path: Path):
 
 
 def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
-    intrinsics = json.loads((tmp_path / "search-index-intrinsics.json").read_text())
+    export_site_data(catalog, tmp_path)
+    payload = json.loads((tmp_path / "search-index-intrinsics.json").read_text())
+    intrinsics = _decode_intrinsics(payload)
     assert intrinsics, "search-index-intrinsics.json exposes no intrinsics"
     # Slim shape: only what the client needs for search + result-card render.
     required = {"name", "subtitle", "isa", "display_isa", "isa_families", "search_fields"}
@@ -168,7 +156,7 @@ def test_search_index_intrinsics_have_required_fields(catalog: Catalog, tmp_path
 
 
 def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
+    export_site_data(catalog, tmp_path)
     # Pre-compressed sidecars must be emitted for gzip-aware static serve.
     for name in (
         "search-index-meta.json",
@@ -185,8 +173,9 @@ def test_search_index_and_details_are_gzipped(catalog: Catalog, tmp_path: Path):
 
 
 def test_search_index_instructions_have_required_fields(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
-    instructions = json.loads((tmp_path / "search-index-instructions.json").read_text())
+    export_site_data(catalog, tmp_path)
+    payload = json.loads((tmp_path / "search-index-instructions.json").read_text())
+    instructions = _decode_instructions(payload)
     assert instructions, "search-index-instructions.json exposes no instructions"
     required = {"key", "mnemonic", "summary", "isa"}
     for item in instructions:
@@ -195,7 +184,7 @@ def test_search_index_instructions_have_required_fields(catalog: Catalog, tmp_pa
 
 
 def test_filter_spec_json_categories_are_populated(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
+    export_site_data(catalog, tmp_path)
     spec = json.loads((tmp_path / "filter_spec.json").read_text())
     cats = spec.get("categories") or []
     assert cats, "filter_spec.json has no categories"
@@ -206,7 +195,7 @@ def test_filter_spec_json_categories_are_populated(catalog: Catalog, tmp_path: P
 
 
 def test_build_stamp_has_generated_at(catalog: Catalog, tmp_path: Path):
-    export_web(catalog, tmp_path)
+    export_site_data(catalog, tmp_path)
     stamp = json.loads((tmp_path / "build_stamp.json").read_text())
     assert stamp.get("built_at") and stamp.get("catalog_generated_at")
 

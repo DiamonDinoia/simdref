@@ -6,8 +6,9 @@ from pathlib import Path
 from simdref.ingest import build_catalog
 from simdref.lsp import _completion_candidates, _hover_markdown
 from simdref.storage import _unpack_payload, build_sqlite, save_catalog, open_db
-from simdref.web import export_web
+from simdref.export import export_site_data
 from conftest import build_fixture_catalog
+from test_export import _decode_instructions, _decode_intrinsics
 
 
 class LspWebTests(unittest.TestCase):
@@ -94,50 +95,20 @@ class LspWebTests(unittest.TestCase):
         catalog.instructions[0].metadata["intel-sdm-page-start"] = "42"
         catalog.instructions[0].metadata["intel-sdm-page-end"] = "43"
         with tempfile.TemporaryDirectory() as tmpdir:
-            export_web(catalog, Path(tmpdir))
-
-            # HTML shell
-            html = (Path(tmpdir) / "index.html").read_text()
-            self.assertIn("simdref", html)
-            self.assertIn("search-index-meta.json", html)
-            self.assertIn("search-index-instructions.json", html)
-            self.assertIn("search-index-intrinsics.json", html)
-            # The initial empty-state copy in the results panel should cue the
-            # visitor rather than say "0 results" (which reads like a real
-            # empty catalog on first paint).
-            from html.parser import HTMLParser
-
-            class _Extract(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self._target = False
-                    self.text = ""
-
-                def handle_starttag(self, tag, attrs):
-                    if tag == "span" and dict(attrs).get("id") == "results-count":
-                        self._target = True
-
-                def handle_endtag(self, tag):
-                    if tag == "span" and self._target:
-                        self._target = False
-
-                def handle_data(self, data):
-                    if self._target:
-                        self.text += data
-
-            parser = _Extract()
-            parser.feed(html)
-            self.assertNotEqual(parser.text.strip(), "0 results")
-            self.assertIn("Loading", parser.text)
+            export_site_data(catalog, Path(tmpdir))
 
             # Search index shards: meta carries the ISA config + available
-            # ISAs union; the two pool shards are bare arrays.
+            # ISAs union; the two pool shards are columnar-encoded.
             meta = json.loads((Path(tmpdir) / "search-index-meta.json").read_text())
             self.assertIn("isa_config", meta)
             self.assertIn("available_isas", meta)
             self.assertTrue(meta["available_isas"], "meta.available_isas is empty")
-            intrinsics = json.loads((Path(tmpdir) / "search-index-intrinsics.json").read_text())
-            instructions = json.loads((Path(tmpdir) / "search-index-instructions.json").read_text())
+            intrinsics = _decode_intrinsics(
+                json.loads((Path(tmpdir) / "search-index-intrinsics.json").read_text())
+            )
+            instructions = _decode_instructions(
+                json.loads((Path(tmpdir) / "search-index-instructions.json").read_text())
+            )
             self.assertTrue(len(intrinsics) > 0)
             self.assertTrue(len(instructions) > 0)
 
@@ -260,7 +231,7 @@ class LspWebTests(unittest.TestCase):
             "Intrinsic Equivalents": "_mm512_maskz_expandloadu_epi32",
         }
         with tempfile.TemporaryDirectory() as tmpdir:
-            export_web(catalog, Path(tmpdir))
+            export_site_data(catalog, Path(tmpdir))
             chunk = json.loads((Path(tmpdir) / "detail-chunks" / "VPE.json").read_text())
             detail = chunk[x86_instruction.db_key]
             self.assertIn("description", detail)

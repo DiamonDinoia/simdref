@@ -1,12 +1,13 @@
 """Single source of truth for UI labels + keymap shared by TUI and web SPA.
 
-Both surfaces import ``UI_LABELS`` and ``KEYMAP`` from this module (the web
-SPA gets it injected as a JSON blob at template-render time in
-``simdref.web``), so terminology can never drift between them.
+``UI_LABELS`` and ``KEYMAP`` are the canonical vocabulary; ``as_json_dict``
+serialises them for consumers outside this module. The TUI (``tui.py``)
+imports directly; the web SPA, which lives in the ``simdref-web`` repo,
+gets its own copy and is responsible for keeping it in sync.
 
-Add new labels or bindings here first, then reference them from ``tui.py``
-or ``app.js``. A parity test asserts both consumers cover the full action
-set — see ``tests/test_ui_labels_parity.py``.
+Add new labels or bindings here first, then reference them from ``tui.py``.
+A parity test enforces coverage on the TUI side — see
+``tests/test_ui_labels_parity.py``.
 """
 
 from __future__ import annotations

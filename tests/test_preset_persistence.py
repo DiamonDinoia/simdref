@@ -87,31 +87,3 @@ def test_save_is_best_effort_on_readonly_state(tmp_path, monkeypatch):
     # Must not raise.
     cli._save_last_preset("intel")
     assert cli._load_last_preset() is None
-
-
-# ---------------------------------------------------------------------------
-# Web: the JS must prefer URL param > localStorage > "intel" default.
-# ---------------------------------------------------------------------------
-
-
-def test_web_preset_precedence_in_app_js():
-    text = (
-        Path(__file__).resolve().parent.parent / "src" / "simdref" / "templates" / "app.js"
-    ).read_text()
-    # localStorage read key
-    assert 'localStorage.getItem("simdref-last-preset")' in text
-    # URL-param check precedes localStorage read, and the fallback is
-    # "intel" — all three must appear in the same precedence block.
-    url_idx = text.index('params.get("preset")')
-    storage_idx = text.index('localStorage.getItem("simdref-last-preset")')
-    fallback_idx = text.index('ARCH_PRESETS["intel"] ? "intel"')
-    assert url_idx < storage_idx < fallback_idx, (
-        "Web preset precedence must be: URL param > localStorage > intel"
-    )
-
-
-def test_web_persists_last_preset_on_click():
-    text = (
-        Path(__file__).resolve().parent.parent / "src" / "simdref" / "templates" / "app.js"
-    ).read_text()
-    assert 'localStorage.setItem("simdref-last-preset"' in text

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simdref"
-version = "0.0.5"
-description = "Searchable SIMD intrinsic and instruction reference with CLI, manpages, TUI, LSP, and static web export."
+version = "0.0.6"
+description = "Searchable SIMD intrinsic and instruction reference with CLI, manpages, TUI, and LSP."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
@@ -52,13 +52,9 @@ simdref-lsp = "simdref.lsp:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-simdref = ["templates/*"]
 
 [tool.ruff]
 line-length = 100

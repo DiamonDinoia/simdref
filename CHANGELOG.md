@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.0.6] — 2026-09-29
+
+Validation release for the 3-repo split (core/web/skill), cut on a temporary
+test fork. Not for general use.
+
 ### Added
 
 - **`simdref llm query` / `llm batch`** gained `--arch <core>`. It pins `lat`

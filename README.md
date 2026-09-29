@@ -133,12 +133,12 @@ isa                  # open the interactive TUI
 
 **Web app** — a self-contained static SPA with filters and performance
 tables, published to GitHub Pages at
-[diamondinoia.github.io/simdref](https://diamondinoia.github.io/simdref/).
-Export your own copy:
+[diamondinoia.github.io/simdref](https://diamondinoia.github.io/simdref/) and
+built from the `simdref-web` repo. This repo (`simdref-core`) exports the
+JSON data it consumes:
 
 ```bash
-isa web --web-dir ./web
-isa serve --web-dir ./web       # gzip-aware local server
+isa export --out-dir ./site-data
 ```
 
 The [live demo](https://diamondinoia.github.io/simdref/) hosts the same
@@ -227,8 +227,7 @@ and `ld` still consume it.
 | Command                          | Description                                                                                     |
 | -------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `isa build`                      | Full local rebuild from upstream sources, including Intel SDM parsing (`llvm-mca` 18+ required) |
-| `isa web`                        | Export the static web app under `web/`                                                          |
-| `isa serve`                      | Serve the exported web app locally (gzip-aware)                                                 |
+| `isa export`                     | Export site data (JSON only) — the release contract for the `simdref-web` repo                  |
 | `isa completion install [SHELL]` | Install shell completion into the user's profile                                                |
 | `isa completion show [SHELL]`    | Print the completion script for a shell                                                         |
 

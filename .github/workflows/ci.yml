@@ -1,10 +1,13 @@
 name: CI
 
 # Single-pipeline, strict order:
-#   1. build-catalog  — create the catalog from upstream sources.
-#   2. test, package  — use the catalog (tests + wheel build).
-#   3. publish-data   — publish data-latest (+ data-v<ver> on release).
-#   4. deploy-pages, validate-release — consume the published data.
+#   1. build-catalog   — create the catalog from upstream sources.
+#   2. test, package   — use the catalog (tests + wheel build).
+#   3. publish-data    — publish data-latest (+ data-v<ver> on release).
+#   4. validate-release — consume the published data.
+#
+# Static-site build and Pages deployment moved to the simdref-web repo,
+# which consumes `simdref export`'s JSON output.
 #
 # Every edge is expressed via `needs:`. Nothing fires out of order or
 # on missing state; a red step breaks the whole chain deterministically.
@@ -125,6 +128,11 @@ jobs:
             : > perf-cache.tar.zst
           fi
 
+      - name: Package web-data export
+        # web/ is simdref export's JSON output (schema_version + search
+        # indices). Zipped because a GitHub release asset must be one file.
+        run: cd web && zip -qr ../web-data.zip .
+
       - name: Upload catalog artifact
         uses: actions/upload-artifact@v7
         with:
@@ -133,6 +141,7 @@ jobs:
             data/derived/catalog.msgpack
             data/derived/catalog.db
             perf-cache.tar.zst
+            web-data.zip
             web
 
   # ───────────────────────────────────────────────────────────────────
@@ -163,10 +172,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package and test dependencies
-        run: uv pip install -e . pytest playwright 'tomli; python_version < "3.11"'
-
-      - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
+        run: uv pip install -e . pytest 'tomli; python_version < "3.11"'
 
       # actions/upload-artifact preserves path structure when multiple
       # paths are listed, so catalog.msgpack / catalog.db land back at
@@ -180,20 +186,11 @@ jobs:
       - name: Verify restored catalog schema
         run: python -c "from simdref.storage import sqlite_schema_is_current; assert sqlite_schema_is_current(), 'schema mismatch after artifact restore'"
 
-      - name: Verify plugin metadata version sync
-        run: python scripts/check-version-sync.py
-
-      - name: Verify skill bundles match canonical skill/
-        run: python scripts/build_skill_bundles.py --check
-
       - name: Run Python test suite
         run: python -m pytest tests
 
       - name: Check Python syntax
-        run: python -m py_compile src/simdref/cli.py src/simdref/display.py src/simdref/ingest.py src/simdref/pdfparse/base.py src/simdref/pdfparse/intel.py src/simdref/tui.py src/simdref/web.py
-
-      - name: Check web syntax
-        run: node --check src/simdref/templates/app.js
+        run: python -m py_compile src/simdref/cli.py src/simdref/display.py src/simdref/ingest.py src/simdref/pdfparse/base.py src/simdref/pdfparse/intel.py src/simdref/tui.py
 
       - name: Runtime smoke — inspect catalog
         run: simdref doctor
@@ -234,10 +231,12 @@ jobs:
           meta = json.loads(meta_path.read_text())
           assert "isa_config" in meta
           assert meta.get("available_isas"), "meta.available_isas is empty"
+          # search-index-*.json are columnar (see simdref.export._columnar_*):
+          # {"n": <row count>, "cols": {...}, ...}, not a plain list of rows.
           intr_payload = json.loads(intrinsics_path.read_text())
           inst_payload = json.loads(instructions_path.read_text())
-          assert len(intr_payload) == intrinsics
-          assert len(inst_payload) == instructions
+          assert intr_payload["n"] == intrinsics
+          assert inst_payload["n"] == instructions
           PY
 
   package:
@@ -307,6 +306,7 @@ jobs:
             data/derived/catalog.msgpack
             data/derived/catalog.db
             perf-cache.tar.zst
+            web-data.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -321,46 +321,9 @@ jobs:
             data/derived/catalog.msgpack
             data/derived/catalog.db
             perf-cache.tar.zst
+            web-data.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy-pages:
-    needs: publish-data
-    # The github-pages environment only permits deploys from main, so skip this
-    # job on tag-ref runs (e.g. the per-release data build that release.yml
-    # dispatches on v<version>) — it would be rejected at the environment gate
-    # and redden the run. Pages still deploys on every push to main.
-    if: >-
-      github.workflow == 'CI'
-      && !startsWith(github.ref, 'refs/tags/')
-      && (
-        github.event_name == 'release'
-        || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        || github.event_name == 'schedule'
-        || github.event_name == 'workflow_dispatch'
-      )
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: catalog
-          path: .
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: web
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
 
   validate-release:
     needs: publish-data
@@ -387,10 +350,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install package and test dependencies
-        run: uv pip install -e . pytest playwright
-
-      - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
+        run: uv pip install -e . pytest
 
       - name: Pull freshly-published data-latest
         run: simdref update --from-release
@@ -402,5 +362,5 @@ jobs:
         run: |
           simdref --version
           simdref doctor
-          simdref llm query _mm_add_epi32 || true
+          simdref llm query paddd
           simdref annotate --help

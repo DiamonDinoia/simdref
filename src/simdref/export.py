@@ -15,8 +15,8 @@ the release artifact a separate web repo consumes (see ``simdref export``):
 * **detail-chunks/{PREFIX}.json** -- full instruction details (operands,
   measurements) loaded on demand when the user selects a result.
 
-``simdref web`` (see ``web.py``) wraps :func:`export_site_data` and adds the
-HTML shell for local preview; the web repo only needs this module's output.
+``simdref export`` (see ``cli.py``) is the CLI entry point; the web repo only
+needs this module's output.
 """
 
 from __future__ import annotations
@@ -278,6 +278,95 @@ def _search_instructions(catalog: Catalog, instr_perf: dict[str, tuple[str, str]
     return out
 
 
+def _interner():
+    """Return ``(intern, values)``: ``intern(v)`` maps each distinct JSON value to its index in ``values``."""
+    ids: dict[str, int] = {}
+    values: list = []
+
+    def intern(value) -> int:
+        k = json.dumps(value, sort_keys=True)
+        if k not in ids:
+            ids[k] = len(values)
+            values.append(value)
+        return ids[k]
+
+    return intern, values
+
+
+def _columnar_instructions(entries: list[dict]) -> dict:
+    """Column-encode ``_search_instructions`` rows; ``decodeInstructions`` in app.js inverts it exactly.
+
+    A 0 marks a value equal to the column it derives from; ``fx`` keeps the rows that break a derivation.
+    """
+    isa, isas = _interner()
+    arch, archs = _interner()
+    perf, perfs = _interner()
+    cols: dict[str, list] = {
+        k: [] for k in ("dkey", "dform", "form", "dmn", "mn", "key", "sum", "isa", "arch", "perf")
+    }
+    fields: dict[int, list] = {}
+    summaries: dict[int, str] = {}
+    for i, e in enumerate(entries):
+        f = e["search_fields"]
+        cols["dkey"].append(e["display_key"])
+        cols["dform"].append(0 if e["display_form"] == e["display_key"] else e["display_form"])
+        cols["form"].append(0 if e["form"] == e["display_form"] else e["form"])
+        cols["dmn"].append(e["display_mnemonic"])
+        cols["mn"].append(0 if e["mnemonic"] == e["display_mnemonic"] else e["mnemonic"])
+        cols["key"].append(0 if e["key"] == e["architecture"] + ":" + e["form"].lower() else e["key"])
+        cols["sum"].append(f[3])
+        cols["isa"].append(isa([e["isa"], e["display_isa"], e["isa_families"], e["isa_subs"]]))
+        cols["arch"].append(arch([e["architecture"], e["display_architecture"]]))
+        cols["perf"].append(perf([e["lat"], e["cpi"]]))
+        if f != [e["display_mnemonic"], e["display_key"], e["display_form"], f[3], e["display_isa"]]:
+            fields[i] = f
+        if _truncate(f[3], 80) != e["summary"]:
+            summaries[i] = e["summary"]
+    return {
+        "n": len(entries),
+        "cols": cols,
+        "isa": isas,
+        "arch": archs,
+        "perf": perfs,
+        "fields": fields,
+        "summaries": summaries,
+    }
+
+
+def _columnar_intrinsics(entries: list[dict]) -> dict:
+    """Column-encode ``_search_intrinsics`` rows; ``decodeIntrinsics`` in app.js inverts it exactly."""
+    tables = {k: _interner() for k in ("isa", "arch", "perf", "desc", "ins", "prim", "arm", "cat")}
+    cols: dict[str, list] = {k: [] for k in ("name", *tables)}
+    fields: dict[int, list] = {}
+    summaries: dict[int, str] = {}
+    for i, e in enumerate(entries):
+        f = e["search_fields"]
+        row = {
+            "isa": [e["isa"], e["display_isa"], e["isa_families"], e["isa_subs"]],
+            "arch": [e["architecture"], e["display_architecture"]],
+            "perf": [e["lat"], e["cpi"]],
+            "desc": f[1],
+            "ins": f[3],
+            "prim": e.get("primary_instr"),
+            "arm": e.get("arm_arch"),
+            "cat": e.get("category"),
+        }
+        cols["name"].append(e["name"])
+        for k, (intern, _) in tables.items():
+            cols[k].append(-1 if row[k] is None else intern(row[k]))
+        if f != [e["name"], f[1], e["display_isa"], f[3]]:
+            fields[i] = f
+        if _truncate(f[1], 80) != e["subtitle"]:
+            summaries[i] = e["subtitle"]
+    return {
+        "n": len(entries),
+        "cols": cols,
+        **{k: v for k, (_, v) in tables.items()},
+        "fields": fields,
+        "summaries": summaries,
+    }
+
+
 def _search_meta(
     catalog: Catalog,
     intrinsics_out: list[dict],
@@ -443,8 +532,10 @@ def export_site_data(catalog: Catalog, out_dir: Path) -> None:
         out_dir / "search-index-meta.json",
         _search_meta(catalog, intrinsics_out, instructions_out),
     )
-    _write_json(out_dir / "search-index-instructions.json", instructions_out)
-    _write_json(out_dir / "search-index-intrinsics.json", intrinsics_out)
+    _write_json(
+        out_dir / "search-index-instructions.json", _columnar_instructions(instructions_out)
+    )
+    _write_json(out_dir / "search-index-intrinsics.json", _columnar_intrinsics(intrinsics_out))
     # Remove legacy monolithic shard if a previous build emitted it.
     for stale in ("search-index.json", "search-index.json.gz"):
         legacy = out_dir / stale

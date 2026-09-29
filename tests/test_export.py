@@ -14,10 +14,20 @@ from pathlib import Path
 
 import pytest
 
-from simdref.export import export_site_data
+from simdref.export import (
+    _columnar_instructions,
+    _columnar_intrinsics,
+    _instr_perf_map,
+    _search_instructions,
+    _search_intrinsics,
+    _truncate,
+    export_site_data,
+)
 from simdref.models import Catalog, InstructionRecord, SourceVersion
 from simdref.perf import variant_perf_summary
 from simdref.storage import build_sqlite, load_instruction_from_db, open_db
+
+from conftest import build_fixture_catalog
 
 
 def _tiny_catalog() -> Catalog:
@@ -100,3 +110,105 @@ def test_latency_index_corruption_is_caught(latency_index_and_db):
         assert corrupted != {"lat": lat, "cpi": cpi}
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Columnar search-index encoding: app.js's decodeInstructions/decodeIntrinsics
+# invert ``_columnar_instructions``/``_columnar_intrinsics`` exactly. These
+# Python mirrors of that decoder catch any drift in the encoding without
+# needing a JS runtime.
+# ---------------------------------------------------------------------------
+
+
+def _decode_instructions(payload: dict) -> list[dict]:
+    c = payload["cols"]
+    out = []
+    for i in range(payload["n"]):
+        isa, display_isa, isa_families, isa_subs = payload["isa"][c["isa"][i]]
+        architecture, display_architecture = payload["arch"][c["arch"][i]]
+        lat, cpi = payload["perf"][c["perf"][i]]
+        display_key = c["dkey"][i]
+        display_form = c["dform"][i] or display_key
+        form = c["form"][i] or display_form
+        display_mnemonic = c["dmn"][i]
+        mnemonic = c["mn"][i] or display_mnemonic
+        full = c["sum"][i]
+        key = c["key"][i] or f"{architecture}:{form.lower()}"
+        summary = payload["summaries"].get(i, _truncate(full, 80))
+        search_fields = payload["fields"].get(
+            i, [display_mnemonic, display_key, display_form, full, display_isa]
+        )
+        out.append(
+            {
+                "key": key,
+                "mnemonic": mnemonic,
+                "form": form,
+                "architecture": architecture,
+                "summary": summary,
+                "isa": isa,
+                "lat": lat,
+                "cpi": cpi,
+                "display_architecture": display_architecture,
+                "display_key": display_key,
+                "display_form": display_form,
+                "display_mnemonic": display_mnemonic,
+                "display_isa": display_isa,
+                "isa_families": isa_families,
+                "isa_subs": isa_subs,
+                "search_fields": search_fields,
+            }
+        )
+    return out
+
+
+def _decode_intrinsics(payload: dict) -> list[dict]:
+    c = payload["cols"]
+    out = []
+    for i in range(payload["n"]):
+        isa, display_isa, isa_families, isa_subs = payload["isa"][c["isa"][i]]
+        architecture, display_architecture = payload["arch"][c["arch"][i]]
+        lat, cpi = payload["perf"][c["perf"][i]]
+        name = c["name"][i]
+        desc = payload["desc"][c["desc"][i]]
+        entry = {
+            "name": name,
+            "subtitle": payload["summaries"].get(i, _truncate(desc, 80)),
+            "architecture": architecture,
+            "isa": isa,
+            "lat": lat,
+            "cpi": cpi,
+            "display_architecture": display_architecture,
+            "display_isa": display_isa,
+            "isa_families": isa_families,
+            "isa_subs": isa_subs,
+            "search_fields": payload["fields"].get(
+                i, [name, desc, display_isa, payload["ins"][c["ins"][i]]]
+            ),
+        }
+        if c["prim"][i] >= 0:
+            entry["primary_instr"] = payload["prim"][c["prim"][i]]
+        if c["arm"][i] >= 0:
+            entry["arm_arch"] = payload["arm"][c["arm"][i]]
+        if c["cat"][i] >= 0:
+            entry["category"] = payload["cat"][c["cat"][i]]
+        out.append(entry)
+    return out
+
+
+def test_columnar_instructions_roundtrip():
+    catalog = build_fixture_catalog()
+    instr_perf = _instr_perf_map(catalog)
+    entries = _search_instructions(catalog, instr_perf)
+    assert entries  # positive control: an empty fixture would pass vacuously
+    # linked_intrinsics is intentionally dropped from the search index; the
+    # web client reads it from the detail chunk instead (also exported here).
+    expected = [{k: v for k, v in e.items() if k != "linked_intrinsics"} for e in entries]
+    assert _decode_instructions(_columnar_instructions(entries)) == expected
+
+
+def test_columnar_intrinsics_roundtrip():
+    catalog = build_fixture_catalog()
+    instr_perf = _instr_perf_map(catalog)
+    entries = _search_intrinsics(catalog, instr_perf)
+    assert entries  # positive control: an empty fixture would pass vacuously
+    assert _decode_intrinsics(_columnar_intrinsics(entries)) == entries

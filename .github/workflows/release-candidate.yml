@@ -13,7 +13,6 @@ name: Release
 #
 # Preconditions handled by the `preflight` job:
 #   - pyproject.toml version matches the `version` input
-#   - .claude-plugin/marketplace.json and plugin.json versions match
 #   - v<version> tag does not already exist
 #   - <version> is not already on PyPI
 #   - the HEAD commit has a green CI run
@@ -36,6 +35,10 @@ on:
         type: boolean
         default: true
         description: "If true, run every check and build but skip PyPI publish, tag, and GitHub Release."
+      skip_pypi_publish:
+        type: boolean
+        default: false
+        description: "If true (with dry_run=false), still tag and cut the GitHub Release, but skip the PyPI upload step. For validating the release path against a non-production repo."
 
 permissions:
   contents: read
@@ -65,13 +68,6 @@ jobs:
           echo "pyproject=$pyver input=${{ inputs.version }}"
           if [ "$pyver" != "${{ inputs.version }}" ]; then
             echo "::error::pyproject.toml version ($pyver) does not match input (${{ inputs.version }})"
-            exit 1
-          fi
-
-      - name: Verify .claude-plugin metadata matches pyproject
-        run: |
-          if ! python scripts/check-version-sync.py; then
-            echo "::error::plugin metadata out of sync. Dispatch the Bump Version workflow with version=${{ inputs.version }}, or run scripts/bump-version.py ${{ inputs.version }} locally."
             exit 1
           fi
 
@@ -202,6 +198,7 @@ jobs:
 
       - name: Publish to PyPI
         id: pypi
+        if: ${{ !inputs.skip_pypi_publish }}
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Rollback tag on PyPI failure

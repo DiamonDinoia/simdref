@@ -20,12 +20,10 @@ permissions:
 
 jobs:
   publish:
-    # Post-CI path: only run if CI succeeded on main. Schedule/dispatch
-    # paths fall through with no workflow_run context and are always run.
-    if: >-
-      github.event_name != 'workflow_run'
-      || (github.event.workflow_run.conclusion == 'success'
-          && github.event.workflow_run.head_branch == 'main')
+    # Disabled on the GitHub-validation test fork: this repo must never
+    # publish to TestPyPI (owner instruction for the repo-split validation).
+    # Restore the condition this replaces before promoting to production.
+    if: false
     runs-on: ubuntu-latest
     permissions:
       id-token: write
