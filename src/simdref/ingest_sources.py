@@ -37,7 +37,7 @@ ARM_NEON_DOC_URL = "https://arm-software.github.io/acle/neon_intrinsics/advsimd.
 ARM_A64_DOC_URL = "https://developer.arm.com/documentation/ddi0602/latest/Base-Instructions"
 ARM_A64_ARCHIVE_URL = (
     "https://developer.arm.com/-/cdn-downloads/permalink/Exploration-Tools-OS-Machine-Readable-Data/"
-    "AARCHMRS_BSD/AARCHMRS_OPENSOURCE_A_profile_FAT-2025-09_ASL0.tar.gz"
+    "AARCHMRS_BSD/AARCHMRS_OPENSOURCE_A_profile_FAT-2026-06.tar.gz"
 )
 ARM_ACLE_ARCHIVE_URL = "https://codeload.github.com/ARM-software/acle/zip/refs/heads/main"
 ARM_INTRINSICS_DATA_BASE_URL = (
