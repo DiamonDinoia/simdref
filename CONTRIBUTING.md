@@ -7,7 +7,7 @@ need to know to add a new upstream source.
 ## Dev install
 
 ```bash
-git clone https://github.com/DiamonDinoia/simdref.git
+git clone https://github.com/simd-labs/simdref.git
 cd simdref
 python3 -m venv .venv
 source .venv/bin/activate

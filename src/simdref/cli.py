@@ -213,7 +213,7 @@ def _pager_context():
         yield console.pager(styles=False)
 
 
-GITHUB_REPO = os.environ.get("SIMDREF_CORE_REPO", "DiamonDinoia/simdref")
+GITHUB_REPO = os.environ.get("SIMDREF_CORE_REPO", "simd-labs/simdref")
 RELEASE_TAG = "data-latest"
 
 

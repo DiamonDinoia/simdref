@@ -1,6 +1,6 @@
 # simdref
 
-[![CI](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml/badge.svg)](https://github.com/DiamonDinoia/simdref/actions/workflows/ci.yml)
+[![CI](https://github.com/simd-labs/simdref/actions/workflows/ci.yml/badge.svg)](https://github.com/simd-labs/simdref/actions/workflows/ci.yml)
 [![TestPyPI](https://img.shields.io/pypi/v/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org&label=TestPyPI)](https://test.pypi.org/project/simdref/)
 [![Python](https://img.shields.io/pypi/pyversions/simdref?pypiBaseUrl=https%3A%2F%2Ftest.pypi.org)](https://pypi.org/project/simdref/)
 
@@ -11,87 +11,24 @@ on-demand manpages (`simdref man` — or run `simdref install-manpages`
 so plain `man vpaddd` works), a static web app, and a structured JSON
 interface for LLM skills.
 
-[Web App](https://diamondinoia.github.io/simdref/) ·
+[Web App](https://simdref.diamondinoia.com/) ·
 [TestPyPI](https://test.pypi.org/project/simdref/) ·
-[GitHub](https://github.com/DiamonDinoia/simdref) ·
+[GitHub](https://github.com/simd-labs/simdref) ·
 [Contributing](CONTRIBUTING.md)
 
 <!-- Screenshots are hosted on the `docs-assets` branch so the main
      branch stays lightweight to clone. -->
 
 <p align="center">
-  <img alt="simdref TUI" src="https://raw.githubusercontent.com/DiamonDinoia/simdref/docs-assets/img/tui.svg" width="720">
+  <img alt="simdref TUI" src="https://raw.githubusercontent.com/simd-labs/simdref/docs-assets/img/tui.svg" width="720">
   <br><em>Interactive TUI with ISA filters, ranked results, and measured/modeled performance tables.</em>
 </p>
 
-## Install the Claude Code skill
+## Install the Claude Code and Codex skill
 
-`skills/asm-analysis/` ships a Claude Code skill that drives the
-compile → objdump → `simdref annotate` → LLM-batch pipeline
-automatically. This repo publishes it as a Claude Code plugin,
-so the one-liner install is:
-
-```
-/plugin marketplace add DiamonDinoia/simdref
-/plugin install asm-analysis@simdref
-```
-
-Run those at the Claude Code prompt. The marketplace add fetches this
-repo; the install wires up the skill so Claude picks it up automatically
-on performance-oriented prompts like *"why is this loop slow"*,
-*"vectorise this"*, *"look at the asm"*.
-
-### Manual install (no marketplace)
-
-If you prefer a hand-managed copy:
-
-```bash
-# symlink from a checkout — always current with main:
-git clone https://github.com/DiamonDinoia/simdref.git ~/src/simdref
-mkdir -p ~/.claude/skills
-ln -sf ~/src/simdref/skills/asm-analysis ~/.claude/skills/asm-analysis
-
-# or pull a one-off snapshot:
-mkdir -p ~/.claude/skills/asm-analysis && \
-  curl -fsSL https://raw.githubusercontent.com/DiamonDinoia/simdref/main/skills/asm-analysis/SKILL.md \
-  -o ~/.claude/skills/asm-analysis/SKILL.md
-```
-
-See [`skills/asm-analysis/SKILL.md`](skills/asm-analysis/SKILL.md) for
-the full trigger list and pipeline stages.
-
-## Install the Codex skill
-
-This repo also ships the same pipeline as an OpenAI Codex plugin, so
-the one-liner install from a Codex CLI prompt is:
-
-```
-codex plugin marketplace add DiamonDinoia/simdref
-/plugins
-```
-
-Pick `asm-analysis` in the browser and enable it. Codex picks up the
-skill automatically on performance-oriented prompts (*"why is this
-loop slow"*, *"vectorise this"*, *"look at the asm"*).
-
-### Manual install (no marketplace)
-
-```bash
-# user-scoped symlink — applies to every repo, always current with main:
-git clone https://github.com/DiamonDinoia/simdref.git ~/src/simdref
-mkdir -p ~/.agents/skills
-ln -sf ~/src/simdref/codex-skills/asm-analysis/skills/asm-analysis \
-       ~/.agents/skills/asm-analysis
-
-# or scope the skill to a single repo:
-mkdir -p .agents/skills
-ln -sf ~/src/simdref/codex-skills/asm-analysis/skills/asm-analysis \
-       .agents/skills/asm-analysis
-```
-
-See
-[`codex-skills/asm-analysis/skills/asm-analysis/SKILL.md`](codex-skills/asm-analysis/skills/asm-analysis/SKILL.md)
-for the trigger list and pipeline stages.
+The `asm-analysis` skill for Claude Code and OpenAI Codex lives in
+[simd-labs/simdref-skill](https://github.com/simd-labs/simdref-skill).
+Follow the install steps in that repo.
 
 ## Install
 
@@ -133,7 +70,7 @@ isa                  # open the interactive TUI
 
 **Web app** — a self-contained static SPA with filters and performance
 tables, published to GitHub Pages at
-[diamondinoia.github.io/simdref](https://diamondinoia.github.io/simdref/) and
+[simdref.diamondinoia.com](https://simdref.diamondinoia.com/) and
 built from the `simdref-web` repo. This repo (`simdref-core`) exports the
 JSON data it consumes:
 
@@ -141,7 +78,7 @@ JSON data it consumes:
 isa export --out-dir ./site-data
 ```
 
-The [live demo](https://diamondinoia.github.io/simdref/) hosts the same
+The [live demo](https://simdref.diamondinoia.com/) hosts the same
 build — search across ~122k entries with ISA filters and per-uarch perf
 tables.
 
@@ -262,7 +199,7 @@ mixed.
 ## Development
 
 ```bash
-git clone https://github.com/DiamonDinoia/simdref.git
+git clone https://github.com/simd-labs/simdref.git
 cd simdref
 python3 -m venv .venv
 .venv/bin/pip install -e .

@@ -20,7 +20,7 @@ name: Release
 # IMPORTANT: first run requires the `simdref` project on PyPI configured
 # with trusted publishing for this workflow file. See:
 #   https://docs.pypi.org/trusted-publishers/
-#   - Owner:            DiamonDinoia
+#   - Owner:            simd-labs
 #   - Repository:       simdref
 #   - Workflow name:    release-candidate.yml
 #   - Environment name: pypi

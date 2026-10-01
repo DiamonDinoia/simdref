@@ -173,6 +173,6 @@ support is in place:
   `riscv-unified-db`, with `docs.riscv.org` HTML fallback. Every perf row
   is tagged `measured` or `modeled` so the two never mix.
 
-[0.0.0]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.0
-[0.0.1]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.1
-[0.0.3]: https://github.com/DiamonDinoia/simdref/releases/tag/v0.0.3
+[0.0.0]: https://github.com/simd-labs/simdref/releases/tag/v0.0.0
+[0.0.1]: https://github.com/simd-labs/simdref/releases/tag/v0.0.1
+[0.0.3]: https://github.com/simd-labs/simdref/releases/tag/v0.0.3

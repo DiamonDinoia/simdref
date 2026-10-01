@@ -1,4 +1,4 @@
-"""Tests for fixes to DiamonDinoia/simdref#23, #24 and #25.
+"""Tests for fixes to simd-labs/simdref#23, #24 and #25.
 
 Covers:
 - #23 ``show --arch`` no longer stamps ``[measured]`` on empty perf rows,

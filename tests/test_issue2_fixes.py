@@ -1,4 +1,4 @@
-"""Tests for fixes to DiamonDinoia/simdref#2.
+"""Tests for fixes to simd-labs/simdref#2.
 
 Covers:
 - JSON annotate emits structured latency/cpi/ports.
