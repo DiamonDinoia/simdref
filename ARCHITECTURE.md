@@ -14,15 +14,13 @@ src/simdref/
   perf.py        Shared latency/throughput extraction helpers
   queries.py     Shared record-linking and lookup helpers
   display.py     Rich terminal formatting and rendering
-  pdfrefs.py     Normalized PDF reference helpers shared by CLI/TUI/web
+  pdfrefs.py     Normalized PDF reference helpers shared by CLI/TUI/export
   cli.py         Typer commands and smart lookup dispatch
   lsp.py         JSON-RPC language server (hover + completion)
   tui.py         Curses-based interactive search
   manpages.py    Roff manpage generation
-  web.py         Static web app export
+  export.py      Site-data JSON export for the simdref-web static app
   pdfparse/      Source-pluggable PDF enrichment implementations + registry
-  templates/     HTML template for the web SPA
-  fixtures/      Sample data for offline bootstrapping and tests
 ```
 
 ## Data flow
@@ -50,8 +48,9 @@ Intel CDN / uops.info / Arm ACLE / Arm A64 docs / vendor archives / fixtures
   (portable snapshot)   (SQLite + FTS5)
         |                       |
         v                       v
-    web.py               cli.py / lsp.py
-  (static export)     (runtime queries)
+    export.py            cli.py / lsp.py
+  (site-data JSON      (runtime queries)
+   for simdref-web)
 ```
 
 ## PDF enrichment
@@ -64,11 +63,12 @@ Intel CDN / uops.info / Arm ACLE / Arm A64 docs / vendor archives / fixtures
 
 ## Storage strategy
 
-- **JSON** (`catalog.json`): complete serialised catalog for portability and
-  offline use. Loaded once for `export-web`, `tui`, `man`, and `doctor`.
+- **Msgpack** (`catalog.msgpack`): complete serialised catalog snapshot for
+  portability and offline use.
 - **SQLite** (`catalog.db`): FTS5 full-text search with BM25 ranking for fast
   CLI `search`, `show`, `complete`, and `llm` queries. Schema is versioned;
-  rebuilt automatically when stale.
+  rebuilt automatically when stale. `build_sqlite` builds into a sibling
+  `.tmp` and replaces the published file atomically.
 
 ## Search algorithm
 

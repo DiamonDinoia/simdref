@@ -8,8 +8,9 @@ A single searchable reference for SIMD intrinsics and instructions across
 **x86 (Intel + uops.info)**, **Arm (ACLE / AARCHMRS)**, and **RISC-V
 (RVV + unified-db)**. Runs as a CLI, a Textual TUI, an LSP server,
 on-demand manpages (`simdref man` — or run `simdref install-manpages`
-so plain `man vpaddd` works), a static web app, and a structured JSON
-interface for LLM skills.
+so plain `man vpaddd` works), a JSON site-data export for
+[simdref-web](https://github.com/simd-labs/simdref-web), and a
+structured JSON interface for LLM skills.
 
 [Web App](https://simdref.diamondinoia.com/) ·
 [TestPyPI](https://test.pypi.org/project/simdref/) ·
@@ -71,7 +72,7 @@ isa                  # open the interactive TUI
 **Web app** — a self-contained static SPA with filters and performance
 tables, published to GitHub Pages at
 [simdref.diamondinoia.com](https://simdref.diamondinoia.com/) and
-built from the `simdref-web` repo. This repo (`simdref-core`) exports the
+built from the `simdref-web` repo. This repo exports the
 JSON data it consumes:
 
 ```bash
